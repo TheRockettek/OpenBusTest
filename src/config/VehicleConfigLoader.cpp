@@ -253,6 +253,113 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
             result.passengerCabinLoaded = true;
             continue;
         }
+        if (keyword == "linktonextveh" || keyword == "linktoprevveh") {
+            int pathPoint = -1;
+            Line value;
+            if (!reader.readPayload(value, result.diagnostics, keyword) ||
+                !parseInt(value.text, pathPoint) || pathPoint < 0) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative passenger path-point index");
+                continue;
+            }
+            const bool linksToNextVehicle = keyword == "linktonextveh";
+            if (linksToNextVehicle) {
+                result.passengerPathPointToNextVehicle = pathPoint;
+            } else {
+                result.passengerPathPointToPreviousVehicle = pathPoint;
+            }
+            result.diagnostics.warning(line.number, keyword,
+                                       "linked-cabin path-point index retained; traversal across "
+                                       "coupled vehicles is not implemented");
+            result.passengerCabinLoaded = true;
+            continue;
+        }
+        if (keyword == "noticketsale") {
+            result.passengerCabinNoTicketSale = true;
+            result.passengerCabinLoaded = true;
+            result.diagnostics.warning(
+                line.number, keyword,
+                "eligibility marker retained; ticket-sale behavior is not implemented");
+            continue;
+        }
+        if (keyword == "stamper") {
+            std::vector<std::string> values;
+            int index = -1;
+            PassengerCabinStamper stamper;
+            if (!readValues(reader, keyword, 4, values, result.diagnostics)) {
+                continue;
+            }
+            if (parseInt(values[0], index) && index >= 0 &&
+                parseDouble(values[1], stamper.position[0]) &&
+                parseDouble(values[2], stamper.position[1]) &&
+                parseDouble(values[3], stamper.position[2])) {
+                stamper.index = index;
+                result.passengerCabinStampers.push_back(stamper);
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "stamper location retained; ticket-stamping interaction is not implemented");
+            } else {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative stamper index and xyz position");
+            }
+            result.passengerCabinLoaded = true;
+            continue;
+        }
+        if (keyword == "ticket_sale") {
+            std::vector<std::string> values;
+            int index = -1;
+            PassengerTicketSaleMachine machine;
+            if (!readValues(reader, keyword, 4, values, result.diagnostics)) {
+                continue;
+            }
+            if (parseInt(values[0], index) && index >= 0 &&
+                parseDouble(values[1], machine.position[0]) &&
+                parseDouble(values[2], machine.position[1]) &&
+                parseDouble(values[3], machine.position[2])) {
+                machine.index = index;
+                result.passengerTicketSaleMachines.push_back(machine);
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "machine location retained; ticket-sale interaction is not implemented");
+            } else {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative machine index and xyz position");
+            }
+            result.passengerCabinLoaded = true;
+            continue;
+        }
+        if (keyword == "ticket_sale_money_point_2" || keyword == "ticket_sale_change_point_2") {
+            std::vector<std::string> values;
+            PassengerTicketSalePoint point;
+            if (!readValues(reader, keyword, 6, values, result.diagnostics)) {
+                continue;
+            }
+            bool valid = true;
+            for (std::size_t index = 0; index < point.position.size(); ++index) {
+                valid &= parseDouble(values[index], point.position[index]);
+            }
+            for (std::size_t index = 0; index < point.size.size(); ++index) {
+                valid &= parseDouble(values[index + point.position.size()], point.size[index]) &&
+                         point.size[index] > 0.0;
+            }
+            point.doorName = trim(values.back());
+            if (valid) {
+                if (keyword == "ticket_sale_money_point_2") {
+                    result.passengerTicketMoneyPoint = std::move(point);
+                } else {
+                    result.passengerTicketChangePoint = std::move(point);
+                }
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "interaction-point location retained; ticket-sale behavior is not implemented");
+            } else {
+                result.diagnostics.error(
+                    line.number, keyword,
+                    "expected xyz, positive width/height, and optional door name");
+            }
+            result.passengerCabinLoaded = true;
+            continue;
+        }
         if (keyword == "end") {
             continue;
         }
@@ -758,9 +865,6 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 ticketSellingLine = line.number;
                 result.ticketSellingViews.push_back(std::move(entry));
             }
-            result.diagnostics.warning(line.number, keyword,
-                                       "camera association retained; view selection is not "
-                                       "implemented");
             continue;
         }
         if (keyword == "newachse") {
@@ -888,6 +992,62 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             }
             continue;
         }
+        if (keyword == "coupling_front" || keyword == "coupling_back") {
+            std::vector<double> values;
+            if (readDoubleRecord(reader, keyword, 3, values, result.diagnostics, line.number)) {
+                const std::array<double, 3> point = {values[0], values[1], values[2]};
+                if (keyword == "coupling_front") {
+                    result.frontCouplingPoint = point;
+                } else {
+                    result.rearCouplingPoint = point;
+                }
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "coupling point retained; articulated vehicle behavior is not implemented");
+            }
+            continue;
+        }
+        if (keyword == "coupling_front_character") {
+            std::vector<std::string> values;
+            VehicleCouplingCharacter character;
+            if (!readValues(reader, keyword, 4, values, result.diagnostics)) {
+                continue;
+            }
+            if (parseDouble(values[0], character.alphaDegrees) &&
+                parseDouble(values[1], character.minimumBetaDegrees) &&
+                parseDouble(values[2], character.maximumBetaDegrees) &&
+                parseInt(values[3], character.type) &&
+                character.minimumBetaDegrees <= character.maximumBetaDegrees &&
+                (character.type == 0 || character.type == 1)) {
+                result.frontCouplingCharacter = character;
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "coupling character retained; articulated vehicle behavior is not implemented");
+            } else {
+                result.diagnostics.error(
+                    line.number, keyword,
+                    "expected alpha, ordered beta limits, and type 0 (truck) or 1 (bus)");
+            }
+            continue;
+        }
+        if (keyword == "couple_back") {
+            std::vector<std::string> values;
+            if (!readValues(reader, keyword, 2, values, result.diagnostics)) {
+                continue;
+            }
+            const std::string flagValue = lower(trim(values[1]));
+            if (trim(values[0]).empty() || (flagValue != "true" && flagValue != "false")) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a vehicle config path and a true/false flag");
+            } else {
+                result.rearCouplingReference = VehicleCouplingReference{
+                    resolveReferencedPath(configPath, trim(values[0])), flagValue == "true"};
+                result.diagnostics.warning(line.number, keyword,
+                                           "rear vehicle reference retained; articulated vehicle "
+                                           "behavior is not implemented");
+            }
+            continue;
+        }
 
         static const std::unordered_map<std::string, std::string> unsupportedKeywords = {
             {"fixed", "vehicle-level fixed behavior is not implemented"},
@@ -897,10 +1057,6 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             {"ai_brakeperformance", "family-specific AI braking behavior is not implemented"},
             {"ai_veh_type", "family-specific AI vehicle categories are not implemented"},
             {"sinus", "family-specific body oscillation is not implemented"},
-            {"coupling_front", "vehicle coupling is not implemented"},
-            {"coupling_back", "vehicle coupling is not implemented"},
-            {"coupling_front_character", "vehicle coupling is not implemented"},
-            {"couple_back", "vehicle coupling is not implemented"},
             {"couple_front_open_for_sound", "vehicle coupling sound is not implemented"},
             {"control_cable_front", "coupled-vehicle control transfer is not implemented"},
             {"control_cable_back", "coupled-vehicle control transfer is not implemented"},
@@ -1001,6 +1157,48 @@ void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index) 
     configuration.selectedRegistration = index < configuration.registrationNumbers.size()
                                              ? configuration.registrationNumbers[index]
                                              : configuration.selectedVehicleNumber;
+}
+
+VehicleRegistrationSelection
+vehicleRegistrationSelectionAtIndex(const VehicleConfig& configuration, std::size_t index,
+                                    std::string_view freeVehicleNumber,
+                                    std::string_view freeRegistration) {
+    VehicleRegistrationSelection selection;
+    const std::size_t optionCount = registrationOptionCount(configuration);
+    if (optionCount > 0) {
+        VehicleConfig selected = configuration;
+        selectRegistrationAtIndex(selected, index);
+        selection.vehicleNumber = configuration.registrationFree ? std::string(freeVehicleNumber)
+                                                                 : selected.selectedVehicleNumber;
+        if (configuration.registrationFree) {
+            selection.registration = std::string(freeRegistration);
+        } else if (!configuration.registrationAutomatic) {
+            selection.registration = selected.selectedRegistration;
+        }
+    } else if (configuration.registrationFree) {
+        selection.vehicleNumber = std::string(freeVehicleNumber);
+        selection.registration = std::string(freeRegistration);
+    }
+    return selection;
+}
+
+std::optional<std::size_t>
+vehicleCameraArrayIndexForDriverView(const std::vector<VehicleCamera>& cameras, int viewIndex) {
+    if (viewIndex < 0) {
+        return std::nullopt;
+    }
+
+    int driverViewIndex = 0;
+    for (std::size_t cameraIndex = 0; cameraIndex < cameras.size(); ++cameraIndex) {
+        if (cameras[cameraIndex].kind != VehicleCameraKind::Driver) {
+            continue;
+        }
+        if (driverViewIndex == viewIndex) {
+            return cameraIndex;
+        }
+        ++driverViewIndex;
+    }
+    return std::nullopt;
 }
 
 std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& points,

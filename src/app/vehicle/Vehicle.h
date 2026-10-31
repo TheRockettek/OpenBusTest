@@ -684,10 +684,11 @@ struct Vehicle {
             variables.setString("hof_name", setupOptions.depotName);
             variables.setString("yard", setupOptions.depotName);
         }
-        odometerMetres =
+        odometerMetres = setupOptions.initialOdometerMetres.value_or(
             vehicleConfiguration.hasOdometerInitial
                 ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0
-                : 0.0;
+                : 0.0);
+        odometerMetres = std::max(0.0, odometerMetres);
         {
             TraceScope soundTrace("startup", "Vehicle::Vehicle.loadSoundBank");
             soundBank.load(soundConfigPathForVehicle(vehicleConfiguration, isAiVehicle));

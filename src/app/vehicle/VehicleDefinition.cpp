@@ -62,7 +62,13 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
     for (const ConfigurationDiagnostic& diagnostic :
          definition->vehicleConfiguration.diagnostics.entries) {
         if (diagnostic.keyword != "cog" && diagnostic.keyword != "rot_pnt_long" &&
-            diagnostic.keyword != "view_schedule" && diagnostic.keyword != "view_ticketselling") {
+            diagnostic.keyword != "coupling_front" && diagnostic.keyword != "coupling_back" &&
+            diagnostic.keyword != "coupling_front_character" &&
+            diagnostic.keyword != "couple_back" && diagnostic.keyword != "linktonextveh" &&
+            diagnostic.keyword != "linktoprevveh" && diagnostic.keyword != "noticketsale" &&
+            diagnostic.keyword != "ticket_sale" && diagnostic.keyword != "stamper" &&
+            diagnostic.keyword != "ticket_sale_money_point_2" &&
+            diagnostic.keyword != "ticket_sale_change_point_2") {
             continue;
         }
         const std::string severity =

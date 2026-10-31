@@ -81,6 +81,24 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
+    try {
+        vehicleRegistrationPreferences_ =
+            openbus::app::loadVehicleRegistrationPreferences(vehicleRegistrationPreferencesPath_);
+    } catch (const std::exception& error) {
+        vehicleRegistrationPreferencesLoaded_ = false;
+        vehicleRegistrationPreferencesError_ = error.what();
+        gameLog.Warning("Vehicle registration preferences were not loaded: " +
+                        vehicleRegistrationPreferencesError_);
+    }
+    try {
+        vehicleOdometerPreferences_ =
+            openbus::app::loadVehicleOdometerPreferences(vehicleOdometerPreferencesPath_);
+    } catch (const std::exception& error) {
+        vehicleOdometerPreferencesLoaded_ = false;
+        vehicleOdometerPreferencesError_ = error.what();
+        gameLog.Warning("Vehicle odometer preferences were not loaded: " +
+                        vehicleOdometerPreferencesError_);
+    }
     simulationState_.sharedVariables().setSoundAvailable(soundEngine_.isAvailable());
     if (const char* diagnostics = openbus::getEnvironment("OPENBUS_SCRIPT_DIAGNOSTICS")) {
         drivetrainDiagnosticsEnabled_ = std::string(diagnostics) == "1";
@@ -248,6 +266,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
+    persistPlayerOdometer(true);
     imguiLayer_.reset();
     trafficFleet_.worker.reset();
     for (TrafficVehicleState& state : trafficFleet_.vehicles) {
@@ -292,6 +311,34 @@ RenderLoop::~RenderLoop() {
     glfwTerminate();
 }
 
+void RenderLoop::persistPlayerOdometer(bool force) {
+    if (playerVehicle_ == nullptr || !vehicleOdometerPreferencesLoaded_ ||
+        playerVehicle_->setupOptions.vehicleConfigurationPath.empty()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now - lastOdometerPreferenceSave_ < std::chrono::seconds(30)) {
+        return;
+    }
+    lastOdometerPreferenceSave_ = now;
+
+    try {
+        const auto key = openbus::app::vehicleOdometerPreferenceKey(
+            playerVehicle_->setupOptions.vehicleConfigurationPath,
+            playerVehicle_->setupOptions.vehicleNumber.value_or(""),
+            playerVehicle_->setupOptions.registration.value_or(""));
+        vehicleOdometerPreferences_[key] = playerVehicle_->odometerMetres;
+        openbus::app::saveVehicleOdometerPreferences(vehicleOdometerPreferencesPath_,
+                                                     vehicleOdometerPreferences_);
+        vehicleOdometerPreferencesError_.clear();
+    } catch (const std::exception& error) {
+        vehicleOdometerPreferencesError_ = error.what();
+        gameLog.Warning("Vehicle odometer preferences were not saved: " +
+                        vehicleOdometerPreferencesError_);
+    }
+}
+
 Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy,
@@ -315,7 +362,9 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
             sharedVehicleDefinition(resolvedVehicleConfigPath, resolvedModelConfigPath, configKind);
     }
     const VehicleConfig& vehicleConfiguration = definition->vehicleConfiguration;
-    if (vehicleCameras_.empty()) {
+    setupOptions.vehicleConfigurationPath = resolvedVehicleConfigPath;
+    if (!isAiVehicle) {
+        vehicleCameras_.clear();
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
                 camera.kind == VehicleCameraKind::Passenger ||
@@ -324,6 +373,8 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                 vehicleCameras_.push_back(camera);
             }
         }
+        vehicleScheduleViews_ = vehicleConfiguration.scheduleViews;
+        vehicleTicketSellingViews_ = vehicleConfiguration.ticketSellingViews;
         if (!vehicleCameras_.empty()) {
             int driverIndex = 0;
             int selectedCamera = -1;

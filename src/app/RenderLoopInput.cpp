@@ -83,6 +83,18 @@ void RenderLoop::selectVehicleCamera(int direction) {
     gameLog.Log("Changed vehicle camera to " + std::to_string(next));
 }
 
+bool RenderLoop::selectDriverCameraView(int driverViewIndex) {
+    const auto cameraIndex = vehicleCameraArrayIndexForDriverView(vehicleCameras_, driverViewIndex);
+    if (!cameraIndex) {
+        return false;
+    }
+    cameraView_ = static_cast<int>(*cameraIndex + 1);
+    viewLookYaw_ = 0.0;
+    viewLookPitch_ = 0.0;
+    gameLog.Log("Selected configured driver view " + std::to_string(driverViewIndex));
+    return true;
+}
+
 double RenderLoop::currentFieldOfView() const {
     const VehicleCamera* camera = currentVehicleCamera();
     const double baseFieldOfView = camera != nullptr && camera->fieldOfView > 0.0

@@ -14,6 +14,44 @@
 
 int main() {
     using namespace openbus::rendering;
+    const auto clearEnvironment = [](const char* name) {
+#ifdef _WIN32
+        return _putenv_s(name, "") == 0;
+#else
+        return unsetenv(name) == 0;
+#endif
+    };
+    if (!clearEnvironment("OPENBUS_REGISTRATION") ||
+        !clearEnvironment("OPENBUS_REGISTRATION_INDEX")) {
+        std::cerr << "Could not clear registration overrides for the probe\n";
+        return 1;
+    }
+
+    VehicleConfig automaticRegistration;
+    automaticRegistration.sourcePath = "automatic.bus";
+    automaticRegistration.registrationAutomatic = true;
+    automaticRegistration.registrationPrefix = "AUTO-";
+    const VehiclePlacement registrationPlacement{{12.0, 34.0, 0.0}, 90.0};
+    selectRuntimeRegistration(automaticRegistration, registrationPlacement);
+    const std::string firstAutomaticRegistration = automaticRegistration.selectedRegistration;
+    selectRuntimeRegistration(automaticRegistration, registrationPlacement);
+    if (firstAutomaticRegistration.size() != 8 ||
+        firstAutomaticRegistration.rfind("AUTO-", 0) != 0 ||
+        automaticRegistration.selectedRegistration != firstAutomaticRegistration) {
+        std::cerr << "Automatic registration is not prefixed and placement-deterministic\n";
+        return 1;
+    }
+    VehicleConfig freeRegistration = automaticRegistration;
+    freeRegistration.registrationFree = true;
+    freeRegistration.vehicleNumbers = {"fleet-7"};
+    freeRegistration.registrationNumbers = {"MANUAL-7"};
+    selectRuntimeRegistration(freeRegistration, registrationPlacement);
+    if (freeRegistration.selectedVehicleNumber != "fleet-7" ||
+        freeRegistration.selectedRegistration != "MANUAL-7") {
+        std::cerr << "Free registration did not take precedence over automatic registration\n";
+        return 1;
+    }
+
     for (const double heading : {0.0, 0.5, std::numbers::pi / 2.0, std::numbers::pi,
                                  -std::numbers::pi / 2.0}) {
         for (const double rise : {-1.0, 0.0, 1.0}) {

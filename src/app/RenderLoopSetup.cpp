@@ -377,18 +377,17 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
         request.setupOptions.depotPath = depot.path;
         request.setupOptions.depotName = depot.name;
     }
-    const std::size_t registrationCount = registrationOptionCount(*mapVehicleConfig_);
-    if (registrationCount > 0) {
-        VehicleConfig registration = *mapVehicleConfig_;
-        selectRegistrationAtIndex(registration,
-                                  std::min(selectedMapRegistrationIndex_, registrationCount - 1));
-        request.setupOptions.vehicleNumber = registration.selectedVehicleNumber;
-        request.setupOptions.registration = mapVehicleConfig_->registrationFree
-                                                ? std::string(mapRegistrationInput_.data())
-                                                : registration.selectedRegistration;
-    } else if (mapVehicleConfig_->registrationFree) {
-        request.setupOptions.registration = mapRegistrationInput_.data();
-        request.setupOptions.vehicleNumber = mapVehicleNumberInput_.data();
+    const auto registration = vehicleRegistrationSelectionAtIndex(
+        *mapVehicleConfig_, selectedMapRegistrationIndex_, mapVehicleNumberInput_.data(),
+        mapRegistrationInput_.data());
+    request.setupOptions.vehicleNumber = registration.vehicleNumber;
+    request.setupOptions.registration = registration.registration;
+    const auto odometerKey = openbus::app::vehicleOdometerPreferenceKey(
+        request.configurationPath, request.setupOptions.vehicleNumber.value_or(""),
+        request.setupOptions.registration.value_or(""));
+    if (const auto saved = vehicleOdometerPreferences_.find(odometerKey);
+        saved != vehicleOdometerPreferences_.end()) {
+        request.setupOptions.initialOdometerMetres = saved->second;
     }
     return request;
 }
@@ -442,12 +441,71 @@ void RenderLoop::loadMapVehicleOptions() {
         mapVehicleDepots_ = openbus::config::discoverVehicleDepots(configPath, vehiclesDirectory_);
         copyToInputBuffer(mapRegistrationInput_, mapVehicleConfig_->selectedRegistration);
         copyToInputBuffer(mapVehicleNumberInput_, mapVehicleConfig_->selectedVehicleNumber);
+        restoreMapVehiclePreference();
     } catch (const std::exception& error) {
         mapVehicleConfig_.reset();
         mapVehicleLoadError_ = error.what();
         gameLog.Error("Unable to load bus '" +
                       pathToUtf8(vehicleCatalog_[selectedMapVehicleIndex_].configurationPath) +
                       "': " + error.what());
+    }
+}
+
+void RenderLoop::restoreMapVehiclePreference() {
+    const std::string key = openbus::app::vehicleRegistrationPreferenceKey(
+        vehicleCatalog_[selectedMapVehicleIndex_].configurationPath);
+    const auto saved = vehicleRegistrationPreferences_.find(key);
+    if (saved == vehicleRegistrationPreferences_.end()) {
+        return;
+    }
+
+    const std::size_t count = registrationOptionCount(*mapVehicleConfig_);
+    for (std::size_t index = 0; index < count; ++index) {
+        VehicleConfig option = *mapVehicleConfig_;
+        selectRegistrationAtIndex(option, index);
+        if (option.selectedVehicleNumber == saved->second.vehicleNumber &&
+            option.selectedRegistration == saved->second.registration) {
+            selectedMapRegistrationIndex_ = index;
+            break;
+        }
+    }
+    if (mapVehicleConfig_->registrationFree) {
+        copyToInputBuffer(mapVehicleNumberInput_, saved->second.vehicleNumber);
+        copyToInputBuffer(mapRegistrationInput_, saved->second.registration);
+    }
+}
+
+void RenderLoop::persistMapVehiclePreference() {
+    if (!vehicleRegistrationPreferencesLoaded_ || !mapVehicleConfig_) {
+        return;
+    }
+
+    openbus::app::VehicleRegistrationPreference preference;
+    const std::size_t count = registrationOptionCount(*mapVehicleConfig_);
+    if (count > 0) {
+        VehicleConfig selected = *mapVehicleConfig_;
+        selectRegistrationAtIndex(selected, std::min(selectedMapRegistrationIndex_, count - 1));
+        preference.vehicleNumber = selected.selectedVehicleNumber;
+        preference.registration = selected.selectedRegistration;
+    }
+    if (mapVehicleConfig_->registrationFree) {
+        preference.vehicleNumber = mapVehicleNumberInput_.data();
+        preference.registration = mapRegistrationInput_.data();
+    } else if (count == 0) {
+        return;
+    }
+
+    const std::string key = openbus::app::vehicleRegistrationPreferenceKey(
+        vehicleCatalog_[selectedMapVehicleIndex_].configurationPath);
+    vehicleRegistrationPreferences_[key] = std::move(preference);
+    try {
+        openbus::app::saveVehicleRegistrationPreferences(vehicleRegistrationPreferencesPath_,
+                                                         vehicleRegistrationPreferences_);
+        vehicleRegistrationPreferencesError_.clear();
+    } catch (const std::exception& error) {
+        vehicleRegistrationPreferencesError_ = error.what();
+        gameLog.Error("Vehicle registration preferences were not saved: " +
+                      vehicleRegistrationPreferencesError_);
     }
 }
 
@@ -550,18 +608,26 @@ void RenderLoop::drawOnFootUi() {
             if (registrationCount > 0) {
                 selectedMapRegistrationIndex_ =
                     std::min(selectedMapRegistrationIndex_, registrationCount - 1);
+                const bool registrationAutomatic = mapVehicleConfig_->registrationAutomatic &&
+                                                   !mapVehicleConfig_->registrationFree;
                 VehicleConfig registration = *mapVehicleConfig_;
                 selectRegistrationAtIndex(registration, selectedMapRegistrationIndex_);
-                const auto registrationLabel = [](const VehicleConfig& config) {
-                    std::string label = config.selectedVehicleNumber;
-                    if (!label.empty() && !config.selectedRegistration.empty()) {
-                        label += " - ";
-                    }
-                    label += config.selectedRegistration;
-                    return label.empty() ? std::string("(unnumbered)") : label;
-                };
+                const auto registrationLabel =
+                    [registrationAutomatic](const VehicleConfig& config) {
+                        std::string label = config.selectedVehicleNumber;
+                        if (!registrationAutomatic && !label.empty() &&
+                            !config.selectedRegistration.empty()) {
+                            label += " - ";
+                        }
+                        if (!registrationAutomatic) {
+                            label += config.selectedRegistration;
+                        }
+                        return label.empty() ? std::string("(unnumbered)") : label;
+                    };
                 const std::string currentRegistration = registrationLabel(registration);
-                if (ImGui::BeginCombo("Number / registration", currentRegistration.c_str())) {
+                if (ImGui::BeginCombo(registrationAutomatic ? "Vehicle number"
+                                                            : "Number / registration",
+                                      currentRegistration.c_str())) {
                     for (std::size_t index = 0; index < registrationCount; ++index) {
                         VehicleConfig option = *mapVehicleConfig_;
                         selectRegistrationAtIndex(option, index);
@@ -571,6 +637,7 @@ void RenderLoop::drawOnFootUi() {
                             selectedMapRegistrationIndex_ = index;
                             copyToInputBuffer(mapRegistrationInput_, option.selectedRegistration);
                             copyToInputBuffer(mapVehicleNumberInput_, option.selectedVehicleNumber);
+                            persistMapVehiclePreference();
                         }
                         if (selected) {
                             ImGui::SetItemDefaultFocus();
@@ -581,17 +648,34 @@ void RenderLoop::drawOnFootUi() {
             }
             if (mapVehicleConfig_->registrationFree) {
                 ImGui::SetNextItemWidth(-1.0F);
-                ImGui::InputText(registrationCount > 0 ? "Registration override" : "Registration",
-                                 mapRegistrationInput_.data(), mapRegistrationInput_.size());
-            } else if (mapVehicleConfig_->registrationAutomatic) {
+                if (ImGui::InputText("Vehicle number override", mapVehicleNumberInput_.data(),
+                                     mapVehicleNumberInput_.size())) {
+                    persistMapVehiclePreference();
+                }
+                ImGui::SetNextItemWidth(-1.0F);
+                if (ImGui::InputText(registrationCount > 0 ? "Registration override"
+                                                           : "Registration",
+                                     mapRegistrationInput_.data(), mapRegistrationInput_.size())) {
+                    persistMapVehiclePreference();
+                }
+            } else if (mapVehicleConfig_->registrationAutomatic &&
+                       !mapVehicleConfig_->registrationFree) {
                 ImGui::Text("Registration: automatic (%s)",
                             mapVehicleConfig_->registrationPrefix.c_str());
-            } else {
+            } else if (!mapVehicleConfig_->registrationFree) {
                 ImGui::TextUnformatted("Registration: not configured");
             }
         }
         if (!mapVehicleLoadError_.empty()) {
             ImGui::TextWrapped("Unable to load bus options: %s", mapVehicleLoadError_.c_str());
+        }
+        if (!vehicleRegistrationPreferencesError_.empty()) {
+            ImGui::TextWrapped("Vehicle preferences: %s",
+                               vehicleRegistrationPreferencesError_.c_str());
+        }
+        if (!vehicleOdometerPreferencesError_.empty()) {
+            ImGui::TextWrapped("Odometer preferences: %s",
+                               vehicleOdometerPreferencesError_.c_str());
         }
     }
     ImGui::BeginDisabled(vehicleCatalog_.empty() || !mapVehicleConfig_);
@@ -831,6 +915,52 @@ void RenderLoop::drawPlayerTimetableUi() {
     ImGui::Begin("Player timetable", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoNav);
+    const auto drawConfiguredViewSelector = [this](const char* title,
+                                                   const std::vector<VehicleViewEntry>& entries) {
+        if (entries.empty()) {
+            return;
+        }
+
+        int currentDriverViewIndex = -1;
+        if (cameraView_ > 0 && static_cast<std::size_t>(cameraView_) <= vehicleCameras_.size()) {
+            const std::size_t currentCameraIndex = static_cast<std::size_t>(cameraView_ - 1);
+            for (std::size_t index = 0; index <= currentCameraIndex; ++index) {
+                if (vehicleCameras_[index].kind == VehicleCameraKind::Driver) {
+                    ++currentDriverViewIndex;
+                }
+            }
+        }
+        std::string preview = "Select view";
+        for (const VehicleViewEntry& entry : entries) {
+            if (entry.viewIndex != currentDriverViewIndex) {
+                continue;
+            }
+            preview = entry.label.empty()
+                          ? std::string(title) + " " + std::to_string(entry.viewIndex + 1)
+                          : entry.label;
+            break;
+        }
+
+        if (ImGui::BeginCombo(title, preview.c_str())) {
+            for (std::size_t index = 0; index < entries.size(); ++index) {
+                const VehicleViewEntry& entry = entries[index];
+                const std::string label =
+                    entry.label.empty()
+                        ? std::string(title) + " " + std::to_string(entry.viewIndex + 1)
+                        : entry.label;
+                ImGui::PushID(static_cast<int>(index));
+                if (ImGui::Selectable(label.c_str(), entry.viewIndex == currentDriverViewIndex) &&
+                    !selectDriverCameraView(entry.viewIndex)) {
+                    gameLog.Warning("Configured vehicle view has no matching driver camera: " +
+                                    std::to_string(entry.viewIndex));
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    };
+    drawConfiguredViewSelector("Schedule view", vehicleScheduleViews_);
+    drawConfiguredViewSelector("Ticket-selling view", vehicleTicketSellingViews_);
     if (!playerTimetable_.state) {
         drawPlayerTimetableSelectionUi();
         ImGui::End();

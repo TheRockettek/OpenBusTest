@@ -17,7 +17,8 @@ configuration behavior, and regression evidence all exist.
 - [~] High-speed bump stability: local-axis damping, softened contact response,
   and steering-rate damping are implemented. A deterministic stress probe now
   exercises bump traversal, steering reversals, braking, and fast wheel contact
-  with two- and three-axle configurations; broader solver/contact tuning remains.
+  with two- and three-axle configurations; broader solver/contact tuning
+  remains.
 - [~] The wheel/static contact defaults use the more compliant settings, and
   the deterministic stress probe passes for both axle configurations (maximum
   angular speed 0.227 rad/s; suspension travel 0.237 m or less). Further solver
@@ -89,7 +90,8 @@ it.
 - [~] Implemented the basic `[illumination_interior]`/`[interiorlight]`
   runtime path: assigned mesh groups receive controller-driven point-light
   shading. A GPU probe verifies light color isolation, zero strength, and
-  distance attenuation. OMSI intensity parity and `[light_enh]`, `[light_enh_2]`,
+  distance attenuation. OMSI intensity parity and `[light_enh]`,
+  `[light_enh_2]`,
   and `[spotlight]` runtime semantics remain incomplete.
 - [~] A focused E400 display/light regression remains blocked on the external
   E400 model CFG/assets, which are not included in this checkout; parser and
@@ -113,8 +115,9 @@ change from their controlling variables without manual texture replacement.
   the comparison still shows dashboard-lighting parity gaps.
   semantics, including strength and lighting interaction, then compare the
   dashboard binnacle and cab surfaces again.
-  OMSI fonts, layout, and display-background/alpha semantics. Enhanced horizontal
-  alignments 0–5, authored grid spacing, and `Refresh_Strings`-gated changed-string
+  OMSI fonts, layout, and display-background/alpha semantics. Enhanced
+  horizontal alignments 0–5, authored grid spacing, and
+  `Refresh_Strings`-gated changed-string
   updates are implemented; the fallback rasterizer and remaining format details
   still differ from OMSI.
   the plate as `ident`, and rasterize its text texture on initialization; the
@@ -129,8 +132,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 
 - [~] `[mouseevent]` identifiers are retained on model parts, and configured
   vehicle key bindings are dispatched to the player script runtime as key
-  state and optional key-specific entry points. Exact transformed triangle picking is
-  active, including hand-cursor hover feedback, captured `trigger_<event>` /
+  state and optional key-specific entry points. Exact transformed triangle
+  picking is active, including hand-cursor hover feedback, captured
+  `trigger_<event>` /
   `trigger_<event>_drag` callbacks, matching `trigger_<event>_off` release
   callbacks, and the `I`-key clickable wireframe overlay. Scenery-object
   mouse-event dispatch is not connected; configurable key maps remain
@@ -147,7 +151,8 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 - [~] `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` now seed runtime registration and split odometer state.
   Explicit registration/index overrides and deterministic automatic numbers
-  are available; persistence and full OMSI selection UI remain incomplete.
+  are available; the spawn UI now preserves automatic plates when fleet-number
+  lists exist, while persistence and full OMSI selection UI remain incomplete.
 - [~] Bus-model `[collision_mesh]` records now build an ODE triangle collider;
   model `[boundingbox]` overrides the BUS box, `[nocollision]` filters a
   mesh-scoped collider, and the BUS box remains the fallback. Scenery
@@ -218,9 +223,15 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   have focused probes. A BRT Berlin UI smoke test covered selection, spawning,
   additional-bus mode, and the stop request; driving to the terminus remains
   unverified end to end.
-- [ ] Complete registration persistence and full selection UI; implement or
-  explicitly scope out AI/network sections, route/timetable/HOF data, and
-  vehicle-specific view systems.
+- [~] The spawn UI supports fleet number/registration selection and free-form
+  overrides; the player’s choices persist in `OpenBus_vehicle_preferences.txt`
+  in the launch working directory. The player odometer is restored per bus
+  identity and checkpointed atomically every 30 seconds and at shutdown in
+  `OpenBus_odometer_preferences.txt`; at most the interval since the last
+  checkpoint can be lost on abrupt process termination.
+  AI/network sections, remaining route/timetable/HOF behavior, and
+  native schedule/ticket panel behavior still need implementation or explicit
+  scoping; configured driver-camera selection is now available.
 - [~] AI vehicles select the configured `sound_ai` bank with a player-bank
   fallback when it is absent; `VehicleConfigProbe` verifies both cases. Broader
   AI sound-event playback and sound-bank compatibility remain incomplete.
@@ -241,7 +252,8 @@ by parser alignment and should not be described as supported:
   AI/player bus stops, with movement following configured entry/exit path links
   when a connected cabin graph is available, fallback boarding/alighting
   animations between the roadside and assigned cabin seats, and occupied seats
-  rendered. Basic   `[passengercabin]` seat positions, illumination groups, entries/exits, and
+  rendered. Basic `[passengercabin]` seat positions, illumination groups,
+  entries/exits, and
   path links are loaded and covered by `OpenBusVehicleConfigProbe`. When a
   connected graph exists, pathfinding follows one-way and bidirectional cabin
   links, and timetable offsets position stops within their mapped spline
@@ -300,8 +312,9 @@ for alignment is not mistaken for supporting it.
 - [~] BUS-level `[fixed]` and `[scriptshare]` are explicitly diagnosed as
   unsupported; their runtime semantics are not implemented.
 - [~] `[view_schedule]` and `[view_ticketselling]` entries retain their
-  non-negative view indexes and labels, including repeated entries. Runtime
-  schedule/ticket view selection is not implemented.
+  non-negative view indexes and labels, including repeated entries. The
+  player timetable UI now offers selectors that jump to the associated driver
+  cameras; native schedule/ticket panel behavior remains unimplemented.
 - [~] `[cog]` coordinates are retained and its positive z value supplies the
   physics CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes
   precedence regardless of record order, with a warning if heights disagree;
@@ -312,18 +325,23 @@ for alignment is not mistaken for supporting it.
 - [~] Vehicle-family `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`,
   `[ai_veh_type]`, and `[sinus]` are explicitly diagnosed as unsupported;
   their family-specific behavior is not implemented.
-- [ ] Implement articulated/coupled records: `[coupling_front]`,
-  `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, and
-  `[couple_front_open_for_sound]`. These now produce explicit unsupported
-  diagnostics; articulated vehicles remain outside the supported scope.
+- [~] `[coupling_front]` and `[coupling_back]` XYZ points are retained with
+  diagnostics, and `[coupling_front_character]` angle limits/type are retained
+  with validation. `[couple_back]` referenced vehicle path and boolean flag are
+  retained; `[couple_front_open_for_sound]` remains explicitly unsupported.
+  Articulated vehicle behavior is not implemented.
 - [ ] Implement `[control_cable_front]` and `[control_cable_back]` for
   electrical/control-variable transfer between coupled vehicles. Both are
   diagnosed as unsupported.
 - [ ] Implement `[new_attachment]` attachment transforms and the rail/trolley
   records `[contact_shoe]` and `[rail_body_osc]`, or explicitly scope them out
   with diagnostics. Vehicle-level records now report unsupported behavior.
-- [ ] Complete `[registration_automatic]`, `[registration_free]`, and
-  `[kmcounter_init]` runtime selection/persistence as tracked in the E400
+- [~] `[registration_free]` supports editable vehicle-number and registration
+  overrides in the spawn UI, including buses with configured fleet entries.
+  Automatic registrations are no longer overridden by the selected fleet-list
+  plate. Selections and odometer state persist; odometer writes use atomic
+  replacement and periodic checkpoints. Native compatibility and testing
+  against installed vehicle files remain outstanding as tracked in the E400
   comparison section.
 
 #### Bus-model configuration
@@ -331,8 +349,9 @@ for alignment is not mistaken for supporting it.
 - [~] Complete runtime material semantics for `[matl_bumpmap]`,
   `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, and `[matl_nightmap]`;
   one or more shader, blending, controller, or texture-binding stages remain
-  incomplete.   `[matl_transmap]` alpha sampling and its interaction with blended depth
-  behavior, including `[matl_noZwrite]`, have regression coverage; representative
+  incomplete. `[matl_transmap]` alpha sampling and its interaction with
+  blended depth behavior, including `[matl_noZwrite]`, have regression
+  coverage; representative
   OMSI visual parity remains unverified.
 - [~] Vehicle runtime selects controller-driven `[matl_item]` states and
   applies supported auxiliary material properties. Independent item texture
@@ -396,10 +415,11 @@ for alignment is not mistaken for supporting it.
   collision geometry, but do not implement texture surface/material physics;
   `[NightMapMode]` is parsed but discarded. `[maplight]` is also consumed
   without generating tile lightmaps.
-- [ ] Implement passenger-cabin `[noticketsale]` eligibility and the observed
-  `[ticket_sale]`, `[ticket_sale_money_point_2]`, and
-  `[ticket_sale_change_point_2]` ticket-machine behavior/locations; these
-  interactions are currently unhandled.
+- [~] Passenger-cabin `[noticketsale]`, `[ticket_sale]`,
+  `[ticket_sale_money_point_2]`, and `[ticket_sale_change_point_2]` locations
+  and parameters are retained with unsupported-behavior diagnostics. Ticket
+  sales eligibility, machine interaction, and money/change handling remain
+  unimplemented.
 - [~] Scenery SCO `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and
   `[constfile]` resources now feed per-placement `init`/`frame` runtimes, and
   scenery `[visible]` controllers are checked during map drawing. The inline
@@ -410,12 +430,13 @@ for alignment is not mistaken for supporting it.
   and general `[varparent]` state inheritance remain incomplete. `[varparent]`
   is used to associate `[trafficlight]` signal heads with a parent controller's
   phase schedule; this does not provide general scenery-variable inheritance.
-- [ ] Complete passenger-cabin behavior for `[linkToNextVeh]`,
-  `[linkToPrevVeh]`, and `[stamper]`; basic `[drivpos]`, `[passpos]`,
+- [~] `[stamper]` index and xyz position, and `[linkToNextVeh]`/
+  `[linkToPrevVeh]` passenger-path point indexes, are retained with diagnostics;
+  ticket-stamping interaction and linked-cabin traversal across coupled
+  vehicles remain unimplemented. Basic `[drivpos]`, `[passpos]`,
   `[entry]`, `[exit]`, and illumination records support stop-service seating
   and boarding animation, and connected authored cabin path links are used for
-  passenger movement. Linked-vehicle cabin traversal, stamper behavior, and
-  ticket interaction are not yet implemented.
+  passenger movement. Ticket interaction remains unimplemented.
 - [~] Load `[pathlink_oneway]` and preserve its directed-link flag alongside
   ordinary `[pathlink]` records; `OpenBusVehicleConfigProbe` distinguishes both
   forms. Passenger movement follows connected directed cabin paths; extended
@@ -474,12 +495,6 @@ for alignment is not mistaken for supporting it.
 
 #### Documented script API gaps
 
-- [x] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
-  `GetTerminusString`, `GetBusstopIndex`, `GetBusstopString`, `GetRouteIndex`,
-  `GetRouteTerminusIndex`, `GetBusstopCount`, `GetRouteBusstopIdent`, and
-  `GetDepotStringGlobal` use the selected HOF data in both backends. HOF
-  lookups warn once per runtime and macro when no readable depot file is
-  available; native and Lua probes cover results and stack behavior.
 - [~] Timetable lookups: scheduled AI buses publish line and destination
   strings, ordered stop names, and selected `.ttp` arrival/departure profile
   times before script initialization. `.ttl` profile selections remain aligned
@@ -577,7 +592,8 @@ for the explicit boundary.
   when it is unset. Legacy `OPENBUS_MAP_ENTRY` index/name selection remains
   available. The first `[groundtex]` record is the terrain
   base; verified numeric `.map.<index>.dds` sidecars are decoded as alpha masks
-  and composite subsequent ground-texture layers per tile. `OPENBUS_MAP_GROUNDTEX`
+  and composite subsequent ground-texture layers per tile.
+  `OPENBUS_MAP_GROUNDTEX`
   still provides a uniform preview/debug override. Repeated `[groundtex]` detail
   images are multiplied over their albedo. Variable terrain/lightmaps and
   seasonal changes remain unsupported.
@@ -591,9 +607,11 @@ for the explicit boundary.
   including non-destructive typed attach-point/rotation values while preserving
   raw fields and opaque label counts. Static rendering resolves parent IDs,
   ordered SCO/model `[new_attachment]` definitions, and child rotations; missing
-  parents/anchors and cycles are skipped. `[water]` markers and binary sidecars are
-  parsed/validated and rendered as provisional translucent tile quads. Their
-  inferred SW/SE/NE/NW height ordering, appearance, and multiple-surface behavior
+  parents/anchors and cycles are skipped. `[water]` markers and binary
+  sidecars are parsed/validated and rendered as provisional translucent tile
+  quads. Their
+  inferred SW/SE/NE/NW height ordering, appearance, and multiple-surface
+  behavior
   still need comparison against OMSI; water remains visual-only, not collision.
   `[variable_terrain]` and `[variable_terrainlightmap]` marker presence is
   parsed and reported, but dynamic terrain/lightmap rendering is unsupported.
@@ -645,7 +663,7 @@ for the explicit boundary.
   tile window, including tiles activated later during streaming. Spawn
   candidate tiles are derived from sampled world positions rather than the
   owning spline tile, so splines and point-backed scenery paths crossing tile
-  boundaries can use the active tile containing the candidate. Initial pool construction prioritizes
+  boundaries can use the active tile containing the candidate.   Initial pool construction prioritizes
   routes with candidates in the current active tiles, verifies candidate
   positions against the active window before local-priority admission, then
   fills remaining capacity with map-wide routes. Candidate positions keep a vehicle-sized

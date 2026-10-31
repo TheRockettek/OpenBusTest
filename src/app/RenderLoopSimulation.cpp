@@ -248,6 +248,7 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
+        persistPlayerOdometer();
         if (const std::optional<BusCollisionEvent> collision = simulation.consumeCollisionEvent()) {
             playerVehicle_->variables.set("coll_pos_x", static_cast<float>(collision->position[0]));
             playerVehicle_->variables.set("coll_pos_y", static_cast<float>(collision->position[1]));

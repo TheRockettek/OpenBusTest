@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -52,6 +53,22 @@ struct PassengerCabinPosition {
     std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
 };
 
+struct PassengerTicketSaleMachine {
+    int index = 0;
+    std::array<double, 3> position = {};
+};
+
+struct PassengerCabinStamper {
+    int index = 0;
+    std::array<double, 3> position = {};
+};
+
+struct PassengerTicketSalePoint {
+    std::array<double, 3> position = {};
+    std::array<double, 2> size = {};
+    std::string doorName;
+};
+
 struct PassengerPathPoint {
     int index = -1;
     std::array<double, 3> position = {};
@@ -61,6 +78,18 @@ struct PassengerPathLink {
     int from = -1;
     int to = -1;
     bool oneWay = false;
+};
+
+struct VehicleCouplingCharacter {
+    double alphaDegrees = 0.0;
+    double minimumBetaDegrees = 0.0;
+    double maximumBetaDegrees = 0.0;
+    int type = 0;
+};
+
+struct VehicleCouplingReference {
+    std::filesystem::path vehicleConfigPath;
+    bool flag = false;
 };
 
 struct VehicleConfig {
@@ -90,6 +119,10 @@ struct VehicleConfig {
     bool hasAiDeltaHeight = false;
     double inverseMinimumTurnRadius = 0.0;
     bool hasInverseMinimumTurnRadius = false;
+    std::optional<std::array<double, 3>> frontCouplingPoint;
+    std::optional<std::array<double, 3>> rearCouplingPoint;
+    std::optional<VehicleCouplingCharacter> frontCouplingCharacter;
+    std::optional<VehicleCouplingReference> rearCouplingReference;
     double wheelHalfWidth = 0.0;
     bool hasWheelHalfWidth = false;
     bool articulated = false;
@@ -110,6 +143,13 @@ struct VehicleConfig {
     std::optional<PassengerCabinPosition> driverPosition;
     std::vector<int> passengerEntryPathPoints;
     std::vector<int> passengerExitPathPoints;
+    std::optional<int> passengerPathPointToNextVehicle;
+    std::optional<int> passengerPathPointToPreviousVehicle;
+    bool passengerCabinNoTicketSale = false;
+    std::vector<PassengerCabinStamper> passengerCabinStampers;
+    std::vector<PassengerTicketSaleMachine> passengerTicketSaleMachines;
+    std::optional<PassengerTicketSalePoint> passengerTicketMoneyPoint;
+    std::optional<PassengerTicketSalePoint> passengerTicketChangePoint;
     bool passengerPathsLoaded = false;
     std::vector<PassengerPathPoint> passengerPathPoints;
     std::vector<PassengerPathLink> passengerPathLinks;
@@ -139,6 +179,11 @@ struct VehicleConfig {
     ConfigurationDiagnostics diagnostics;
 };
 
+struct VehicleRegistrationSelection {
+    std::optional<std::string> vehicleNumber;
+    std::optional<std::string> registration;
+};
+
 VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind,
                                 bool convertScripts = true);
 // Loads passenger positions from a cabin file into the supplied configuration.
@@ -158,6 +203,12 @@ passengerPathLinkAtProgress(const std::vector<std::array<double, 3>>& path,
 std::size_t registrationOptionCount(const VehicleConfig& configuration);
 // Selects the parallel number/plate entry, wrapping within their paired range.
 void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index);
+VehicleRegistrationSelection vehicleRegistrationSelectionAtIndex(const VehicleConfig& configuration,
+                                                                 std::size_t index,
+                                                                 std::string_view freeVehicleNumber,
+                                                                 std::string_view freeRegistration);
+std::optional<std::size_t>
+vehicleCameraArrayIndexForDriverView(const std::vector<VehicleCamera>& cameras, int viewIndex);
 std::filesystem::path soundConfigPathForVehicle(const VehicleConfig& configuration,
                                                 bool isAiVehicle);
 VehiclePlacement placementForVehicle(const VehicleConfig& configuration,

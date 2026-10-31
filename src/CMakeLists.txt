@@ -187,6 +187,7 @@ add_executable(OpenBus
     app/vehicle/VehicleInteraction.cpp
     app/vehicle/VehicleMaterials.cpp
     app/vehicle/VehicleMeshLoading.cpp
+    app/vehicle/VehiclePreferences.cpp
     app/vehicle/VehicleTextures.cpp
     app/vehicle/VehicleVisibility.cpp
 )

@@ -20,14 +20,22 @@ int main(int argc, char** argv) {
             for (const ConfigurationDiagnostic& diagnostic : parsed.diagnostics.entries) {
                 if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
                     (diagnostic.keyword == "view_schedule" ||
-                     diagnostic.keyword == "view_ticketselling")) {
+                     diagnostic.keyword == "view_ticketselling" ||
+                     diagnostic.keyword == "ticket_sale" ||
+                     diagnostic.keyword == "ticket_sale_money_point_2" ||
+                     diagnostic.keyword == "ticket_sale_change_point_2")) {
                     std::cerr << argv[index] << ':' << diagnostic.line << " ["
                               << diagnostic.keyword << "] " << diagnostic.message << '\n';
                     passed = false;
                 }
             }
             std::cout << argv[index] << ": schedule=" << parsed.scheduleViews.size()
-                      << " ticket=" << parsed.ticketSellingViews.size() << " schedule_indices=";
+                      << " ticket=" << parsed.ticketSellingViews.size()
+                      << " ticket_machines=" << parsed.passengerTicketSaleMachines.size()
+                      << " stampers=" << parsed.passengerCabinStampers.size()
+                      << " money_point=" << parsed.passengerTicketMoneyPoint.has_value()
+                      << " change_point=" << parsed.passengerTicketChangePoint.has_value()
+                      << " schedule_indices=";
             for (const VehicleViewEntry& view : parsed.scheduleViews) {
                 std::cout << view.viewIndex << ',';
             }
@@ -55,7 +63,14 @@ int main(int argc, char** argv) {
              "[exit]\n4\n"
              "[drivpos]\n0.7\n4.8\n1.5\n0.4\n0\n"
              "[illumination_interior]\n1\n2\n3\n4\n"
-             "[passpos]\n0.9\n3.9\n1.8\n0.3\n0\n";
+             "[passpos]\n0.9\n3.9\n1.8\n0.3\n0\n"
+             "[linkToPrevVeh]\n16\n"
+             "[linkToNextVeh]\n0\n"
+             "[noticketsale]\n"
+             "[stamper]\n7\n0.57833\n3.90257\n1.757\n"
+             "[ticket_sale]\n2\n0.14959\n6.12376\n1.615\n"
+             "[ticket_sale_money_point_2]\n-0.126\n5.747\n1.49\n0.05\n0.08\nfahrertuer\n"
+             "[ticket_sale_change_point_2]\n-0.216\n5.46375\n1.319\n0.03\n0.03\nfahrertuer\n";
     cabin.close();
     std::ofstream paths(root / "model/paths.cfg");
     paths << "[stepsoundpack]\n2\nstep_a.wav\nstep_b.wav\n"
@@ -98,6 +113,28 @@ int main(int argc, char** argv) {
               "[kmcounter_init]\n2026\n1234.5\n";
     config.close();
 
+    const std::filesystem::path viewConfigPath = root / "views.bus";
+    {
+        std::ofstream viewConfig(viewConfigPath);
+        viewConfig << "[model]\nmodel.cfg\n"
+                      "[add_camera_pax]\n0\n0\n0\n0\n60\n0\n0\n"
+                      "[add_camera_driver]\n0\n0\n0\n0\n60\n0\n0\n"
+                      "[view_schedule]\n"
+                      "[view_ticketselling]\n";
+    }
+    const VehicleConfig viewConfig = loadVehicleConfig(viewConfigPath, VehicleFileKind::Bus, false);
+    if (viewConfig.diagnostics.hasErrors() || viewConfig.scheduleViews.size() != 1 ||
+        viewConfig.ticketSellingViews.size() != 1 || viewConfig.scheduleViews[0].viewIndex != 0 ||
+        viewConfig.ticketSellingViews[0].viewIndex != 0 ||
+        std::any_of(viewConfig.diagnostics.entries.begin(), viewConfig.diagnostics.entries.end(),
+                    [](const ConfigurationDiagnostic& diagnostic) {
+                        return diagnostic.keyword == "view_schedule" ||
+                               diagnostic.keyword == "view_ticketselling";
+                    })) {
+        std::cerr << "Configured schedule/ticket views did not retain their driver camera\n";
+        return 1;
+    }
+
     const VehicleConfig result = loadVehicleConfig(configPath, VehicleFileKind::Bus);
     VehicleConfig aiSoundFallback = result;
     aiSoundFallback.soundAiConfigPath.clear();
@@ -106,6 +143,24 @@ int main(int argc, char** argv) {
         result.scripts.size() == 1 && std::filesystem::exists(generatedLuaPath(scriptPath));
     VehicleConfig secondRegistration = result;
     selectRegistrationAtIndex(secondRegistration, 1);
+    VehicleConfig manualRegistration = result;
+    manualRegistration.registrationAutomatic = false;
+    manualRegistration.registrationFree = false;
+    const VehicleRegistrationSelection manualSelection =
+        vehicleRegistrationSelectionAtIndex(manualRegistration, 1, "typed-number", "typed-plate");
+    VehicleConfig automaticRegistration = manualRegistration;
+    automaticRegistration.registrationAutomatic = true;
+    const VehicleRegistrationSelection automaticSelection =
+        vehicleRegistrationSelectionAtIndex(automaticRegistration, 1, "typed-number",
+                                            "typed-plate");
+    const VehicleRegistrationSelection freeSelection =
+        vehicleRegistrationSelectionAtIndex(result, 1, "CUSTOM-7", "CUSTOM-PLATE");
+    const std::vector<VehicleCamera> cameraLayout = {
+        {VehicleCameraKind::Passenger},
+        {VehicleCameraKind::Driver},
+        {VehicleCameraKind::Reflexion},
+        {VehicleCameraKind::Driver},
+    };
 
     const auto writeResistanceConfig = [&](const std::filesystem::path& path,
                                            const std::string& directive) {
@@ -115,8 +170,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> unsupportedKeywords = {
         "fixed",          "scriptshare",             "rowdy_factor",
         "boogies",        "ai_brakeperformance",    "ai_veh_type",
-        "sinus",          "coupling_front",         "coupling_back",
-        "coupling_front_character",                  "couple_back",
+        "sinus",
         "couple_front_open_for_sound",               "control_cable_front",
         "control_cable_back",                        "new_attachment",
         "contact_shoe",   "rail_body_osc",
@@ -156,6 +210,64 @@ int main(int argc, char** argv) {
             std::cerr << "Unsupported vehicle records disrupted later supported directives\n";
             return 1;
         }
+    }
+    const std::filesystem::path couplingPointsPath = root / "coupling_points.bus";
+    {
+        std::ofstream output(couplingPointsPath);
+        output << "[model]\nmodel.cfg\n"
+                  "[coupling_front]\n0\n4.788\n0.501\n"
+                  "[coupling_back]\n0\n-4.331\n0.315\n"
+                  "[coupling_front_character]\n52.5\n-20\n20\n1\n"
+                  "[couple_back]\ntrailer.bus\nfalse\n";
+    }
+    const VehicleConfig couplingPoints =
+        loadVehicleConfig(couplingPointsPath, VehicleFileKind::Bus, false);
+    if (couplingPoints.diagnostics.hasErrors() ||
+        couplingPoints.frontCouplingPoint != std::array<double, 3>{0.0, 4.788, 0.501} ||
+    couplingPoints.rearCouplingPoint != std::array<double, 3>{0.0, -4.331, 0.315} ||
+    !couplingPoints.frontCouplingCharacter ||
+    couplingPoints.frontCouplingCharacter->alphaDegrees != 52.5 ||
+    couplingPoints.frontCouplingCharacter->minimumBetaDegrees != -20.0 ||
+    couplingPoints.frontCouplingCharacter->maximumBetaDegrees != 20.0 ||
+    couplingPoints.frontCouplingCharacter->type != 1 ||
+    !couplingPoints.rearCouplingReference ||
+    couplingPoints.rearCouplingReference->vehicleConfigPath != root / "trailer.bus" ||
+    couplingPoints.rearCouplingReference->flag) {
+        std::cerr << "Vehicle coupling point records were not retained: errors="
+                  << couplingPoints.diagnostics.hasErrors() << " front="
+                  << couplingPoints.frontCouplingPoint.has_value() << " rear="
+                  << couplingPoints.rearCouplingPoint.has_value() << '\n';
+        for (const ConfigurationDiagnostic& diagnostic : couplingPoints.diagnostics.entries) {
+            std::cerr << diagnostic.keyword << ": " << diagnostic.message << '\n';
+        }
+        return 1;
+    }
+    const std::filesystem::path invalidCouplingReferencePath =
+        root / "invalid_coupling_reference.bus";
+    {
+        std::ofstream output(invalidCouplingReferencePath);
+        output << "[model]\nmodel.cfg\n[couple_back]\ntrailer.bus\nunknown\n";
+    }
+    const VehicleConfig invalidCouplingReference =
+        loadVehicleConfig(invalidCouplingReferencePath, VehicleFileKind::Bus, false);
+    if (!invalidCouplingReference.diagnostics.hasErrors() ||
+        invalidCouplingReference.rearCouplingReference) {
+        std::cerr << "Invalid vehicle coupling reference was accepted\n";
+        return 1;
+    }
+    const std::filesystem::path invalidCouplingCharacterPath =
+        root / "invalid_coupling_character.bus";
+    {
+        std::ofstream output(invalidCouplingCharacterPath);
+        output << "[model]\nmodel.cfg\n"
+                  "[coupling_front_character]\n52.5\n20\n-20\n2\n";
+    }
+    const VehicleConfig invalidCouplingCharacter =
+        loadVehicleConfig(invalidCouplingCharacterPath, VehicleFileKind::Bus, false);
+    if (!invalidCouplingCharacter.diagnostics.hasErrors() ||
+        invalidCouplingCharacter.frontCouplingCharacter) {
+        std::cerr << "Invalid vehicle coupling character was accepted\n";
+        return 1;
     }
     const std::filesystem::path zeroResistancePath = root / "zero_roll.bus";
     writeResistanceConfig(zeroResistancePath, "[rollwiderstand]\n0\n");
@@ -208,7 +320,7 @@ int main(int argc, char** argv) {
         inactiveRecords.ticketSellingViews.size() == 1 &&
         inactiveRecords.ticketSellingViews[0].viewIndex == 1 &&
         inactiveRecords.ticketSellingViews[0].label == "Ticket view" &&
-        hasIgnoredWarning("view_schedule") && hasIgnoredWarning("view_ticketselling") &&
+        !hasIgnoredWarning("view_schedule") && !hasIgnoredWarning("view_ticketselling") &&
         hasIgnoredWarning("rot_pnt_long");
     const std::filesystem::path invalidViewPath = root / "invalid_view.bus";
     writeResistanceConfig(invalidViewPath, "[view_schedule]\n-1\nInvalid view\n");
@@ -337,6 +449,26 @@ int main(int argc, char** argv) {
         !result.passengerCabinLoaded || !result.driverPosition.has_value() ||
         result.passengerPositions.size() != 1 || result.passengerEntryPathPoints.size() != 1 ||
         result.passengerExitPathPoints.size() != 1 ||
+        !result.passengerCabinNoTicketSale || result.passengerTicketSaleMachines.size() != 1 ||
+        result.passengerCabinStampers.size() != 1 ||
+        result.passengerCabinStampers[0].index != 7 ||
+        result.passengerCabinStampers[0].position !=
+            std::array<double, 3>{0.57833, 3.90257, 1.757} ||
+        result.passengerPathPointToPreviousVehicle != 16 ||
+        result.passengerPathPointToNextVehicle != 0 ||
+        result.passengerTicketSaleMachines[0].index != 2 ||
+        result.passengerTicketSaleMachines[0].position !=
+            std::array<double, 3>{0.14959, 6.12376, 1.615} ||
+        !result.passengerTicketMoneyPoint.has_value() ||
+        result.passengerTicketMoneyPoint->position !=
+            std::array<double, 3>{-0.126, 5.747, 1.49} ||
+        result.passengerTicketMoneyPoint->size != std::array<double, 2>{0.05, 0.08} ||
+        result.passengerTicketMoneyPoint->doorName != "fahrertuer" ||
+        !result.passengerTicketChangePoint.has_value() ||
+        result.passengerTicketChangePoint->position !=
+            std::array<double, 3>{-0.216, 5.46375, 1.319} ||
+        result.passengerTicketChangePoint->size != std::array<double, 2>{0.03, 0.03} ||
+        result.passengerTicketChangePoint->doorName != "fahrertuer" ||
         result.passengerPositions[0].interiorLightIndexes != std::array<int, 4>{1, 2, 3, 4} ||
         !result.passengerPathsLoaded || result.passengerPathPoints.size() != 2 ||
         result.passengerPathLinks.size() != 2 ||
@@ -355,7 +487,17 @@ int main(int argc, char** argv) {
         result.selectedRegistration != "BUS-002" ||
         secondRegistration.selectedRegistrationIndex != 1 ||
         secondRegistration.selectedVehicleNumber != "BUS-002" ||
-        secondRegistration.selectedRegistration != "BUS-003") {
+        secondRegistration.selectedRegistration != "BUS-003" ||
+        manualSelection.vehicleNumber != "BUS-002" ||
+        manualSelection.registration != "BUS-003" ||
+        automaticSelection.vehicleNumber != "BUS-002" ||
+        automaticSelection.registration.has_value() ||
+        freeSelection.vehicleNumber != "CUSTOM-7" ||
+        freeSelection.registration != "CUSTOM-PLATE" ||
+        vehicleCameraArrayIndexForDriverView(cameraLayout, 0) != 1 ||
+        vehicleCameraArrayIndexForDriverView(cameraLayout, 1) != 3 ||
+        vehicleCameraArrayIndexForDriverView(cameraLayout, 2).has_value() ||
+        vehicleCameraArrayIndexForDriverView(cameraLayout, -1).has_value()) {
         std::cerr << "BUS metadata records were not retained\n";
         return 1;
     }

@@ -13,6 +13,7 @@
 #include "audio/SoundEngine.h"
 #include "config/VehicleConfigLoader.h"
 #include "config/VehicleCatalog.h"
+#include "app/vehicle/VehiclePreferences.h"
 #include "core/Viewpoint.h"
 #include "core/Variables.h"
 #include "physics/BusSimulation.h"
@@ -62,6 +63,8 @@ struct VehicleSetupOptions {
     std::string appearanceKey;
     std::optional<std::string> vehicleNumber;
     std::optional<std::string> registration;
+    std::filesystem::path vehicleConfigurationPath;
+    std::optional<double> initialOdometerMetres;
     std::filesystem::path depotPath;
     std::string depotName;
 };
@@ -243,6 +246,7 @@ class RenderLoop {
     bool isExteriorView() const;
     const VehicleCamera* currentVehicleCamera() const;
     void selectVehicleCamera(int direction);
+    bool selectDriverCameraView(int driverViewIndex);
     void setFreeCameraEnabled(bool enabled);
     void updateScripts();
     void logDiagnosticVariables() const;
@@ -257,6 +261,9 @@ class RenderLoop {
     void clearPlayerTripAiPolicy();
     void advancePlayerTimetableTrip();
     void loadMapVehicleOptions();
+    void restoreMapVehiclePreference();
+    void persistMapVehiclePreference();
+    void persistPlayerOdometer(bool force = false);
 
     GLFWwindow* window_;
     std::unique_ptr<ImGuiLayer> imguiLayer_;
@@ -276,6 +283,16 @@ class RenderLoop {
     std::array<char, 256> mapRegistrationInput_{};
     std::array<char, 256> mapVehicleNumberInput_{};
     std::string mapVehicleLoadError_;
+    openbus::app::VehicleRegistrationPreferences vehicleRegistrationPreferences_;
+    std::filesystem::path vehicleRegistrationPreferencesPath_ = "OpenBus_vehicle_preferences.txt";
+    bool vehicleRegistrationPreferencesLoaded_ = true;
+    std::string vehicleRegistrationPreferencesError_;
+    openbus::app::VehicleOdometerPreferences vehicleOdometerPreferences_;
+    std::filesystem::path vehicleOdometerPreferencesPath_ = "OpenBus_odometer_preferences.txt";
+    bool vehicleOdometerPreferencesLoaded_ = true;
+    std::string vehicleOdometerPreferencesError_;
+    std::chrono::steady_clock::time_point lastOdometerPreferenceSave_ =
+        std::chrono::steady_clock::now();
     double cameraYaw_ = -2.3;
     double cameraPitch_ = 0.45;
     double fieldOfViewOffset_ = 0.0;
@@ -407,6 +424,8 @@ class RenderLoop {
     bool steeringSmoothingOverride_ = false;
     double smoothedSteering_ = 0.0;
     std::vector<VehicleCamera> vehicleCameras_;
+    std::vector<VehicleViewEntry> vehicleScheduleViews_;
+    std::vector<VehicleViewEntry> vehicleTicketSellingViews_;
     SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
     std::unique_ptr<openbus::rendering::ReflectionRenderer> reflectionRenderer_;
