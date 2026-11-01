@@ -77,8 +77,10 @@ double minimumObjectViewportFraction(const char* name) {
 
 } // namespace
 
-RenderLoop::RenderLoop(int width, int height, const char* title)
-    : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
+RenderLoop::RenderLoop(int width, int height, const char* title,
+                       openbus::app::SteamPresence& steamPresence)
+    : steamPresence_(steamPresence), window_(nullptr),
+      assetRequestManager_(std::make_unique<AssetRequestManager>()),
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
     try {

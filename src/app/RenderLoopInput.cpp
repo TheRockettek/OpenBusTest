@@ -2,6 +2,7 @@
 
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
+#include "app/SteamPresence.h"
 
 #include <imgui.h>
 
@@ -105,6 +106,7 @@ double RenderLoop::currentFieldOfView() const {
 
 void RenderLoop::beginFrame(double fixedTimeStep) {
     TraceScope trace("frame", "RenderLoop::beginFrame");
+    steamPresence_.runCallbacks();
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.pollEvents");
         glfwPollEvents();

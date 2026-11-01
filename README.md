@@ -560,6 +560,34 @@ The helpers use `build-linux` by default. Set `BUILD_DIR` to choose another
 build directory. Set `OPENBUS_BUS_CONFIG` to the OMSI-relative bus configuration
 path to select a vehicle.
 
+### Steam presence on Windows and Linux
+
+OpenBus uses the Steamworks SDK 1.65 redistributable supplied in
+[`third_party/steamworks/redistributable_bin`](third_party/steamworks/redistributable_bin)
+to request OMSI 2 (app ID `252530`) presence. The build copies the matching
+Windows x64 or Linux x64/arm64 runtime next to the executable; OpenBus loads it
+from there rather than searching other installed games. On unsupported
+architectures, including 32-bit builds, OpenBus runs without Steam presence.
+
+To disable Steam presence, set `OPENBUS_STEAM_PRESENCE=0`. The previous
+`OPENBUS_STEAM_ROOT` and `OPENBUS_STEAM_API_LIBRARY` discovery settings are
+no longer used. Loading the bundled native library still executes code in the
+OpenBus process; keep the project and build directories protected from
+untrusted modifications. OpenBus does not verify its signature or hash at
+runtime.
+
+Steam must be running as the same user and the active account must own OMSI 2.
+OpenBus sets `SteamAppId`
+and `SteamGameId` to `252530` in its own process and restores their previous
+values at shutdown; a `steam_appid.txt` in the working directory, if present,
+must contain only `252530`. No files in the OMSI installation are modified.
+
+OpenBus checks the app ID returned by Steam after initialization and runs
+callbacks during the setup screen and normal frames. Startup loading may block
+callbacks temporarily. Failures are logged under `Steam` and do not prevent
+OpenBus from running. Successful initialization is not proof that Steam displays
+the expected presence: check the Steam client while OpenBus is running.
+
 ## Running all test probes
 
 Probe executables are excluded from the default build. Run and profile helpers

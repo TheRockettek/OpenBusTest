@@ -12,6 +12,7 @@
 #include "core/PerfTrace.h"
 #include "core/Utf8Path.h"
 #include "app/RenderLoop.h"
+#include "app/SteamPresence.h"
 
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -816,6 +817,8 @@ int main() {
     installCrashHandler();
     Logger applicationLog("Application");
     try {
+        openbus::app::SteamPresence steamPresence;
+        steamPresence.initializeFromEnvironment();
         applicationLog.Log("Starting OpenBus");
 #if OPENBUS_ENABLE_PERF_TRACE
         const std::string traceEnabled = environmentValue("OPENBUS_TRACE");
@@ -836,7 +839,7 @@ int main() {
         const int windowHeight =
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
         applicationLog.Log("Loading: initializing renderer and OpenGL window.");
-        RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
+        RenderLoop renderer(windowWidth, windowHeight, "OpenBus", steamPresence);
 
         const std::filesystem::path omsiRoot = omsiRootPath();
         StartupSelection startupSelection;

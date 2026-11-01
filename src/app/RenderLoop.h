@@ -46,6 +46,7 @@ class ReflectionRenderer;
 
 namespace openbus::app {
 class MapTrafficWorker;
+class SteamPresence;
 } // namespace openbus::app
 
 enum class AssetLoadingMode {
@@ -112,7 +113,7 @@ struct TrafficSplineDebugLabel {
 
 class RenderLoop {
   public:
-    RenderLoop(int width, int height, const char* title);
+    RenderLoop(int width, int height, const char* title, openbus::app::SteamPresence& steamPresence);
     ~RenderLoop();
 
     RenderLoop(const RenderLoop&) = delete;
@@ -265,6 +266,7 @@ class RenderLoop {
     void persistMapVehiclePreference();
     void persistPlayerOdometer(bool force = false);
 
+    openbus::app::SteamPresence& steamPresence_;
     GLFWwindow* window_;
     bool vsyncEnabled_ = true;
     std::unique_ptr<ImGuiLayer> imguiLayer_;

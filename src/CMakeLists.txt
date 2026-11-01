@@ -179,6 +179,7 @@ add_executable(OpenBus
     app/RenderLoopInput.cpp
     app/RenderLoopSimulation.cpp
     app/RenderLoopSetup.cpp
+    app/SteamPresence.cpp
     app/traffic/PlayerTimetable.cpp
     app/traffic/PlayerTimetableController.cpp
     app/traffic/PlayerTripPolicy.cpp
@@ -205,8 +206,41 @@ target_link_libraries(OpenBus PRIVATE
     openbus_render
     openbus_scripting
     openbus_imgui
+    ${CMAKE_DL_LIBS}
 )
 openbus_copy_lua_runtime(OpenBus)
+
+set(OPENBUS_STEAM_RUNTIME_ROOT "${PROJECT_SOURCE_DIR}/third_party/steamworks/redistributable_bin")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" OPENBUS_STEAM_PROCESSOR)
+set(OPENBUS_STEAM_RUNTIME "")
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    if(WIN32 AND OPENBUS_STEAM_PROCESSOR MATCHES "^(x86_64|amd64|x64)$")
+        set(OPENBUS_STEAM_RUNTIME "${OPENBUS_STEAM_RUNTIME_ROOT}/win64/steam_api64.dll")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        if(OPENBUS_STEAM_PROCESSOR MATCHES "^(x86_64|amd64|x64)$")
+            set(OPENBUS_STEAM_RUNTIME "${OPENBUS_STEAM_RUNTIME_ROOT}/linux64/libsteam_api.so")
+        elseif(OPENBUS_STEAM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+            set(OPENBUS_STEAM_RUNTIME "${OPENBUS_STEAM_RUNTIME_ROOT}/linuxarm64/libsteam_api.so")
+        endif()
+    endif()
+endif()
+if(OPENBUS_STEAM_RUNTIME)
+    if(CMAKE_CONFIGURATION_TYPES)
+        set(OPENBUS_STEAM_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>")
+    else()
+        set(OPENBUS_STEAM_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    endif()
+    add_custom_target(openbus_steam_runtime
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENBUS_STEAM_OUTPUT_DIRECTORY}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENBUS_STEAM_RUNTIME}"
+            "${OPENBUS_STEAM_OUTPUT_DIRECTORY}"
+        VERBATIM)
+    add_dependencies(OpenBus openbus_steam_runtime)
+elseif(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(WARNING "No Steamworks runtime is available for ${CMAKE_SYSTEM_PROCESSOR} "
+        "with ${CMAKE_SIZEOF_VOID_P}-byte pointers; "
+        "OpenBus will run without Steam presence")
+endif()
 
 if(WIN32)
     target_link_libraries(OpenBus PRIVATE dbghelp windowscodecs winmm)

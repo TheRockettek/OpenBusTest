@@ -36,6 +36,20 @@ add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProb
 
 # Core / configuration
 openbus_add_probe(OpenBusLoggerProbe LoggerProbe.cpp LIBS openbus_core)
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(OpenBusSteamApiFixture SHARED SteamApiFixture.cpp)
+    add_library(OpenBusSteamApiIncompleteFixture SHARED SteamApiFixture.cpp)
+    set_target_properties(OpenBusSteamApiFixture OpenBusSteamApiIncompleteFixture PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    target_compile_definitions(OpenBusSteamApiIncompleteFixture PRIVATE OPENBUS_FIXTURE_INCOMPLETE)
+    add_executable(OpenBusSteamPresenceProbe SteamPresenceProbe.cpp
+        "${OPENBUS_SOURCE_ROOT}/app/SteamPresence.cpp")
+    target_link_libraries(OpenBusSteamPresenceProbe PRIVATE openbus_core ${CMAKE_DL_LIBS})
+    add_dependencies(OpenBusSteamPresenceProbe OpenBusSteamApiFixture
+        OpenBusSteamApiIncompleteFixture)
+    add_test(NAME OpenBusSteamPresenceProbe COMMAND OpenBusSteamPresenceProbe
+        "$<TARGET_FILE:OpenBusSteamApiFixture>" "$<TARGET_FILE:OpenBusSteamApiIncompleteFixture>")
+endif()
 add_test(NAME OpenBusLoggerProbe.invalid-path COMMAND OpenBusLoggerProbe invalid-path)
 add_test(NAME OpenBusLoggerProbe.write-failure COMMAND OpenBusLoggerProbe write-failure)
 set_tests_properties(OpenBusLoggerProbe.write-failure PROPERTIES SKIP_RETURN_CODE 77)

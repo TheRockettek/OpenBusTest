@@ -1,6 +1,7 @@
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
 #include "app/ScopedSwapInterval.h"
+#include "app/SteamPresence.h"
 #include "config/VehicleCatalog.h"
 #include "core/Environment.h"
 #include "core/Logger.h"
@@ -246,6 +247,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     loadSelectedMap();
 
     while (!shouldClose()) {
+        steamPresence_.runCallbacks();
         glfwPollEvents();
         if (shouldClose()) {
             return false;
