@@ -63,6 +63,7 @@ add_test(NAME OpenBusVehicleDefinitionProbe COMMAND OpenBusVehicleDefinitionProb
 openbus_add_probe(OpenBusHumanConfigProbe HumanConfigLoaderProbe.cpp
     LIBS openbus_config
     ARGS "${OPENBUS_FIXTURES}/human_driver.hum")
+openbus_add_probe(OpenBusHumanSkinningProbe HumanSkinningProbe.cpp LIBS openbus_render)
 
 # Input
 openbus_add_probe(OpenBusScopedSwapIntervalProbe ScopedSwapIntervalProbe.cpp LIBS openbus_core)
@@ -80,6 +81,7 @@ openbus_add_probe(OpenBusSharedMapTextureImagesProbe SharedMapTextureImagesProbe
     LIBS openbus_assets Threads::Threads)
 openbus_add_probe(OpenBusO3DLoaderProbe O3DLoaderProbe.cpp LIBS openbus_assets
     ARGS "${PROJECT_SOURCE_DIR}/uno3d/SitzeU.o3d")
+openbus_add_probe(OpenBusO3DBonesProbe O3DBonesProbe.cpp LIBS openbus_assets)
 # Exercise text-X geometry parsing without requiring an OpenGL context.
 openbus_add_probe(OpenBusXLoaderProbe XLoaderProbe.cpp LIBS openbus_assets ZLIB::ZLIB
     ARGS "${OPENBUS_FIXTURES}/scenery_text_mesh.x")
@@ -219,6 +221,9 @@ openbus_add_probe(OpenBusMapTrafficLightRenderingProbe MapTrafficLightRenderingP
     LIBS openbus_render)
 openbus_add_probe(OpenBusMapSceneryTexcoordRenderingProbe MapSceneryTexcoordRenderingProbe.cpp
     LIBS openbus_render NO_TEST)
+add_test(NAME OpenBusHumanSkinningRenderingProbe
+    COMMAND OpenBusMapSceneryTexcoordRenderingProbe --human-skinning)
+set_tests_properties(OpenBusHumanSkinningRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 foreach(backend IN ITEMS cpu compute-indirect)
     add_test(NAME OpenBusMapSceneryTexcoordRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe)
@@ -232,12 +237,15 @@ foreach(backend IN ITEMS cpu compute-indirect)
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --nightmap)
     add_test(NAME OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --item-lightmap)
+    add_test(NAME OpenBusMapSceneryNormalsRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --normals)
     set_tests_properties(OpenBusMapSceneryTexcoordRenderingProbe.${backend}
         OpenBusMapSceneryLightmapRenderingProbe.${backend}
         OpenBusMapSceneryBumpmapRenderingProbe.${backend}
         OpenBusMapSceneryEnvironmentRenderingProbe.${backend}
         OpenBusMapSceneryNightmapRenderingProbe.${backend}
         OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
+        OpenBusMapSceneryNormalsRenderingProbe.${backend}
         PROPERTIES SKIP_RETURN_CODE 77
         ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=${backend};OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
 endforeach()

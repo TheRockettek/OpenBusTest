@@ -291,7 +291,9 @@ determinant, the transformed-normal explanation does not account for the
 disagreement, and at least 90% of the counted faces oppose their normals, the
 OBJ triangle winding is reversed. Clockwise back-face culling is enabled only
 for these mirrored meshes; ordinary meshes are left unculled so their authored
-winding is preserved.
+winding is preserved. Lighting normals retain their authored outward direction
+through the axis conversion; winding analysis uses its separate reflected-basis
+convention.
 
 For `[newanim]` origin rotations, the converted axes are:
 

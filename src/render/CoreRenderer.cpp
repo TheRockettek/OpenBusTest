@@ -96,6 +96,8 @@ struct Uniforms {
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
     GLint humanGaitEnabled = -1;
+    GLint humanSkinEnabled = -1;
+    GLint humanBones = -1;
     GLint humanGaitPhase = -1;
     GLint humanGaitWeight = -1;
     GLint humanGaitHeight = -1;
@@ -218,11 +220,17 @@ const char* modelVertexShader = R"GLSL(
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec3 aTexCoord;
 layout(location = 2) in vec3 aNormal;
+layout(location = 3) in vec4 aHumanWeights0;
+layout(location = 4) in vec4 aHumanWeights1;
+layout(location = 5) in vec4 aHumanWeights2;
+layout(location = 6) in vec4 aHumanWeights3;
 uniform mat4 uProjection;
 uniform mat4 uModelView;
 uniform vec2 uTexcoordOffset;
 uniform bool uFlipModelTextureY;
 uniform bool uHumanGaitEnabled;
+uniform bool uHumanSkinEnabled;
+uniform mat4 uHumanBones[13];
 uniform float uHumanGaitPhase;
 uniform float uHumanGaitWeight;
 uniform float uHumanGaitHeight;
@@ -252,6 +260,28 @@ out vec3 vNormal;
 out vec3 vViewPosition;
 void main() {
     vec3 position = aPosition;
+    vec3 normal = aNormal;
+    if (uHumanSkinEnabled) {
+        float weights[13] = float[13](
+            aHumanWeights0.x, aHumanWeights0.y, aHumanWeights0.z, aHumanWeights0.w,
+            aHumanWeights1.x, aHumanWeights1.y, aHumanWeights1.z, aHumanWeights1.w,
+            aHumanWeights2.x, aHumanWeights2.y, aHumanWeights2.z, aHumanWeights2.w,
+            aHumanWeights3.x);
+        vec3 skinnedPosition = vec3(0.0);
+        vec3 skinnedNormal = vec3(0.0);
+        float totalWeight = 0.0;
+        for (int i = 0; i < 13; ++i) {
+            if (weights[i] > 0.0) {
+                skinnedPosition += (uHumanBones[i] * vec4(aPosition, 1.0)).xyz * weights[i];
+                skinnedNormal += (mat3(uHumanBones[i]) * aNormal) * weights[i];
+                totalWeight += weights[i];
+            }
+        }
+        if (totalWeight > 0.0) {
+            position = skinnedPosition / totalWeight;
+            normal = skinnedNormal / totalWeight;
+        }
+    }
     if (uHumanGaitEnabled && uHumanGaitHeight > 0.0) {
         const float pi = 3.14159265;
         float heightFraction = clamp(position.z / uHumanGaitHeight, 0.0, 1.0);
@@ -419,7 +449,7 @@ void main() {
                      aTexCoord.z);
     // Normals must use the inverse-transpose so animated parts with non-uniform
     // scale still receive lighting from the correct surface direction.
-    vNormal = mat3(transpose(inverse(uModelView))) * aNormal;
+    vNormal = mat3(transpose(inverse(uModelView))) * normal;
     vViewPosition = viewPosition.xyz;
     gl_Position = uProjection * viewPosition;
 }
@@ -848,6 +878,8 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
         uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipModelTextureY");
         uniforms.humanGaitEnabled = pglGetUniformLocation(program, "uHumanGaitEnabled");
+        uniforms.humanSkinEnabled = pglGetUniformLocation(program, "uHumanSkinEnabled");
+        uniforms.humanBones = pglGetUniformLocation(program, "uHumanBones[0]");
         uniforms.humanGaitPhase = pglGetUniformLocation(program, "uHumanGaitPhase");
         uniforms.humanGaitWeight = pglGetUniformLocation(program, "uHumanGaitWeight");
         uniforms.humanGaitHeight = pglGetUniformLocation(program, "uHumanGaitHeight");
@@ -1369,7 +1401,7 @@ void configureModelAlphaState(int alphaMode, bool noZwrite) {
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode,
                     bool cullBackFaces, std::optional<HumanGaitParameters> humanGait,
-                    double visibilityFade) {
+                    double visibilityFade, const HumanSkinDraw* humanSkin) {
     TraceScope trace("render", "CoreRenderer::drawModelBatch");
     if (modelProgram == 0 || buffer == 0 || vertexCount == 0) {
         return;
@@ -1378,7 +1410,21 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode, visibilityFade);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
-    const bool animateHuman = humanGait.has_value() && humanGait->heightMeters > 0.0;
+    const bool skinHuman =
+        humanSkin != nullptr && humanSkin->weightBuffer != 0 && humanSkin->palette != nullptr;
+    pglUniform1i(modelUniforms.humanSkinEnabled, skinHuman ? 1 : 0);
+    if (skinHuman) {
+        std::array<GLfloat, HUMAN_BONE_COUNT * 16> matrices = {};
+        for (std::size_t bone = 0; bone < HUMAN_BONE_COUNT; ++bone) {
+            for (std::size_t component = 0; component < 16; ++component) {
+                matrices[bone * 16 + component] =
+                    static_cast<GLfloat>((*humanSkin->palette)[bone][component]);
+            }
+        }
+        pglUniformMatrix4fv(modelUniforms.humanBones, static_cast<GLsizei>(HUMAN_BONE_COUNT),
+                            GL_FALSE, matrices.data());
+    }
+    const bool animateHuman = !skinHuman && humanGait.has_value() && humanGait->heightMeters > 0.0;
     pglUniform1i(modelUniforms.humanGaitEnabled, animateHuman ? 1 : 0);
     if (animateHuman) {
         pglUniform1f(modelUniforms.humanGaitPhase, static_cast<GLfloat>(humanGait->phaseRadians));
@@ -1460,9 +1506,25 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     bindTexture(GL_TEXTURE_2D, material.environmentMap);
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
+    if (skinHuman) {
+        pglBindBuffer(GL_ARRAY_BUFFER, humanSkin->weightBuffer);
+        currentArrayBuffer = humanSkin->weightBuffer;
+        for (GLuint attribute = 0; attribute < 4; ++attribute) {
+            pglEnableVertexAttribArray(3 + attribute);
+            pglVertexAttribPointer(3 + attribute, 4, GL_FLOAT, GL_FALSE,
+                                   static_cast<GLsizei>(HUMAN_WEIGHT_COUNT * sizeof(float)),
+                                   reinterpret_cast<const void*>(
+                                       static_cast<std::uintptr_t>(attribute * 4 * sizeof(float))));
+        }
+    }
     recordTriangleSubmission(vertexCount / 3);
     if (!drawSelectedIndirect(false))
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+    if (skinHuman) {
+        for (GLuint attribute = 0; attribute < 4; ++attribute) {
+            pglDisableVertexAttribArray(3 + attribute);
+        }
+    }
 }
 
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
@@ -1477,6 +1539,7 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     uploadModelUniforms(material, color, alpha, alphaMode, visibilityFade);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
     pglUniform1i(modelUniforms.humanGaitEnabled, GL_FALSE);
+    pglUniform1i(modelUniforms.humanSkinEnabled, GL_FALSE);
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {
         selectTextureUnit(GL_TEXTURE0 + 7);

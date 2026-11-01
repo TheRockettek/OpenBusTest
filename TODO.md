@@ -867,10 +867,17 @@ for the explicit boundary.
   similarly set an approximate wrist pivot for hand flex; neck Y/Z coordinates
   set an approximate head-stabilization pivot; and waist Y/Z coordinates anchor
   the gait-linked torso lean. Focused parser and GPU regressions cover the knee,
-  elbow, hand, neck, and waist pivots. These are approximate mesh deformations,
-  not native joint animation. Applying other link-driven joint positions, seat
-  height, mass, and voice data to human actors remains incomplete; parsing
-  alone is not runtime support.
+  elbow, hand, neck, and waist pivots. The runtime now forwards finger, neck,
+  and waist values by name rather than mixing their positional arguments.
+  Pedestrian O3D weights and negative `[setbone]` bindings now drive an
+  approximate 13-bone GPU gait, with procedural fallback for meshes without
+  usable weights. Invalid weight records are reported and skipped; some
+  installed meshes use indices beyond the decoded vertex array, so their
+  mapping and native weight semantics still need investigation. Hidden-GL
+  smoke tests render installed Woman01, Woman03, and MeCaT04G02 models in both
+  poses; validate joint alignment and visual parity in-game. Generic
+  vehicle and scenery skeletal skinning remains unsupported. Seat height,
+  mass, voice, and age remain for passenger boarding work.
 - [~] Real-map benchmark smoke checks load type-1 human paths and spawn the
   configured population on installed Bad Karlstein and Cotterell maps. Bad
   Karlstein exposed 166 human-path splines and queued two actors, with one
@@ -975,8 +982,8 @@ the outstanding implementation and validation tasks:
 - [~] **Render configured human models:** pedestrians now render the configured
   `.hum` first-LOD meshes instead of primitive proxies. `.hum`/model CFG
   parsing, mesh parsing, and texture decoding are asynchronous; OpenGL upload
-  remains on the render thread. AI driver model rendering and configured
-  skeletal/limb animation remain open.
+  remains on the render thread. Pedestrian skinning uses an approximate gait;
+  native animation parity and AI driver model rendering remain open.
 - [ ] **Use remaining `.hum` behavior:** validate and apply links, walk
   parameters, seat height, mass, and voice; verify human-path field meanings,
   route continuity, density behavior, and placement on representative maps.

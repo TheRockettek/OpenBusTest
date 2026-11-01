@@ -101,6 +101,95 @@ int main() {
     const auto close = [](int actual, int expected) { return std::abs(actual - expected) <= 2; };
     bool passed = true;
     StaticPrimitiveBuffer staticOverlay;
+    constexpr std::array<float, 39> skinVertices = {
+        -0.5F, -0.5F, -2.0F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+         0.5F, -0.5F, -2.0F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+         0.0F,  0.5F, -2.0F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+    GLuint skinBuffer = 0;
+    pglGenBuffers(1, &skinBuffer);
+    std::array<std::array<float, HUMAN_WEIGHT_COUNT>, 3> weights = {};
+    for (auto& vertex : weights)
+        vertex[0] = 1.0F;
+    pglBindBuffer(GL_ARRAY_BUFFER, skinBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(weights), weights.data(), GL_STATIC_DRAW);
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(skinVertices), skinVertices.data(), GL_STATIC_DRAW);
+    setModelViewMatrix(identityMatrix());
+    setLightingViewMatrix(identityMatrix());
+    std::array<Matrix4, HUMAN_BONE_COUNT> palette;
+    palette.fill(identityMatrix());
+    const auto skinFrame = [&](const HumanSkinDraw* skin) {
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawModelBatch(buffer, 3, ModelMaterial{}, {1, 1, 1}, 1.0, 0, false, std::nullopt,
+                       1.0, skin);
+        std::array<std::uint8_t, 32 * 32 * 4> image = {};
+        glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+        return image;
+    };
+    const HumanSkinDraw skin{skinBuffer, &palette};
+    const auto unskinned = skinFrame(nullptr);
+    const auto bindPose = skinFrame(&skin);
+    palette[0] = translationMatrix({0.7, 0.0, 0.0});
+    const auto moved = skinFrame(&skin);
+    for (auto& vertex : weights) {
+        vertex[0] = 0.5F;
+        vertex[1] = 0.5F;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, skinBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(weights), weights.data(), GL_STATIC_DRAW);
+    const auto blended = skinFrame(&skin);
+    for (auto& vertex : weights)
+        vertex.fill(0.0F);
+    pglBindBuffer(GL_ARRAY_BUFFER, skinBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(weights), weights.data(), GL_STATIC_DRAW);
+    const auto zeroWeights = skinFrame(&skin);
+    const auto restored = skinFrame(nullptr);
+    for (auto& vertex : weights)
+        vertex[0] = 1.0F;
+    pglBindBuffer(GL_ARRAY_BUFFER, skinBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(weights), weights.data(), GL_STATIC_DRAW);
+    palette[0] = multiplyMatrix4(
+        multiplyMatrix4(translationMatrix({0, 0, -2}), rotationMatrix(180, 1, 0, 0)),
+        translationMatrix({0, 0, 2}));
+    const auto rotated = skinFrame(&skin);
+    GLuint skinTestIndexBuffer = 0;
+    constexpr std::array<std::uint32_t, 3> skinTestIndices = {0, 1, 2};
+    pglGenBuffers(1, &skinTestIndexBuffer);
+    pglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skinTestIndexBuffer);
+    pglBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(skinTestIndices), skinTestIndices.data(),
+                  GL_STATIC_DRAW);
+    glClear(GL_COLOR_BUFFER_BIT);
+    drawIndexedModelBatch(buffer, skinTestIndexBuffer, 3, ModelMaterial{}, {1, 1, 1}, 1, 0);
+    std::array<std::uint8_t, 32 * 32 * 4> indexed = {};
+    glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, indexed.data());
+    const auto horizontalCentroid = [](const auto& image) {
+        double sum = 0.0;
+        int count = 0;
+        for (int y = 0; y < 32; ++y) {
+            for (int x = 0; x < 32; ++x) {
+                if (image[(y * 32 + x) * 4] != 0) {
+                    sum += x;
+                    ++count;
+                }
+            }
+        }
+        return count == 0 ? -1.0 : sum / count;
+    };
+    const std::size_t centerPixel = (16 * 32 + 16) * 4;
+    if (bindPose != unskinned || moved == bindPose || restored != unskinned ||
+        indexed != unskinned ||
+        zeroWeights != bindPose ||
+        horizontalCentroid(blended) <= horizontalCentroid(bindPose) ||
+        horizontalCentroid(blended) >= horizontalCentroid(moved) ||
+        unskinned[centerPixel] < 215 || rotated[centerPixel] < 145 ||
+        rotated[centerPixel] > 150) {
+        std::cerr << "Bone matrices did not preserve bind pose, deform vertices and normals, "
+                     "or restore unskinned drawing\n";
+        passed = false;
+    }
+    deleteRendererBuffers(1, &skinTestIndexBuffer);
+    deleteRendererBuffers(1, &skinBuffer);
     constexpr std::array<float, 39> humanVertices = {
         0.08F, -0.03F, 0.20F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
         0.14F, -0.03F, 0.20F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,

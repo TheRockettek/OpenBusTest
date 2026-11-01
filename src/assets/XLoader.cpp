@@ -510,9 +510,7 @@ class Parser {
             transformed.y /= length;
             transformed.z /= length;
         }
-        // Match the established OBJ/O3D convention for the map renderer's
-        // reflected map-axis basis and GL_CW front-face convention.
-        return {-transformed.x, -transformed.z, -transformed.y};
+        return {transformed.x, transformed.z, transformed.y};
     }
 
     void skipBalancedBlock() {

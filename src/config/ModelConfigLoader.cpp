@@ -628,15 +628,15 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [smoothskin] enables bone-weighted deformation for the current mesh.
         if (keyword == "smoothskin") {
-            if (requirePart() != nullptr) {
+            if (ModelPart* current = requirePart()) {
+                current->smoothSkin = true;
                 openbus::config::logUnhandledConfigurationTag(
                     "model.cfg", configPath, line.number, line.keyword(),
-                    "recognized but skeletal skinning is not implemented");
+                    "recognized but generic model skeletal skinning is not implemented");
             }
             continue;
         }
-        // OMSI pedestrian models may use negative bone indices. Skinning is not
-        // implemented, but these records do not invalidate an otherwise drawable mesh.
+        // OMSI pedestrian models may use negative bone indices.
         if (keyword == "setbone") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
@@ -647,9 +647,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     result.diagnostics.error(line.number, keyword,
                                              "expected a bone name and integer bone index");
                 } else {
-                    openbus::config::logUnhandledConfigurationTag(
-                        "model.cfg", configPath, line.number, line.keyword(),
-                        "recognized but skeletal skinning is not implemented");
+                    current->boneBindings.push_back({trim(values[0]), boneIndex});
+                    if (boneIndex > -2 || boneIndex < -14) {
+                        openbus::config::logUnhandledConfigurationTag(
+                            "model.cfg", configPath, line.number, line.keyword(),
+                            "generic model bone bindings are not implemented");
+                    }
                 }
             }
             continue;

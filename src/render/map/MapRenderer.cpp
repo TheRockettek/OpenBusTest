@@ -4,6 +4,7 @@
 #include "render/map/MapRendererInternal.h"
 #include "render/map/MapSceneLoader.h"
 #include "render/AssetRequestManager.h"
+#include "render/HumanRig.h"
 #include "config/HumanConfigLoader.h"
 #include "core/Utf8Path.h"
 
@@ -77,6 +78,9 @@ MapRenderer::Impl::~Impl() {
     deleteBatchBuffers(waterBatches);
     deleteBatchBuffers(sceneryBatches);
     deleteBatchBuffers(roadBatches);
+    for (const auto& batch : sceneryBatches) {
+        deleteBuffer(batch.skinWeightBuffer);
+    }
     for (const GLuint ownedTexture : ownedTextures) {
         if (ownedTexture != 0) {
             glDeleteTextures(1, &ownedTexture);
@@ -596,51 +600,30 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
             throw std::runtime_error("Human traffic model configuration is invalid: " +
                                      openbus::pathToUtf8(modelConfigPath) + diagnosticDetails);
         }
+        for (ModelPart& part : configuration.parts) {
+            std::string sourceExtension =
+                std::filesystem::path(part.sourceMeshPath).extension().string();
+            std::transform(sourceExtension.begin(), sourceExtension.end(), sourceExtension.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (part.boneBindings.empty() || sourceExtension != ".o3d")
+                continue;
+            const std::filesystem::path source =
+                openbus::assets::resolveReferencedPath(modelConfigPath, part.sourceMeshPath);
+            if (std::filesystem::is_regular_file(source)) {
+                part.objPath = source;
+                part.bundleEntry.clear();
+            }
+        }
         const bool hasFirstLodMesh = std::any_of(
             configuration.parts.begin(), configuration.parts.end(),
-            [](const ModelPart& part) { return part.lodIndex == 0 && !part.objPath.empty(); });
+            [](const ModelPart& part) { return part.lodIndex <= 0 && !part.objPath.empty(); });
         if (!hasFirstLodMesh) {
             throw std::runtime_error("Human traffic model has no first-LOD meshes: " +
                                      openbus::pathToUtf8(modelConfigPath));
         }
-        return Impl::HumanModelConfiguration{
-            modelConfigPath,
-            std::move(configuration),
-            geometry->values[1],
-            humanConfig.walkUpperArmBetaDegrees,
-            humanConfig.walkArmSwing,
-            humanConfig.walkHipSway,
-            humanConfig.walkWaistAnimation,
-            humanConfig.rightShoulderHeightFractions
-                ? (*humanConfig.rightShoulderHeightFractions)[0]
-                : 0.105,
-            humanConfig.rightShoulderHeightFractions
-                ? (*humanConfig.rightShoulderHeightFractions)[1]
-                : 0.76,
-            humanConfig.rightHipHeightFractions ? (*humanConfig.rightHipHeightFractions)[0] : 0.06,
-            humanConfig.rightHipHeightFractions ? (*humanConfig.rightHipHeightFractions)[1] : 0.5,
-            humanConfig.rightKneePositionFractions ? (*humanConfig.rightKneePositionFractions)[0]
-                                                   : 0.08,
-            humanConfig.rightKneePositionFractions ? (*humanConfig.rightKneePositionFractions)[1]
-                                                   : 0.0,
-            humanConfig.rightKneePositionFractions ? (*humanConfig.rightKneePositionFractions)[2]
-                                                   : 0.25,
-            humanConfig.rightElbowHeightFractions ? (*humanConfig.rightElbowHeightFractions)[0]
-                                                  : 0.25,
-            humanConfig.rightElbowHeightFractions ? (*humanConfig.rightElbowHeightFractions)[1]
-                                                  : 0.76,
-            humanConfig.rightHandHeightFractions ? (*humanConfig.rightHandHeightFractions)[0]
-                                                 : 0.40,
-            humanConfig.rightHandHeightFractions ? (*humanConfig.rightHandHeightFractions)[1]
-                                                 : 0.76,
-            humanConfig.rightFingerHeightFractions ? (*humanConfig.rightFingerHeightFractions)[0]
-                                                   : 0.5,
-            humanConfig.rightFingerHeightFractions ? (*humanConfig.rightFingerHeightFractions)[1]
-                                                   : 0.76,
-            humanConfig.neckHeightFractions ? (*humanConfig.neckHeightFractions)[0] : 0.0,
-            humanConfig.neckHeightFractions ? (*humanConfig.neckHeightFractions)[1] : 0.85,
-            humanConfig.waistHeightFractions ? (*humanConfig.waistHeightFractions)[0] : 0.0,
-            humanConfig.waistHeightFractions ? (*humanConfig.waistHeightFractions)[1] : 0.6};
+        return Impl::HumanModelConfiguration{modelConfigPath, std::move(configuration),
+                                             makeHumanGaitProfile(humanConfig, geometry->values[1]),
+                                             makeHumanJoints(humanConfig)};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -664,7 +647,7 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
         }
         pendingModel.configuration = pendingModel.configurationRequest.get();
         for (const ModelPart& part : pendingModel.configuration->configuration.parts) {
-            if (part.lodIndex == 0 && !part.objPath.empty()) {
+            if (part.lodIndex <= 0 && !part.objPath.empty()) {
                 pendingModel.meshRequests.push_back(
                     assetRequests_->requestObj(part.objPath, part.bundleEntry));
             }
@@ -683,31 +666,16 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
     const std::filesystem::path humanConfigPath = pendingModel.humanConfigPath;
     Impl::HumanModelConfiguration configuration = std::move(*pendingModel.configuration);
     impl_->pendingHumanTrafficModels.erase(pending);
-    loadHumanTrafficModelNow(
-        humanConfigPath, configuration.modelConfigPath, configuration.configuration,
-        configuration.heightMeters, configuration.upperArmBetaDegrees, configuration.armSwing,
-        configuration.hipSway, configuration.waistAnimation, configuration.shoulderXHeightFraction,
-        configuration.shoulderZHeightFraction, configuration.hipXHeightFraction,
-        configuration.hipZHeightFraction, configuration.kneeXHeightFraction,
-        configuration.kneeYHeightFraction, configuration.kneeZHeightFraction,
-        configuration.elbowXHeightFraction, configuration.elbowZHeightFraction,
-        configuration.handXHeightFraction, configuration.handZHeightFraction,
-        configuration.neckYHeightFraction, configuration.neckZHeightFraction,
-        configuration.waistYHeightFraction, configuration.waistZHeightFraction,
-        configuration.fingerXHeightFraction, configuration.fingerZHeightFraction);
+    loadHumanTrafficModelNow(humanConfigPath, configuration.modelConfigPath,
+                             configuration.configuration, configuration.gait, configuration.joints);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
-void MapRenderer::loadHumanTrafficModelNow(
-    const std::filesystem::path& humanConfigPath, const std::filesystem::path& modelConfigPath,
-    const ModelConfig& configuration, double heightMeters, double upperArmBetaDegrees,
-    double armSwing, double hipSway, double waistAnimation, double shoulderXHeightFraction,
-    double shoulderZHeightFraction, double hipXHeightFraction, double hipZHeightFraction,
-    double kneeXHeightFraction, double kneeYHeightFraction, double kneeZHeightFraction,
-    double elbowXHeightFraction, double elbowZHeightFraction, double handXHeightFraction,
-    double handZHeightFraction, double neckYHeightFraction, double neckZHeightFraction,
-    double waistYHeightFraction, double waistZHeightFraction, double fingerXHeightFraction,
-    double fingerZHeightFraction) const {
+void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
+                                           const std::filesystem::path& modelConfigPath,
+                                           const ModelConfig& configuration,
+                                           const HumanGaitParameters& gait,
+                                           const std::optional<HumanJoints>& joints) const {
     const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -783,11 +751,11 @@ void MapRenderer::loadHumanTrafficModelNow(
 
     const std::array<double, 3> extent = {maximum[0] - minimum[0], maximum[1] - minimum[1],
                                           maximum[2] - minimum[2]};
-    if (!std::isfinite(heightMeters) || heightMeters <= 0.0 || extent[2] <= 1.0e-6) {
+    if (!std::isfinite(gait.heightMeters) || gait.heightMeters <= 0.0 || extent[2] <= 1.0e-6) {
         throw std::runtime_error("Human traffic model has invalid height geometry: " +
                                  openbus::pathToUtf8(modelConfigPath));
     }
-    const double modelScale = heightMeters / extent[2];
+    const double modelScale = gait.heightMeters / extent[2];
     const std::array<double, 2> horizontalCenter = {(minimum[0] + maximum[0]) * 0.5,
                                                     (minimum[1] + maximum[1]) * 0.5};
     std::vector<Impl::ModelBatch> batches;
@@ -810,6 +778,22 @@ void MapRenderer::loadHumanTrafficModelNow(
     for (const ParsedHumanPart& parsedPart : parsedParts) {
         const ModelPart& part = *parsedPart.part;
         std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
+        std::unordered_map<int, std::vector<HumanVertexWeights>> weightsByMaterial;
+        HumanSkinWeights skin;
+        if (joints && !parsedPart.mesh->bones.empty() && !part.boneBindings.empty()) {
+            skin = resolveHumanSkinWeights(*parsedPart.mesh, part.boneBindings);
+            if (skin.invalidRecords != 0 || skin.unboundBones != 0 ||
+                skin.unweightedVertices != 0) {
+                gameLog.Warning("Human skin weights for " + openbus::pathToUtf8(part.objPath) +
+                                ": invalid records=" + std::to_string(skin.invalidRecords) +
+                                ", unbound bones=" + std::to_string(skin.unboundBones) +
+                                ", unweighted vertices=" + std::to_string(skin.unweightedVertices));
+            }
+        } else if (!parsedPart.mesh->bones.empty() || !part.boneBindings.empty()) {
+            gameLog.Warning("Human mesh cannot use bone skinning without valid [links] and bone "
+                            "bindings: " +
+                            openbus::pathToUtf8(part.objPath));
+        }
         for (const ObjTriangle& triangle : parsedPart.mesh->triangles) {
             const auto sourceMaterial = parsedPart.mesh->materials.find(triangle.material);
             const int materialIndex = sourceMaterial == parsedPart.mesh->materials.end()
@@ -856,6 +840,9 @@ void MapRenderer::loadHumanTrafficModelNow(
                      static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
                      static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
                      static_cast<float>(vertexColor[3])});
+                if (skin.hasWeights) {
+                    weightsByMaterial[materialIndex].push_back(skin.vertices[positionIndex]);
+                }
             }
         }
         for (auto& [materialIndex, vertices] : verticesByMaterial) {
@@ -968,6 +955,25 @@ void MapRenderer::loadHumanTrafficModelNow(
                                 ", OpenGL error=" + std::to_string(uploadError));
                 continue;
             }
+            if (skin.hasWeights) {
+                const auto& weights = weightsByMaterial.at(materialIndex);
+                pglGenBuffers(1, &batch.skinWeightBuffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, batch.skinWeightBuffer);
+                pglBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<std::ptrdiff_t>(weights.size() * sizeof(HumanVertexWeights)),
+                    weights.data(), GL_STATIC_DRAW);
+                const GLenum skinUploadError = drainGlErrors();
+                if (batch.skinWeightBuffer == 0 || skinUploadError != GL_NO_ERROR) {
+                    if (batch.skinWeightBuffer != 0) {
+                        deleteRendererBuffers(1, &batch.skinWeightBuffer);
+                        batch.skinWeightBuffer = 0;
+                    }
+                    gameLog.Warning("Could not upload human skin weights for " +
+                                    openbus::pathToUtf8(part.objPath) +
+                                    ", OpenGL error=" + std::to_string(skinUploadError));
+                }
+            }
             texturePaths.push_back(texturePath);
             textureImages.push_back(std::move(textureImage));
             batches.push_back(std::move(batch));
@@ -982,28 +988,8 @@ void MapRenderer::loadHumanTrafficModelNow(
     asset.batchIndexes.reserve(batches.size());
     asset.texturePaths = std::move(texturePaths);
     asset.textureImages = std::move(textureImages);
-    asset.heightMeters = heightMeters;
-    asset.upperArmBetaDegrees = upperArmBetaDegrees;
-    asset.armSwing = armSwing;
-    asset.hipSway = hipSway;
-    asset.waistAnimation = waistAnimation;
-    asset.shoulderXHeightFraction = shoulderXHeightFraction;
-    asset.shoulderZHeightFraction = shoulderZHeightFraction;
-    asset.hipXHeightFraction = hipXHeightFraction;
-    asset.hipZHeightFraction = hipZHeightFraction;
-    asset.kneeXHeightFraction = kneeXHeightFraction;
-    asset.kneeYHeightFraction = kneeYHeightFraction;
-    asset.kneeZHeightFraction = kneeZHeightFraction;
-    asset.elbowXHeightFraction = elbowXHeightFraction;
-    asset.elbowZHeightFraction = elbowZHeightFraction;
-    asset.handXHeightFraction = handXHeightFraction;
-    asset.handZHeightFraction = handZHeightFraction;
-    asset.neckYHeightFraction = neckYHeightFraction;
-    asset.neckZHeightFraction = neckZHeightFraction;
-    asset.waistYHeightFraction = waistYHeightFraction;
-    asset.waistZHeightFraction = waistZHeightFraction;
-    asset.fingerXHeightFraction = fingerXHeightFraction;
-    asset.fingerZHeightFraction = fingerZHeightFraction;
+    asset.gait = gait;
+    asset.joints = joints;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {
         asset.batchIndexes.push_back(impl_->sceneryBatches.size());

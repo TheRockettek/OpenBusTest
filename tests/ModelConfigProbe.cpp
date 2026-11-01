@@ -299,7 +299,12 @@ int main(int argc, char** argv) {
     const ModelConfig pedestrianResult = loadModelConfig(
         pedestrianConfigPath, root, ModelConfigKind::SceneryObject, pedestrianVariables);
     if (pedestrianResult.diagnostics.hasErrors() || pedestrianResult.parts.size() != 1 ||
-        pedestrianResult.parts.front().lodIndex != 0) {
+        pedestrianResult.parts.front().lodIndex != 0 ||
+        pedestrianResult.parts.front().boneBindings.size() != 2 ||
+        pedestrianResult.parts.front().boneBindings[0].name != "OS_L" ||
+        pedestrianResult.parts.front().boneBindings[0].index != -2 ||
+        pedestrianResult.parts.front().boneBindings[1].name != "Hip" ||
+        pedestrianResult.parts.front().boneBindings[1].index != -10) {
         std::cerr << "negative pedestrian [setbone] indices invalidated the drawable mesh\n";
         return 1;
     }
@@ -951,8 +956,20 @@ int main(int argc, char** argv) {
     const ModelConfig setBoneResult =
         loadModelConfig(setBoneConfigPath, root, ModelConfigKind::Bus, variables);
     if (setBoneResult.diagnostics.hasErrors() || !setBoneResult.diagnostics.entries.empty() ||
-        setBoneResult.parts.size() != 2) {
+        setBoneResult.parts.size() != 2 || !setBoneResult.parts[0].smoothSkin ||
+        setBoneResult.parts[0].boneBindings.size() != 2 ||
+        setBoneResult.parts[0].boneBindings[0].name != "Bone.001" ||
+        setBoneResult.parts[0].boneBindings[0].index != 0 ||
+        setBoneResult.parts[0].boneBindings[1].index != 1 ||
+        setBoneResult.parts[1].smoothSkin || !setBoneResult.parts[1].boneBindings.empty()) {
         std::cerr << "smoothskin/setbone records were not recognized and consumed\n";
+        return 1;
+    }
+    std::ostringstream boneJson;
+    writeModelConfigurationJson(boneJson, setBoneConfigPath, setBoneResult);
+    if (boneJson.str().find("\"smooth_skin\": true") == std::string::npos ||
+        boneJson.str().find("\"name\":\"Bone.001\",\"index\":0") == std::string::npos) {
+        std::cerr << "bone bindings were not retained in model JSON\n";
         return 1;
     }
     const std::filesystem::path invalidSetBoneConfigPath = root / "invalid_setbone.cfg";

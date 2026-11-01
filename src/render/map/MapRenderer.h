@@ -3,6 +3,7 @@
 #include "map/MapConfigLoader.h"
 #include "map/MapSplineProfile.h"
 #include "map/MapTrafficRuntime.h"
+#include "render/HumanSkinning.h"
 
 #include <array>
 #include <cstddef>
@@ -20,6 +21,7 @@ namespace openbus::rendering {
 
 class MapSceneLoader;
 class AssetRequestManager;
+struct HumanGaitParameters;
 
 struct MapRenderStats {
     std::size_t activeTiles = 0;
@@ -163,16 +165,10 @@ class MapRenderer {
 
     void initializeActiveScripts();
     bool finishHumanTrafficModelLoad(const std::string& cacheKey) const;
-    void loadHumanTrafficModelNow(
-        const std::filesystem::path& humanConfigPath, const std::filesystem::path& modelConfigPath,
-        const ModelConfig& configuration, double heightMeters, double upperArmBetaDegrees,
-        double armSwing, double hipSway, double waistAnimation, double shoulderXHeightFraction,
-        double shoulderZHeightFraction, double hipXHeightFraction, double hipZHeightFraction,
-        double kneeXHeightFraction, double kneeYHeightFraction, double kneeZHeightFraction,
-        double elbowXHeightFraction, double elbowZHeightFraction, double handXHeightFraction,
-        double handZHeightFraction, double neckYHeightFraction, double neckZHeightFraction,
-        double waistYHeightFraction, double waistZHeightFraction, double fingerXHeightFraction,
-        double fingerZHeightFraction) const;
+    void loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
+                                  const std::filesystem::path& modelConfigPath,
+                                  const ModelConfig& configuration, const HumanGaitParameters& gait,
+                                  const std::optional<HumanJoints>& joints) const;
 
     openbus::map::MapDefinition mapDefinition_;
     struct Impl;

@@ -400,7 +400,17 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
                << ",\n      \"fixed\": " << (part.fixed ? "true" : "false")
                << ",\n      \"is_shadow\": " << (part.isShadow ? "true" : "false")
                << ",\n      \"no_collision\": " << (part.noCollision ? "true" : "false")
-               << ",\n      \"mesh_identifier\": ";
+               << ",\n      \"smooth_skin\": " << (part.smoothSkin ? "true" : "false")
+               << ",\n      \"bone_bindings\": [";
+        for (std::size_t boneIndex = 0; boneIndex < part.boneBindings.size(); ++boneIndex) {
+            if (boneIndex != 0) {
+                output << ',';
+            }
+            output << "{\"name\":";
+            writeJsonString(output, part.boneBindings[boneIndex].name);
+            output << ",\"index\":" << part.boneBindings[boneIndex].index << '}';
+        }
+        output << "],\n      \"mesh_identifier\": ";
         writeJsonString(output, part.meshIdentifier);
         output << ",\n      \"animation_parent\": ";
         writeJsonString(output, part.animationParent);

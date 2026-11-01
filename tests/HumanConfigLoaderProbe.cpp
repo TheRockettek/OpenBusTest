@@ -102,8 +102,9 @@ int main(int argc, char** argv) {
                              (1.05 / 1.75)) < 1.0e-9,
                 "waist pivot is derived from authored links and normalized height");
         require(configuration.voice == "M2" && configuration.mass.has_value() &&
-                    std::abs(*configuration.mass - 0.07) < 1.0e-9,
-                "human [voice] and [mass] fields are parsed");
+                    std::abs(*configuration.mass - 0.07) < 1.0e-9 &&
+                    configuration.age.has_value() && *configuration.age == 42,
+                "human [voice], [mass], and [age] fields are parsed");
         require(!configuration.diagnostics.hasErrors(),
                 "valid human configuration has no errors");
     } catch (const std::exception& error) {

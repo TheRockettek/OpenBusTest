@@ -11,14 +11,19 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
 
 using namespace openbus::rendering;
 
@@ -62,6 +67,230 @@ void writeSolidTexture(const std::filesystem::path& path,
     std::ofstream output(path, std::ios::binary);
     output.write(reinterpret_cast<const char*>(image.data()), image.size());
     check(static_cast<bool>(output), "Could not write scenery lightmap texture");
+}
+
+void writeNormalMesh(const std::filesystem::path& path, float normalY) {
+    std::vector<std::uint8_t> bytes = {0x84, 0x19, 0x01};
+    const auto integer = [&](std::uint32_t value, int width) {
+        for (int index = 0; index < width; ++index) {
+            bytes.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+        }
+    };
+    const auto number = [&](float value) { integer(std::bit_cast<std::uint32_t>(value), 4); };
+    bytes.push_back(0x17);
+    integer(3, 2);
+    for (const auto& position : std::array<std::array<float, 3>, 3>{
+             {{{-2, 0, -2}}, {{2, 0, -2}}, {{0, 0, 2}}}}) {
+        for (const float value : position)
+            number(value);
+        for (const float value : {0.0F, normalY, 0.0F, 0.5F, 0.5F})
+            number(value);
+    }
+    bytes.push_back(0x49);
+    integer(2, 2);
+    for (const auto& triangle :
+         std::array<std::array<std::uint32_t, 3>, 2>{{{{0, 1, 2}}, {{0, 2, 1}}}}) {
+        for (const std::uint32_t index : triangle)
+            integer(index, 2);
+        integer(0, 2);
+    }
+    bytes.push_back(0x26);
+    integer(1, 2);
+    for (const float value : {1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F,
+                              0.0F, 0.0F, 0.0F, 0.0F, 0.0F})
+        number(value);
+    bytes.push_back(0);
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    check(static_cast<bool>(output), "Could not write O3D normal fixture");
+}
+
+void writeHumanMesh(const std::filesystem::path& path) {
+    std::vector<std::uint8_t> bytes = {0x84, 0x19, 0x01};
+    const auto integer = [&](std::uint32_t value, int width) {
+        for (int index = 0; index < width; ++index)
+            bytes.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+    };
+    const auto number = [&](float value) { integer(std::bit_cast<std::uint32_t>(value), 4); };
+    bytes.push_back(0x17);
+    integer(3, 2);
+    for (const auto& position : std::array<std::array<float, 3>, 3>{
+             {{{-0.7F, 0, 0}}, {{0.7F, 0, 0}}, {{0, 1.8F, 0}}}}) {
+        for (const float value : position)
+            number(value);
+        for (const float value : {0.0F, 0.0F, -1.0F, 0.0F, 0.0F})
+            number(value);
+    }
+    bytes.push_back(0x49);
+    integer(2, 2);
+    for (const auto& triangle :
+         std::array<std::array<std::uint32_t, 3>, 2>{{{{0, 1, 2}}, {{0, 2, 1}}}}) {
+        for (const auto index : triangle)
+            integer(index, 2);
+        integer(0, 2);
+    }
+    bytes.push_back(0x26);
+    integer(1, 2);
+    for (const float value : {1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F,
+                              0.0F, 0.0F, 0.0F, 0.0F, 0.0F})
+        number(value);
+    bytes.push_back(0);
+    bytes.push_back(0x54);
+    integer(1, 2);
+    bytes.push_back(4);
+    for (const char character : std::string_view("body"))
+        bytes.push_back(static_cast<std::uint8_t>(character));
+    integer(3, 2);
+    for (int index = 0; index < 3; ++index) {
+        integer(index, 2);
+        number(1.0F);
+    }
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    check(static_cast<bool>(output), "Could not write skinned human mesh");
+}
+
+void runHumanSkinningProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeHumanMesh(root / "model" / "human.o3d");
+    writeText(root / "model" / "human.obj",
+              "v -0.7 0 0\nv 0.7 0 0\nv 0 1.8 0\n"
+              "vn 0 0 -1\nf 1//1 2//1 3//1\nf 3//1 2//1 1//1\n");
+    for (const auto& [name, bone] :
+         std::array<std::pair<std::string_view, int>, 3>{
+             {{"chest", -11}, {"leg", -3}, {"fallback", 0}}}) {
+        writeText(root / "model" / (std::string(name) + ".cfg"),
+                  "[mesh]\nhuman.o3d\n" +
+                      (bone == 0 ? "" : "[setbone]\nbody\n" + std::to_string(bone) + "\n"));
+        writeText(root / (std::string(name) + ".hum"),
+                  "[model]\nmodel\\" + std::string(name) +
+                      ".cfg\n[humangeom]\n0.2\n1.8\n[links]\n"
+                      "0.1\n0\n0.9\n0.1\n0\n0.4\n0\n1.0\n"
+                      "0.2\n0\n1.4\n0.4\n0\n1.4\n0\n1.6\n"
+                      "0.6\n0\n1.4\n0.7\n0\n1.4\n"
+                      "[walk_param]\n1.4\n0\n1\n0\n0\n");
+    }
+    writeText(root / "tile.map", "[version]\n14\n[terrain]\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write human test terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 60);
+    lookAt(0, -4, 2, 0, 0, 0.9, 0, 0, 1);
+    setLightingViewMatrix(modelViewMatrix());
+    const openbus::map::MapTrafficPose pose;
+    const auto draw = [&](const std::filesystem::path& path, double phase, double weight) {
+        glClearColor(0, 0, 0, 0);
+        glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        resetFrameTriangleCount();
+        renderer.drawHumanTrafficActor(path, pose, phase, weight);
+        std::array<std::uint8_t, 64 * 64 * 4> image = {};
+        glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+        return image;
+    };
+    const auto awaitModel = [&](const std::filesystem::path& path) {
+        renderer.loadHumanTrafficModel(path);
+        for (int attempt = 0; attempt < 500; ++attempt) {
+            draw(path, 0, 0);
+            if (frameTriangleCount() != 0)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(frameTriangleCount() != 0, "Asynchronous human model did not render");
+    };
+    for (const std::string name : {"chest", "leg", "fallback"}) {
+        const auto path = root / (name + ".hum");
+        awaitModel(path);
+        const auto standing = draw(path, 0, 0);
+        const auto walking = draw(path, std::numbers::pi / 2, 1);
+        check(std::any_of(standing.begin(), standing.end(),
+                          [](std::uint8_t value) { return value != 0; }),
+              "Human model rendered no visible pixels");
+        check(name == "chest" ? standing == walking : standing != walking,
+              "Human binding did not select the expected skeletal pose");
+    }
+    if (const char* path = std::getenv("OPENBUS_HUMAN_SKINNING_TEST_PATH")) {
+        awaitModel(path);
+        const auto standing = draw(path, 0, 0);
+        const auto walking = draw(path, std::numbers::pi / 2, 1);
+        check(std::any_of(standing.begin(), standing.end(),
+                          [](std::uint8_t value) { return value != 0; }) &&
+                  std::any_of(walking.begin(), walking.end(),
+                              [](std::uint8_t value) { return value != 0; }),
+              "Installed human model was not visible in both poses");
+    }
+}
+
+void runNormalProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeNormalMesh(root / "model" / "up.o3d", 1.0F);
+    writeNormalMesh(root / "model" / "down.o3d", -1.0F);
+    writeText(root / "model" / "up.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshNormals { 1; 0;1;0;; 2; 3;0,0,0;, 3;0,0,0;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; } } }\n");
+    writeText(root / "up.sco", "[mesh]\nup.o3d\n");
+    writeText(root / "down.sco", "[mesh]\ndown.o3d\n");
+    writeText(root / "up-x.sco", "[mesh]\nup.x\n");
+    writeText(root / "tile.map",
+              "[version]\n14\n[terrain]\n"
+              "[object]\n0\nup-x.sco\n100\n-6\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\nup.sco\n101\n-2\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\ndown.sco\n102\n2\n0\n5\n0\n0\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write O3D normal terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.renderStats().activeSceneryObjects == 3, "Normal scenery did not load");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, 0, -16}));
+    setLightingViewMatrix(identityMatrix());
+    glDepthMask(GL_TRUE);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.draw();
+    std::array<std::uint8_t, 4> upX = {}, up = {}, down = {};
+    glReadPixels(14, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, upX.data());
+    glReadPixels(26, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, up.data());
+    glReadPixels(38, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, down.data());
+    check(up[0] > 215 && down[0] >= 145 && down[0] <= 150 && up[0] > down[0] + 60,
+          "O3D surface normal did not produce the expected directional lighting");
+    check(upX[0] == up[0], "X and O3D upward normals did not produce matching lighting");
 }
 
 void runLightmapProbe(const std::filesystem::path& root) {
@@ -420,7 +649,7 @@ void runBumpmapProbe(const std::filesystem::path& root) {
     writeText(root / "model" / "surface.x",
               "xof 0303txt 0032\n"
               "Mesh { 3; -1.2;0;-2;, 1.2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
-              "MeshNormals { 1; 0;0;-1;; 2; 3;0,0,0;, 3;0,0,0;; }\n"
+              "MeshNormals { 1; 0;1;0;; 2; 3;0,0,0;, 3;0,0,0;; }\n"
               "MeshTextureCoords { 3; 0;0;, 1;0;, 0.5;1;; }\n"
               "MeshMaterialList { 1; 2; 0,0;; Material { "
               "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
@@ -692,7 +921,10 @@ int main(int argc, char** argv) {
     const bool environment = argc == 2 && std::string_view(argv[1]) == "--envmap";
     const bool nightmap = argc == 2 && std::string_view(argv[1]) == "--nightmap";
     const bool itemLightmap = argc == 2 && std::string_view(argv[1]) == "--item-lightmap";
-    if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap && !itemLightmap) {
+    const bool normals = argc == 2 && std::string_view(argv[1]) == "--normals";
+    const bool human = argc == 2 && std::string_view(argv[1]) == "--human-skinning";
+    if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap && !itemLightmap &&
+        !normals && !human) {
         return 2;
     }
     if (!glfwInit()) {
@@ -705,8 +937,8 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(
-        lightmap || bumpmap || environment || nightmap || itemLightmap ? 64 : 32,
-        lightmap || bumpmap || environment || nightmap || itemLightmap ? 64 : 32,
+        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ? 64 : 32,
+        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ? 64 : 32,
                                           "Scenery material probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
@@ -718,7 +950,11 @@ int main(int argc, char** argv) {
     const bool unavailable = passed && indirect && !indirectCullingAvailable();
     if (passed && !unavailable) {
         try {
-            if (lightmap) {
+            if (human) {
+                runHumanSkinningProbe(root);
+            } else if (normals) {
+                runNormalProbe(root);
+            } else if (lightmap) {
                 runLightmapProbe(root);
             } else if (bumpmap) {
                 runBumpmapProbe(root);

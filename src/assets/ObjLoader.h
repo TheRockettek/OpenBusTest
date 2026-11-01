@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -46,6 +47,17 @@ struct ObjMaterial {
     double alpha = 1.0;
 };
 
+struct ObjBoneWeight {
+    // Some authored records use indices outside the decoded vertex array.
+    std::uint32_t sourceIndex = 0;
+    float weight = 0.0F;
+};
+
+struct ObjBone {
+    std::string name;
+    std::vector<ObjBoneWeight> weights;
+};
+
 struct ParsedObj {
     std::vector<ObjPosition> positions;
     std::vector<ObjNormal> normals;
@@ -53,6 +65,7 @@ struct ParsedObj {
     std::vector<ObjColor> vertexColors;
     std::vector<ObjTriangle> triangles;
     std::unordered_map<std::string, ObjMaterial> materials;
+    std::vector<ObjBone> bones;
     std::array<double, 16> transform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
                                         0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
     bool hasTransform = false;

@@ -23,6 +23,7 @@
 #include "map/MapWaterGeometry.h"
 #include "render/ComputeCulling.h"
 #include "render/CoreRenderer.h"
+#include "render/HumanSkinning.h"
 #include "render/GlCompat.h"
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
@@ -232,6 +233,7 @@ struct MapRenderer::Impl {
     struct ModelBatch {
         GLuint buffer = 0;
         GLuint indexBuffer = 0;
+        GLuint skinWeightBuffer = 0;
         std::size_t vertexCount = 0;
         std::size_t indexCount = 0;
         ModelMaterial material;
@@ -275,55 +277,15 @@ struct MapRenderer::Impl {
         std::vector<std::size_t> batchIndexes;
         std::vector<std::filesystem::path> texturePaths;
         std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
-        double heightMeters = 0.0;
-        double upperArmBetaDegrees = 66.0;
-        double armSwing = 1.0;
-        double hipSway = 1.0;
-        double waistAnimation = 0.0;
-        double shoulderXHeightFraction = 0.105;
-        double shoulderZHeightFraction = 0.76;
-        double hipXHeightFraction = 0.06;
-        double hipZHeightFraction = 0.5;
-        double kneeXHeightFraction = 0.08;
-        double kneeYHeightFraction = 0.0;
-        double kneeZHeightFraction = 0.25;
-        double elbowXHeightFraction = 0.25;
-        double elbowZHeightFraction = 0.76;
-        double handXHeightFraction = 0.40;
-        double handZHeightFraction = 0.76;
-        double fingerXHeightFraction = 0.5;
-        double fingerZHeightFraction = 0.76;
-        double neckYHeightFraction = 0.0;
-        double neckZHeightFraction = 0.85;
-        double waistYHeightFraction = 0.0;
-        double waistZHeightFraction = 0.6;
+        HumanGaitParameters gait;
+        std::optional<HumanJoints> joints;
     };
 
     struct HumanModelConfiguration {
         std::filesystem::path modelConfigPath;
         ModelConfig configuration;
-        double heightMeters = 0.0;
-        double upperArmBetaDegrees = 66.0;
-        double armSwing = 1.0;
-        double hipSway = 1.0;
-        double waistAnimation = 0.0;
-        double shoulderXHeightFraction = 0.105;
-        double shoulderZHeightFraction = 0.76;
-        double hipXHeightFraction = 0.06;
-        double hipZHeightFraction = 0.5;
-        double kneeXHeightFraction = 0.08;
-        double kneeYHeightFraction = 0.0;
-        double kneeZHeightFraction = 0.25;
-        double elbowXHeightFraction = 0.25;
-        double elbowZHeightFraction = 0.76;
-        double handXHeightFraction = 0.40;
-        double handZHeightFraction = 0.76;
-        double fingerXHeightFraction = 0.5;
-        double fingerZHeightFraction = 0.76;
-        double neckYHeightFraction = 0.0;
-        double neckZHeightFraction = 0.85;
-        double waistYHeightFraction = 0.0;
-        double waistZHeightFraction = 0.6;
+        HumanGaitParameters gait;
+        std::optional<HumanJoints> joints;
     };
 
     struct PendingHumanModel {

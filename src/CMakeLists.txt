@@ -148,6 +148,7 @@ openbus_add_module(openbus_render
         render/CameraMath.cpp
         render/ComputeCulling.cpp
         render/CoreRenderer.cpp
+        render/HumanSkinning.cpp
         render/MatrixMath.cpp
         render/OpenGLFunctions.cpp
         render/RenderPrimitives.cpp

@@ -185,6 +185,11 @@ struct ModelCtcTexture {
     std::string textureName;
 };
 
+struct ModelBoneBinding {
+    std::string name;
+    int index = 0;
+};
+
 struct ModelPart {
     std::filesystem::path objPath;
     std::string bundleEntry;
@@ -197,6 +202,8 @@ struct ModelPart {
     bool fixed = false;
     bool isShadow = false;
     bool noCollision = false;
+    bool smoothSkin = false;
+    std::vector<ModelBoneBinding> boneBindings;
     std::string meshIdentifier;
     std::string animationParent;
     std::string mouseEvent;

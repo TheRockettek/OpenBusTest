@@ -188,7 +188,7 @@ int main(int argc, char** argv) {
             std::abs(parsed->positions[0].z) > 1.0e-8 ||
             std::abs(parsed->positions[2].x - 6.0) > 1.0e-8 ||
             std::abs(parsed->positions[2].y - 1.0) > 1.0e-8 ||
-            std::abs(parsed->normals[0].z + 1.0) > 1.0e-8) {
+            std::abs(parsed->normals[0].z - 1.0) > 1.0e-8) {
             std::cerr << "frame and map-axis transforms were not applied to X vertices/normals\n";
             return 1;
         }

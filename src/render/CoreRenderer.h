@@ -12,6 +12,8 @@
 namespace openbus::rendering {
 
 constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
+inline constexpr std::size_t HUMAN_BONE_COUNT = 13;
+inline constexpr std::size_t HUMAN_WEIGHT_COUNT = 16;
 
 struct PrimitiveVertex {
     float x;
@@ -111,6 +113,11 @@ struct HumanGaitParameters {
     double waistZHeightFraction = 0.6;
 };
 
+struct HumanSkinDraw {
+    GLuint weightBuffer = 0;
+    const std::array<Matrix4, HUMAN_BONE_COUNT>* palette = nullptr;
+};
+
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
 void invalidateTextureBindings();
@@ -131,7 +138,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
                     const std::array<double, 3>& color, double alpha, int alphaMode,
                     bool cullBackFaces = false,
                     std::optional<HumanGaitParameters> humanGait = std::nullopt,
-                    double visibilityFade = 1.0);
+                    double visibilityFade = 1.0, const HumanSkinDraw* humanSkin = nullptr);
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
                            double alpha, int alphaMode, bool cullBackFaces = false,

@@ -425,9 +425,9 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
                 const double sourceZ = parseNumber(nextToken(remaining), 0.0);
                 const std::array<double, 3> converted =
                     convertSourcePosition(sourceX, sourceY, sourceZ);
-                normal.x = -converted[0];
-                normal.y = -converted[1];
-                normal.z = -converted[2];
+                normal.x = converted[0];
+                normal.y = converted[1];
+                normal.z = converted[2];
                 result->normals.push_back(normal);
             } else if (type == "vt") {
                 ObjTexCoord texCoord = {};
@@ -495,10 +495,12 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
                 continue;
             }
             ++counted;
-            if (dot(face, normal) < 0.0) {
+            // Preserve the winding heuristic's original reflected-basis convention
+            // independently of the outward normals used for lighting.
+            if (dot(face, normal) > 0.0) {
                 ++against;
             }
-            if (dot(face, transformVector(result->transform, normal)) < 0.0) {
+            if (dot(face, transformVector(result->transform, normal)) > 0.0) {
                 ++againstTurned;
             }
         }

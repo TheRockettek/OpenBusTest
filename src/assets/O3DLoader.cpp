@@ -297,7 +297,7 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
                     decodeVertex(vertexDecodeState, x, y, z, normalX, normalY, normalZ, u, v);
                     const std::array<double, 3> mapPosition = convertO3DPositionToMapAxes(x, y, z);
                     result->positions.push_back({mapPosition[0], mapPosition[1], mapPosition[2]});
-                    result->normals.push_back({-normalX, -normalZ, -normalY});
+                    result->normals.push_back({normalX, normalZ, normalY});
                     result->texCoords.push_back({u, 1.0 - v});
                 }
                 break;
@@ -342,17 +342,19 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
             }
             case BoneList: {
                 const std::uint16_t count = reader.u16();
+                result->bones.reserve(result->bones.size() + count);
                 for (std::uint16_t index = 0; index < count; ++index) {
-                    reader.string();
+                    ObjBone bone;
+                    bone.name = reader.string();
                     const std::uint16_t weights = reader.u16();
+                    bone.weights.reserve(weights);
                     for (std::uint16_t weight = 0; weight < weights; ++weight) {
-                        if (longTriangleIndices) {
-                            reader.u32();
-                        } else {
-                            reader.u16();
-                        }
-                        reader.f32();
+                        const std::uint32_t sourceIndex =
+                            longTriangleIndices ? reader.u32() : reader.u16();
+                        const float value = reader.f32();
+                        bone.weights.push_back({sourceIndex, value});
                     }
+                    result->bones.push_back(std::move(bone));
                 }
                 break;
             }

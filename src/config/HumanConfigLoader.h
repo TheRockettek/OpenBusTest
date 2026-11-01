@@ -34,6 +34,7 @@ struct HumanConfig {
     std::optional<std::array<double, 2>> waistHeightFractions;
     std::optional<std::array<double, 2>> rightShoulderHeightFractions;
     std::optional<double> mass;
+    std::optional<double> age;
     std::string voice;
     std::vector<HumanNumericRecord> numericRecords;
     ConfigurationDiagnostics diagnostics;

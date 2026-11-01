@@ -90,19 +90,25 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
                     configuration.walkWaistAnimation = record.values[4];
                 }
             }
-        } else if (keyword == "mass") {
+        } else if (keyword == "mass" || keyword == "age") {
             Line value;
             if (!reader.readPayload(value, configuration.diagnostics, keyword)) {
                 continue;
             }
-            double mass = 0.0;
-            if (!parseDouble(value.text, mass)) {
+            double number = 0.0;
+            if (!parseDouble(value.text, number)) {
                 configuration.diagnostics.error(value.number, keyword, "expected a numeric value");
-            } else if (!configuration.mass.has_value()) {
-                configuration.mass = mass;
+            } else if (keyword == "age" && number < 0.0) {
+                configuration.diagnostics.error(value.number, keyword, "age must be non-negative");
             } else {
-                configuration.diagnostics.warning(line.number, keyword,
-                                                  "duplicate mass ignored; first retained");
+                std::optional<double>& field =
+                    keyword == "mass" ? configuration.mass : configuration.age;
+                if (!field.has_value()) {
+                    field = number;
+                } else {
+                    configuration.diagnostics.warning(
+                        line.number, keyword, "duplicate " + keyword + " ignored; first retained");
+                }
             }
         } else if (keyword == "voice") {
             Line value;
