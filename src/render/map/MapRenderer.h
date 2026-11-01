@@ -115,6 +115,8 @@ class MapRenderer {
         bool allowReverseTraversalForRequired = false) const;
     std::vector<openbus::map::MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
+    std::optional<openbus::map::MapTrafficPose>
+    timetableStopPose(int splineId, std::size_t pathIndex, double offsetMeters) const;
     std::optional<openbus::map::MapTrafficLaneConnectionGap>
     nearestTrafficLaneConnectionGap(int fromSplineId, std::optional<std::size_t> fromPathIndex,
                                     int toSplineId, std::optional<std::size_t> toPathIndex) const;

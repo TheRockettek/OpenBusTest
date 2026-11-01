@@ -501,6 +501,7 @@ struct WaterData {
 };
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory);
+std::size_t applyMapChronoTimetables(MapDefinition& map, int dateYyyyMmDd);
 MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path& ticketPackPath);
 MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& currencyPath);
 std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd);

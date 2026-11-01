@@ -44,10 +44,9 @@ void RenderLoop::SetPlayerTimetableSelection(
         return;
     }
     playerPassengerServiceEnabled_ = true;
-    playerTimetable_.state->lineName = openbus::app::passengerRouteHofRoute(
-                                           passengerNetwork_.routes[selection->passengerRouteIndex],
-                                           playerVehicle_->scripts->hofData())
-                                           ->line;
+    const auto& route = passengerNetwork_.routes[selection->passengerRouteIndex];
+    playerTimetable_.state->lineName = openbus::app::passengerRouteDisplayLine(
+        route, *openbus::app::passengerRouteHofRoute(route, playerVehicle_->scripts->hofData()));
     applyPlayerTripAiPolicy(*trip, selection->driveAsAdditionalBus);
 }
 

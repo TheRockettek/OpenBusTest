@@ -3844,6 +3844,37 @@ MapTrafficLaneNetwork::lanesForTimetableEntry(int splineId,
     return starts;
 }
 
+std::optional<MapTrafficPose> MapTrafficLaneNetwork::timetableStopPose(int splineId,
+                                                                       std::size_t pathIndex,
+                                                                       double offsetMeters) const {
+    if (!std::isfinite(offsetMeters) || offsetMeters < 0.0) {
+        throw std::invalid_argument("Timetable stop offset must be finite and non-negative");
+    }
+    const auto starts = lanesForTimetableEntry(splineId, pathIndex);
+    const auto lanes = lanesBySpline_.find(splineId);
+    if (lanes == lanesBySpline_.end()) {
+        return std::nullopt;
+    }
+    for (const auto& start : starts) {
+        const std::size_t index = lanes->second[start.laneSelector];
+        MapTrafficRoute route;
+        route.segments.push_back(segments_[index]);
+        route.totalLength = lengths_[index];
+        route.cumulativeEndDistances.push_back(route.totalLength);
+        const auto& segment = route.segments.front();
+        const double splineEnd =
+            segment.reversed ? segment.spline.placement.length : route.totalLength;
+        const double sampleOffset =
+            offsetMeters > splineEnd && offsetMeters - splineEnd <= 0.01 ? splineEnd : offsetMeters;
+        const auto position =
+            mapTrafficRoutePositionOnSpline(route, splineId, pathIndex, sampleOffset);
+        if (position) {
+            return sampleMapTrafficRoute(route, position->distanceMeters, 0.0);
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<MapTrafficLaneConnectionGap> MapTrafficLaneNetwork::nearestConnectionGap(
     int fromSplineId, std::optional<std::size_t> fromPathIndex, int toSplineId,
     std::optional<std::size_t> toPathIndex) const {

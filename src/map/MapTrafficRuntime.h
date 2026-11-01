@@ -560,6 +560,8 @@ class MapTrafficLaneNetwork {
     std::size_t laneCount(int splineId) const;
     std::vector<MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
+    std::optional<MapTrafficPose> timetableStopPose(int splineId, std::size_t pathIndex,
+                                                    double offsetMeters) const;
     std::optional<MapTrafficLaneConnectionGap>
     nearestConnectionGap(int fromSplineId, std::optional<std::size_t> fromPathIndex, int toSplineId,
                          std::optional<std::size_t> toPathIndex) const;

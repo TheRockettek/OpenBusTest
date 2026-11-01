@@ -117,7 +117,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
     trafficFleet_.aiSimulationRateHz = positiveEnvironmentRate("OPENBUS_AI_HZ", 0.0);
     trafficFleet_.aiMaximumRateHz = positiveEnvironmentRate("OPENBUS_MAX_FPS", 0.0);
     trafficFleet_.aiRateDivisor = positiveEnvironmentRate("OPENBUS_AI_HZ_DIVISOR", 1.0);
-    renderFpsCapHz_ = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
+    const double renderFpsCapHz = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
+    frameTiming_.setFrameRateCap(renderFpsCapHz);
     mainViewMinimumObjectViewportFraction_ =
         minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT");
     reflectionMinimumObjectViewportFraction_ =
@@ -140,8 +141,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         gameLog.Log("AI traffic rate capped at " + std::to_string(trafficFleet_.aiMaximumRateHz) +
                     " Hz");
     }
-    if (renderFpsCapHz_ > 0.0) {
-        gameLog.Log("Render frame rate capped at " + std::to_string(renderFpsCapHz_) + " FPS");
+    if (renderFpsCapHz > 0.0) {
+        gameLog.Log("Render frame rate capped at " + std::to_string(renderFpsCapHz) + " FPS");
     } else {
         gameLog.Log("Render frame rate is not capped");
     }
@@ -416,6 +417,37 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
     return result;
 }
 
+void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficData& traffic,
+                                               double scheduledHumanScale) {
+    if (!mapRenderer_) {
+        throw std::logic_error("Cannot register player timetable routes before loading a map");
+    }
+    const auto report = passengerNetwork_.registerTimetables(
+        traffic, openbus::map::mapScheduledPassengerQueueSize(4, scheduledHumanScale),
+        [&](const openbus::map::MapTrafficPassengerStop& stop) {
+            return mapRenderer_->timetableStopPose(stop.splineId, stop.pathIndex,
+                                                   stop.splinePositionMeters.value_or(0.0));
+        });
+    playerTimetableCatalog_.invalidate();
+    gameLog.Log("Player timetable routes registered from map schedules: " +
+                std::to_string(passengerNetwork_.routes.size()));
+    if (report.missingStops != 0) {
+        gameLog.Warning(
+            "Player timetable cannot locate " + std::to_string(report.missingStops) + " stops on " +
+            std::to_string(report.routesWithMissingStops) + " routes, including " +
+            std::to_string(report.routesWithoutStops) +
+            " with no located stops; those stops cannot be serviced. Examples: " +
+            report.missingExamples +
+            (report.routesWithoutStopExamples.empty()
+                 ? ""
+                 : ". Routes with no located stops: " + report.routesWithoutStopExamples));
+    }
+}
+
+std::optional<std::size_t> RenderLoop::playerTimetableRouteIndex(const std::string& key) const {
+    return passengerNetwork_.findRouteIndex(key);
+}
+
 bool RenderLoop::AddTrafficVehicle(
     int splineId, int pathTypeCode, const std::filesystem::path& busConfigPath,
     std::optional<std::string> driverModelPath, double speedMetersPerSecond,
@@ -622,57 +654,16 @@ bool RenderLoop::AddTrafficVehicle(
         trafficState.bus->timetableKey = timetableKey;
         trafficState.bus->timetableLineName = std::move(timetableLineName);
         trafficState.bus->timetableDestinationName = std::move(timetableDestinationName);
-        std::vector<openbus::map::MapTrafficPassengerStop> mappedStops;
-        std::size_t routeSegmentCursor = 0;
-        for (openbus::map::MapTrafficPassengerStop& stop : passengerStops) {
-            if (stop.stopId == 0 || stop.dwellSeconds < 0.0 || !std::isfinite(stop.dwellSeconds) ||
-                (stop.splinePositionMeters && (!std::isfinite(*stop.splinePositionMeters) ||
-                                               *stop.splinePositionMeters < 0.0))) {
-                throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
-            }
-            const auto logUnmatchedStop = [&] {
+        auto mappedStops = openbus::app::mapPassengerStopsToTrafficRoute(
+            trafficState.actor.route, std::move(passengerStops),
+            [&](const openbus::map::MapTrafficPassengerStop& stop) {
                 gameLog.Warning(
                     "Scheduled passenger stop could not be matched to the bus route; "
                     "stopId=" +
                     std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
                     " path=" + std::to_string(stop.pathIndex) + " bus=" + busConfigPath.string());
-            };
-            if (stop.splinePositionMeters) {
-                const auto routePosition = openbus::map::mapTrafficRoutePositionOnSpline(
-                    trafficState.actor.route, stop.splineId, stop.pathIndex,
-                    *stop.splinePositionMeters, routeSegmentCursor);
-                if (!routePosition) {
-                    logUnmatchedStop();
-                    continue;
-                }
-                routeSegmentCursor = routePosition->segmentIndex;
-                stop.routeDistanceMeters = routePosition->distanceMeters;
-                mappedStops.push_back(std::move(stop));
-                continue;
-            }
-            const auto segment =
-                std::find_if(trafficState.actor.route.segments.begin() +
-                                 static_cast<std::ptrdiff_t>(routeSegmentCursor),
-                             trafficState.actor.route.segments.end(),
-                             [&](const openbus::map::MapTrafficRouteSegment& candidate) {
-                                 return openbus::map::mapTrafficSegmentMatchesTimetablePath(
-                                     candidate, stop.splineId, stop.pathIndex);
-                             });
-            if (segment == trafficState.actor.route.segments.end()) {
-                logUnmatchedStop();
-                continue;
-            }
-            routeSegmentCursor = static_cast<std::size_t>(
-                std::distance(trafficState.actor.route.segments.begin(), segment));
-            const std::size_t segmentIndex = routeSegmentCursor;
-            stop.routeDistanceMeters =
-                segmentIndex == 0
-                    ? 0.0
-                    : trafficState.actor.route.cumulativeEndDistances[segmentIndex - 1];
-            mappedStops.push_back(std::move(stop));
-        }
+            });
         if (!mappedStops.empty()) {
-            mappedStops.back().passengersAlighting = (std::numeric_limits<std::size_t>::max)();
             trafficState.bus->timetableTerminusIndex = static_cast<int>(mappedStops.size() - 1);
         }
         if (!registerPassengerRouteOnly && passengerRouteIndex && !mappedStops.empty()) {
@@ -700,14 +691,7 @@ bool RenderLoop::AddTrafficVehicle(
                 *registeredPassengerRouteIndex = routeIndex;
             }
             trafficState.bus->passengerRouteIndex = routeIndex;
-            for (const openbus::map::MapTrafficPassengerStop& stop :
-                 trafficState.bus->passengerStops) {
-                const auto [queue, inserted] =
-                    passengerNetwork_.queues.try_emplace(stop.stopId, stop.waitingPassengers);
-                if (inserted) {
-                    passengerNetwork_.initialQueues.emplace(stop.stopId, queue->second);
-                }
-            }
+            passengerNetwork_.initializeQueues(trafficState.bus->passengerStops.values());
             return true;
         }
         if (isBus && !trafficState.bus->passengerStops.empty()) {
@@ -722,13 +706,7 @@ bool RenderLoop::AddTrafficVehicle(
                 playerTimetableCatalog_.invalidate();
             }
         }
-        for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.bus->passengerStops) {
-            const auto [queue, inserted] =
-                passengerNetwork_.queues.try_emplace(stop.stopId, stop.waitingPassengers);
-            if (inserted) {
-                passengerNetwork_.initialQueues.emplace(stop.stopId, queue->second);
-            }
-        }
+        passengerNetwork_.initializeQueues(trafficState.bus->passengerStops.values());
     }
     if (isBus) {
         trafficState.bus->nextScheduledDepartureIndex = openbus::map::mapTrafficNextDepartureIndex(

@@ -40,8 +40,7 @@ constexpr const wchar_t* GAME_ID_NAME = L"SteamGameId";
 constexpr const wchar_t* LIBRARY_NAME = L"OPENBUS_STEAM_API_LIBRARY";
 constexpr const wchar_t* PRESENCE_NAME = L"OPENBUS_STEAM_PRESENCE";
 constexpr const wchar_t* ROOT_NAME = L"OPENBUS_STEAM_ROOT";
-constexpr const wchar_t* API_FILENAME =
-    sizeof(void*) == 8 ? L"steam_api64.dll" : L"steam_api.dll";
+constexpr const wchar_t* API_FILENAME = sizeof(void*) == 8 ? L"steam_api64.dll" : L"steam_api.dll";
 
 bool readEnvironment(const wchar_t* name, std::optional<EnvironmentString>& value) {
     SetLastError(ERROR_SUCCESS);
@@ -82,17 +81,16 @@ void* loadLibrary(const std::filesystem::path& path, std::string& error) {
         error = absoluteError.message();
         return nullptr;
     }
-    HMODULE library = LoadLibraryExW(absolutePath.c_str(), nullptr,
-                                     LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
-                                         LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    HMODULE library =
+        LoadLibraryExW(absolutePath.c_str(), nullptr,
+                       LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!library) {
         error = std::system_category().message(static_cast<int>(GetLastError()));
     }
     return library;
 }
 
-template <typename Function>
-Function loadFunction(void* library, const char* name) {
+template <typename Function> Function loadFunction(void* library, const char* name) {
     return reinterpret_cast<Function>(GetProcAddress(static_cast<HMODULE>(library), name));
 }
 
@@ -106,8 +104,8 @@ void closeLibrary(void* library) {
 std::optional<std::filesystem::path> executableDirectory() {
     std::vector<wchar_t> buffer(512);
     while (buffer.size() <= 32768) {
-        const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
-                                                static_cast<DWORD>(buffer.size()));
+        const DWORD length =
+            GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         if (length == 0) {
             steamLog.Warning("Could not locate OpenBus executable: " +
                              std::system_category().message(static_cast<int>(GetLastError())));
@@ -149,8 +147,7 @@ void* loadLibrary(const std::filesystem::path& path, std::string& error) {
     return library;
 }
 
-template <typename Function>
-Function loadFunction(void* library, const char* name) {
+template <typename Function> Function loadFunction(void* library, const char* name) {
     return reinterpret_cast<Function>(dlsym(library, name));
 }
 
@@ -203,9 +200,8 @@ bool SteamPresence::initializeFromDirectory(const std::filesystem::path& directo
     }
     if (enabled && !enabled->empty()) {
         std::string flag = openbus::pathToUtf8(std::filesystem::path(*enabled));
-        std::transform(flag.begin(), flag.end(), flag.begin(), [](unsigned char ch) {
-            return static_cast<char>(std::tolower(ch));
-        });
+        std::transform(flag.begin(), flag.end(), flag.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         if (flag == "0" || flag == "false" || flag == "off") {
             steamLog.Log("Steam presence disabled by OPENBUS_STEAM_PRESENCE");
             return false;
@@ -226,7 +222,8 @@ bool SteamPresence::initializeFromDirectory(const std::filesystem::path& directo
         steamLog.Warning("Could not read OPENBUS_STEAM_ROOT");
         return false;
     }
-    if ((obsoleteLibrary && !obsoleteLibrary->empty()) || (obsoleteRoot && !obsoleteRoot->empty())) {
+    if ((obsoleteLibrary && !obsoleteLibrary->empty()) ||
+        (obsoleteRoot && !obsoleteRoot->empty())) {
         steamLog.Warning("OPENBUS_STEAM_API_LIBRARY and OPENBUS_STEAM_ROOT are no longer used; "
                          "loading the bundled Steamworks runtime");
     }
@@ -293,7 +290,8 @@ bool SteamPresence::initialize(const std::filesystem::path& libraryPath) {
     if (!init_ || !callbacks_ || !shutdown_ || !getUtils || !getAppId) {
         shutdown();
         steamLog.Warning("Steam API library is missing required initialization, callback, "
-                         "shutdown, or SteamUtils v011 app ID exports: " + libraryPathCopy);
+                         "shutdown, or SteamUtils v011 app ID exports: " +
+                         libraryPathCopy);
         return false;
     }
     SteamError detail = {};
@@ -303,8 +301,8 @@ bool SteamPresence::initialize(const std::filesystem::path& libraryPath) {
         shutdown();
         steamLog.Warning("Steam API initialization failed for app 252530 (result " +
                          std::to_string(result) + "): " +
-                         (detail[0] ? std::string(detail) :
-                                      "check that Steam is running under the same user and the "
+                         (detail[0] ? std::string(detail)
+                                    : "check that Steam is running under the same user and the "
                                       "account owns OMSI 2"));
         return false;
     }
@@ -317,8 +315,7 @@ bool SteamPresence::initialize(const std::filesystem::path& libraryPath) {
                          " instead of 252530; Steam integration was shut down");
         return false;
     }
-    steamLog.Log("Steam API initialized for OMSI 2 (app 252530) using " +
-                 libraryPathCopy);
+    steamLog.Log("Steam API initialized for OMSI 2 (app 252530) using " + libraryPathCopy);
     return true;
 #else
     steamLog.Warning("Steam presence is supported only on Windows and Linux");

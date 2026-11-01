@@ -1451,11 +1451,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     (queue->second == 0 && (renderingReflection_ || !trafficSplineDebugOverlay_))) {
                     continue;
                 }
-                const auto stopPose = openbus::map::sampleMapTrafficRoute(
-                    passengerRoute.actor->route, stop.routeDistanceMeters, 0.0);
+                const auto stopPose = passengerRoute.stopPose(stopIndex);
                 if (!stopPose) {
-                    throw std::runtime_error(
-                        "Cannot sample a scheduled passenger stop for rendering");
+                    continue;
                 }
                 const double cameraDistance =
                     std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
@@ -1468,7 +1466,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     [&](const TrafficVehicleState& state) {
                         return state.bus && state.bus->passengerRouteIndex == routeIndex &&
                                state.vehicle != nullptr && state.bus->passengerStopArrived &&
-                               state.bus->nextPassengerStopIndex == stopIndex &&
+                               state.bus->nextPassengerStopIndex <
+                                   state.bus->passengerStops.size() &&
+                               state.bus->passengerStops[state.bus->nextPassengerStopIndex]
+                                       .stopId == stop.stopId &&
                                state.vehicle->passengers->service.currentStopId() == stop.stopId;
                     });
                 const bool activePlayerCall = activePlayerPassengerStop_ == stop.stopId &&
@@ -1658,7 +1659,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         const auto drawBusPassengerActors =
             [&](Vehicle& bus, const openbus::map::MapTrafficPose& busPose, std::size_t modelOffset,
                 const openbus::map::MapTrafficActor* routeActor, const Vehicle* routeVehicle,
-                const openbus::map::MapTrafficPassengerStop* boardingStop) {
+                const openbus::map::MapTrafficPassengerStop* boardingStop,
+                std::optional<openbus::map::MapTrafficPose> playerStopPose) {
                 if (mapRenderer_ == nullptr || !bus.passengers) {
                     return;
                 }
@@ -1691,12 +1693,13 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0, 0.0);
                     }
                 }
-                if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId ||
-                    routeActor == nullptr) {
+                if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId) {
                     return;
                 }
-                const auto stopPose = openbus::map::sampleMapTrafficRoute(
-                    routeActor->route, boardingStop->routeDistanceMeters, 0.0);
+                const auto stopPose =
+                    routeActor ? openbus::map::sampleMapTrafficRoute(
+                                     routeActor->route, boardingStop->routeDistanceMeters, 0.0)
+                               : playerStopPose;
                 if (!stopPose) {
                     throw std::runtime_error("Cannot sample a bus passenger boarding pose");
                 }
@@ -1709,9 +1712,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 const double passengerSide =
                     openbus::map::mapTrafficPassengerSideSign(mapRenderer_->leftHandTraffic());
                 const double laneOffset =
-                    routeVehicle == &bus ? routeActor->lateralOffsetMeters : 0.0;
-                const double vehicleWidth =
-                    routeVehicle == &bus ? routeActor->widthMeters : bus.trafficWidthMeters;
+                    routeVehicle == &bus && routeActor ? routeActor->lateralOffsetMeters : 0.0;
+                const double vehicleWidth = routeVehicle == &bus && routeActor
+                                                ? routeActor->widthMeters
+                                                : bus.trafficWidthMeters;
                 const double curbOffset = openbus::map::mapTrafficPassengerCurbOffsetMeters(
                     mapRenderer_->leftHandTraffic(), laneOffset, vehicleWidth, 0.35);
                 const auto curbPose = [&] {
@@ -1858,7 +1862,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     ? 0
                     : static_cast<std::size_t>(trafficVehicle.bus->passengerStops.front().stopId);
             drawBusPassengerActors(*trafficVehicle.vehicle, *busPose, modelOffset,
-                                   &trafficVehicle.actor, trafficVehicle.vehicle, boardingStop);
+                                   &trafficVehicle.actor, trafficVehicle.vehicle, boardingStop,
+                                   std::nullopt);
         }
         drawVehicles(VehicleRenderPass::Transparent, false);
         if (context == RenderViewContext::PlayerInterior) {
@@ -1884,13 +1889,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             openbus::map::MapTrafficPose playerPose;
             playerPose.position = chassis.position;
             playerPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
-            drawBusPassengerActors(*playerVehicle_, playerPose, 0, serviceRoute.actor.get(),
-                                   nullptr, &stop);
+            drawBusPassengerActors(*playerVehicle_, playerPose, 0, nullptr, nullptr, &stop,
+                                   serviceRoute.stopPose(*activePlayerPassengerStopIndex_));
         } else if (playerVehicle_ != nullptr) {
             openbus::map::MapTrafficPose playerPose;
             playerPose.position = chassis.position;
             playerPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
-            drawBusPassengerActors(*playerVehicle_, playerPose, 0, nullptr, nullptr, nullptr);
+            drawBusPassengerActors(*playerVehicle_, playerPose, 0, nullptr, nullptr, nullptr,
+                                   std::nullopt);
         }
         drawVehicles(VehicleRenderPass::Transparent, true);
         if (context == RenderViewContext::PlayerExterior) {
@@ -3198,18 +3204,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         TraceScope phase("render", "RenderLoop::draw.windowTitle");
         const double titleUpdateTime = glfwGetTime();
         if (!renderingReflection_ && !captureMode_) {
-            if (!fpsSampleInitialized_) {
-                fpsSampleStartTime_ = titleUpdateTime;
-                fpsSampleFrameCount_ = 0;
-                fpsSampleInitialized_ = true;
-            }
-            ++fpsSampleFrameCount_;
-            const double sampleDuration = titleUpdateTime - fpsSampleStartTime_;
-            if (sampleDuration >= 1.0) {
-                displayedFps_ = static_cast<double>(fpsSampleFrameCount_) / sampleDuration;
-                fpsSampleFrameCount_ = 0;
-                fpsSampleStartTime_ = titleUpdateTime;
-            }
+            frameTiming_.sampleDisplayFrame(titleUpdateTime);
         }
         if (!renderingReflection_ && playerVehicle_ &&
             titleUpdateTime - lastStatsTitleTime_ > 0.25) {
@@ -3226,7 +3221,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                   << openbus::rendering::frameTriangleCount() << " main + "
                   << openbus::rendering::frameReflectionTriangleCount()
                   << " reflection candidate triangles/refresh - " << std::fixed
-                  << std::setprecision(1) << displayedFps_ << " FPS";
+                  << std::setprecision(1) << frameTiming_.displayedFps() << " FPS";
             {
                 TraceScope phase("render", "RenderLoop::draw.windowTitle.set");
                 glfwSetWindowTitle(window_, title.str().c_str());
@@ -3299,21 +3294,8 @@ void RenderLoop::endFrame() {
         imguiLayer_->render();
     }
     glfwSwapBuffers(window_);
-    if (renderFpsCapHz_ <= 0.0) {
-        return;
-    }
-    const auto framePeriod = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-        std::chrono::duration<double>(1.0 / renderFpsCapHz_));
-    const auto now = std::chrono::steady_clock::now();
-    if (!frameDeadlineInitialized_) {
-        nextFrameDeadline_ = now;
-        frameDeadlineInitialized_ = true;
-    }
-    nextFrameDeadline_ += framePeriod;
-    if (nextFrameDeadline_ > now) {
-        std::this_thread::sleep_until(nextFrameDeadline_);
-    } else {
-        nextFrameDeadline_ = now;
+    if (const auto deadline = frameTiming_.deadlineAfterFrame(std::chrono::steady_clock::now())) {
+        std::this_thread::sleep_until(*deadline);
     }
 }
 

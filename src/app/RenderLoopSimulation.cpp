@@ -271,9 +271,9 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             if (activePlayerPassengerStopCompletesTimetable_ && playerTimetable_.state &&
                 completedRoute && completedStop &&
                 *completedRoute == playerTimetable_.state->selection.passengerRouteIndex) {
-                const bool atTerminus =
-                    *completedStop + 1 >= passengerNetwork_.routes[*completedRoute].stops.size();
-                if (atTerminus) {
+                const auto& completedPassengerRoute = passengerNetwork_.routes[*completedRoute];
+                if (!openbus::app::nextLocatedPassengerStop(completedPassengerRoute,
+                                                            *completedStop + 1)) {
                     advancePlayerTimetableTrip();
                 } else {
                     playerTimetable_.state->nextStopIndex = *completedStop + 1;
@@ -285,59 +285,30 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             activePlayerPassengerStopCompletesTimetable_ = false;
         }
 
-        struct NearbyPassengerStop {
-            std::size_t routeIndex = 0;
-            std::size_t stopIndex = 0;
-            double distanceMeters = std::numeric_limits<double>::infinity();
-        };
-        NearbyPassengerStop nearestStop;
         const auto chassis = simulation.chassisPose();
         const double chassisHeading = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+        const auto nearestStop =
+            playerPassengerServiceEnabled_
+                ? passengerNetwork_.findNearestStop(
+                      chassis.position, chassisHeading,
+                      playerTimetable_.state
+                          ? std::optional<std::size_t>(
+                                playerTimetable_.state->selection.passengerRouteIndex)
+                          : std::nullopt,
+                      playerTimetable_.state ? playerTimetable_.state->nextStopIndex : 0)
+                : openbus::app::NearbyPassengerStop{};
         double latchedStopDistance = std::numeric_limits<double>::infinity();
         if (playerPassengerStopLatchRouteIndex_ && playerPassengerStopLatchIndex_ &&
             *playerPassengerStopLatchRouteIndex_ < passengerNetwork_.routes.size()) {
             const PassengerStopRouteState& latchedRoute =
                 passengerNetwork_.routes[*playerPassengerStopLatchRouteIndex_];
             if (*playerPassengerStopLatchIndex_ < latchedRoute.stops.size()) {
-                const auto latchedPose = openbus::map::sampleMapTrafficRoute(
-                    latchedRoute.actor->route,
-                    latchedRoute.stops[*playerPassengerStopLatchIndex_].routeDistanceMeters, 0.0);
+                const auto latchedPose = latchedRoute.stopPose(*playerPassengerStopLatchIndex_);
                 if (!latchedPose) {
                     throw std::runtime_error("Cannot sample the latched player passenger stop");
                 }
                 latchedStopDistance = std::hypot(latchedPose->position[0] - chassis.position[0],
                                                  latchedPose->position[1] - chassis.position[1]);
-            }
-        }
-        for (std::size_t routeIndex = 0;
-             playerPassengerServiceEnabled_ && routeIndex < passengerNetwork_.routes.size();
-             ++routeIndex) {
-            if (playerTimetable_.state &&
-                routeIndex != playerTimetable_.state->selection.passengerRouteIndex) {
-                continue;
-            }
-            const PassengerStopRouteState& passengerRoute = passengerNetwork_.routes[routeIndex];
-            for (std::size_t stopIndex = 0; stopIndex < passengerRoute.stops.size(); ++stopIndex) {
-                if (playerTimetable_.state && stopIndex < playerTimetable_.state->nextStopIndex) {
-                    continue;
-                }
-                const openbus::map::MapTrafficPassengerStop& stop = passengerRoute.stops[stopIndex];
-                const auto pose = openbus::map::sampleMapTrafficRoute(
-                    passengerRoute.actor->route, stop.routeDistanceMeters, 0.0);
-                if (!pose) {
-                    throw std::runtime_error(
-                        "Cannot sample a scheduled passenger stop for player service");
-                }
-                const double distance = std::hypot(pose->position[0] - chassis.position[0],
-                                                   pose->position[1] - chassis.position[1]);
-                const double headingDifference =
-                    std::remainder(chassisHeading - pose->headingRadians, 2.0 * std::numbers::pi);
-                if (std::abs(headingDifference) > std::numbers::pi / 3.0) {
-                    continue;
-                }
-                if (distance < nearestStop.distanceMeters) {
-                    nearestStop = {routeIndex, stopIndex, distance};
-                }
             }
         }
         if (playerPassengerStopLatch_ && latchedStopDistance > 5.0) {
@@ -363,13 +334,10 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                 passengerNetwork_.routes[nearestStop.routeIndex].stops[nearestStop.stopIndex];
             const auto queue = passengerNetwork_.queues.find(stop.stopId);
             if (queue != passengerNetwork_.queues.end()) {
-                const int nextStopId =
-                    nearestStop.stopIndex + 1 <
-                            passengerNetwork_.routes[nearestStop.routeIndex].stops.size()
-                        ? passengerNetwork_.routes[nearestStop.routeIndex]
-                              .stops[nearestStop.stopIndex + 1]
-                              .stopId
-                        : 0;
+                const auto& route = passengerNetwork_.routes[nearestStop.routeIndex];
+                const auto nextStop =
+                    openbus::app::nextLocatedPassengerStop(route, nearestStop.stopIndex + 1);
+                const int nextStopId = nextStop ? route.stops[*nextStop].stopId : 0;
                 playerVehicle_->passengers->service.setWaitingPassengers(
                     stop.stopId, nextStopId == 0 ? 0 : queue->second);
                 if (!playerVehicle_->passengers->service.arrive(

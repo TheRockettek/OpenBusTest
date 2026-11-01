@@ -491,6 +491,42 @@ void verifyPassengerStopSharing() {
     actor.reset();
     require(!snapshot.expired() && route.actor == snapshot.lock(),
             "passenger routes retain the immutable worker actor snapshot");
+
+    openbus::map::MapTrafficRoute trafficRoute;
+    trafficRoute.segments = {
+        {{makeSpline(10, 0, 11, 0.0), 0, 0}},
+        {{makeSpline(11, 10, 0, 10.0), 0, 0}},
+    };
+    trafficRoute.cumulativeEndDistances = {10.0, 20.0};
+    trafficRoute.totalLength = 20.0;
+    openbus::map::MapTrafficPassengerStop first;
+    first.stopId = 1;
+    first.splineId = 10;
+    first.splinePositionMeters = 5.0;
+    openbus::map::MapTrafficPassengerStop unmatched;
+    unmatched.stopId = 2;
+    unmatched.splineId = 99;
+    openbus::map::MapTrafficPassengerStop last;
+    last.stopId = 3;
+    last.splineId = 11;
+    std::vector<int> unmatchedIds;
+    const auto mapped = openbus::app::mapPassengerStopsToTrafficRoute(
+        trafficRoute, {first, unmatched, last},
+        [&](const auto& missed) { unmatchedIds.push_back(missed.stopId); });
+    require(mapped.size() == 2 && mapped[0].routeDistanceMeters == 5.0 &&
+                mapped[1].routeDistanceMeters == 10.0 &&
+                mapped[1].passengersAlighting == (std::numeric_limits<std::size_t>::max)() &&
+                unmatchedIds == std::vector<int>{2},
+            "AI stop projection preserves offsets, order, terminus, and unmatched diagnostics");
+    bool invalidRejected = false;
+    try {
+        first.stopId = 0;
+        openbus::app::mapPassengerStopsToTrafficRoute(trafficRoute, {first},
+                                                      [](const auto&) {});
+    } catch (const std::invalid_argument&) {
+        invalidRejected = true;
+    }
+    require(invalidRejected, "AI stop projection rejects invalid stops");
 }
 
 void verifyPlayerTripPolicyLifecycle() {
@@ -671,6 +707,76 @@ void verifyPlayerTimetableController() {
     openbus::config::HofData hof;
     hof.busstops = {{"STOP_A", {"Central Station"}}, {"STOP_B", {"Airport"}}};
     hof.routes = {{"1001", 0, false, {"STOP_A", "STOP_B"}, "Outbound", "100"}};
+    openbus::map::MapAiTimetableRoute scheduledRoute;
+    scheduledRoute.timetableKey = "hof-trip";
+    scheduledRoute.lineName = "100";
+    scheduledRoute.scheduledDepartureMinutes = {480.0};
+    scheduledRoute.trackEntries = {{1001, 0, 0, 10.0}, {1002, 0, 0, 10.0}};
+    openbus::map::MapAiTimetableRoute::Station firstStation;
+    firstStation.id = 1;
+    firstStation.name = "Central Station";
+    openbus::map::MapAiTimetableRoute::Station secondStation;
+    secondStation.id = 2;
+    secondStation.trackEntryIndex = 1;
+    secondStation.name = "STOP_B";
+    scheduledRoute.stations = {firstStation, secondStation};
+    const auto independentRoute = makePlayerTimetableRoute(
+        scheduledRoute, 4, [](const auto& stop) -> std::optional<openbus::map::MapTrafficPose> {
+            if (stop.stopId == 2) {
+                return std::nullopt;
+            }
+            return openbus::map::MapTrafficPose{};
+        });
+    require(!independentRoute.actor && independentRoute.stops.size() == 2 &&
+                independentRoute.stopPose(0) && !independentRoute.stopPose(1) &&
+                passengerRouteMatchesHof(independentRoute, hof),
+            "map schedule and HOF remain selectable without an AI route or all stop geometry");
+    const std::vector<openbus::map::MapAiTimetableCourse> independentCourses{
+        {"course", {{"hof-trip", 0, 480.0}}}};
+    PlayerTimetableCatalog independentCatalog;
+    independentCatalog.update({independentRoute}, independentCourses, hof);
+    require(independentCatalog.lines.size() == 1 &&
+                independentCatalog.lines.front().courses.front().trips.size() == 1,
+            "the player catalog includes scheduled trips independent of AI route construction");
+    PassengerNetwork network;
+    openbus::map::MapAiTrafficData traffic;
+    traffic.timetableRoutes.push_back(scheduledRoute);
+    const auto report = network.registerTimetables(
+        traffic, 4, [](const auto& stop) -> std::optional<openbus::map::MapTrafficPose> {
+            if (stop.stopId == 2) {
+                return std::nullopt;
+            }
+            return openbus::map::MapTrafficPose{};
+        });
+    require(report.missingStops == 1 && report.routesWithMissingStops == 1 &&
+                report.routesWithoutStops == 0 && network.findRouteIndex("hof-trip") == 0 &&
+                network.queues.at(1) == 4 && !network.queues.contains(2),
+            "registration reports missing locations and initializes only located stops");
+    network.queues.at(1) = 2;
+    network.initializeQueues(independentRoute.stops.values());
+    require(network.queues.at(1) == 2 && network.initialQueues.at(1) == 4 &&
+                network.queues.at(2) == 4,
+            "shared stops preserve existing passenger queues");
+    const auto nearby = network.findNearestStop({0.0, 0.0, 0.0}, 0.0, 0, 0);
+    require(nearby.routeIndex == 0 && nearby.stopIndex == 0 && nearby.distanceMeters == 0.0,
+            "nearest stop honors route and heading");
+    require(!std::isfinite(network.findNearestStop({0.0, 0.0, 0.0}, std::numbers::pi, 0, 0)
+                               .distanceMeters) &&
+                !std::isfinite(network.findNearestStop({0.0, 0.0, 0.0}, 0.0, 0, 1)
+                                   .distanceMeters) &&
+                !nextLocatedPassengerStop(network.routes[0], 1),
+            "wrong directions, earlier stops, and unlocated stops are excluded");
+    auto placeholderHof = hof;
+    placeholderHof.routes.front().line = "XXX";
+    PlayerTimetableCatalog placeholderCatalog;
+    placeholderCatalog.update({independentRoute}, independentCourses, placeholderHof);
+    require(placeholderCatalog.lines.size() == 1 &&
+                placeholderCatalog.lines.front().name == "100",
+            "an HOF placeholder line displays the map's public line instead of XXX");
+    auto tripKeyOnlyRoute = independentRoute;
+    tripKeyOnlyRoute.lineName = tripKeyOnlyRoute.timetableKey;
+    require(passengerRouteDisplayLine(tripKeyOnlyRoute, placeholderHof.routes.front()) == "XXX",
+            "an internal trip key is not displayed as a public line");
     require(passengerRouteMatchesHof(hofRoute, hof),
             "HOF matching uses the line and ordered stop identifiers or display names");
     auto tripKeyLine = hofRoute;
@@ -749,6 +855,66 @@ void verifyPlayerTimetableController() {
          "Einsteindorf Marktpl", "Krankenhaus"});
     require(!passengerRouteMatchesHof(unrelatedGrundorfRoute, grundorfHof),
             "HOF matching rejects a route containing a stop outside the HOF sequence");
+    const auto brtRoute = [&](std::vector<std::string> names) {
+        std::vector<openbus::map::MapTrafficPassengerStop> mapStops;
+        for (auto& name : names) {
+            auto stop = stops.front();
+            stop.name = std::move(name);
+            mapStops.push_back(std::move(stop));
+        }
+        return PassengerStopRouteState{actor, PassengerStops(std::move(mapStops)),
+                                       "626-trip", "626", {}, {}};
+    };
+    openbus::config::HofData brtHof;
+    brtHof.routes = {
+        {"626005", 0, false,
+         {"Waldschaenke", "Gruener Weg", "See", "HOF detour", "Neissestr.",
+          "Mitte", "Heinersdorfer Weg"},
+         "Outbound", "XXX"},
+    };
+    const auto brtOutbound = brtRoute(
+        {"Waldsch\xc3\xa4nke 3 Terminus", "Gr\xfcner Weg", "Map detour", "See",
+         "Nei\xc3\x9f" "estr.", "Mitte", "Heinersdorfer Weg/Reha"});
+    require(passengerRouteMatchesHof(brtOutbound, brtHof),
+            "placeholder HOF routes match stop aliases and different ordered detours");
+    auto reversedBrtStops = brtOutbound.stops.values();
+    std::ranges::reverse(reversedBrtStops);
+    auto reversedBrt = brtOutbound;
+    reversedBrt.stops = PassengerStops(std::move(reversedBrtStops));
+    require(!passengerRouteMatchesHof(reversedBrt, brtHof),
+            "relaxed matching rejects the opposite direction");
+    const auto unrelatedBrt = brtRoute(
+        {"Waldsch\xc3\xa4nke 3", "Other 1", "Other 2", "See", "Other 3",
+         "Other 4", "Mitte", "Heinersdorfer Weg/Reha"});
+    require(!passengerRouteMatchesHof(unrelatedBrt, brtHof),
+            "shared endpoints and a few stops do not match an unrelated itinerary");
+    auto wrongLineHof = brtHof;
+    wrongLineHof.routes[0].line = "999";
+    require(!passengerRouteMatchesHof(brtOutbound, wrongLineHof),
+            "relaxed matching does not override an explicit different HOF line");
+    auto tripKeyBrt = brtOutbound;
+    tripKeyBrt.lineName = tripKeyBrt.timetableKey;
+    require(!passengerRouteMatchesHof(tripKeyBrt, brtHof),
+            "relaxed matching cannot infer a public line from an internal trip key");
+    std::vector<std::string> longHofStops{"Start"};
+    std::vector<std::string> longMapStops{"Start"};
+    for (int index = 0; index < 20; ++index) {
+        const std::string name = "Common stop" + std::to_string(index);
+        longHofStops.push_back(name);
+        longMapStops.push_back(name);
+    }
+    longHofStops.push_back("HOF-only detour");
+    longHofStops.push_back("End");
+    for (int index = 0; index < 18; ++index)
+        longMapStops.push_back("Map-only detour" + std::to_string(index));
+    longMapStops.push_back("End");
+    openbus::config::HofData longHof;
+    longHof.routes = {{"912002", 0, false, longHofStops, "Outbound", "XXX"}};
+    require(passengerRouteMatchesHof(brtRoute(longMapStops), longHof),
+            "relaxed matching accepts 55 percent ordered coverage of the longer itinerary");
+    longMapStops.insert(longMapStops.end() - 1, "Another map-only stop");
+    require(!passengerRouteMatchesHof(brtRoute(longMapStops), longHof),
+            "relaxed matching rejects longer itineraries below the coverage threshold");
     std::ranges::reverse(hofStops);
     auto wrongDirection = hofRoute;
     wrongDirection.stops = PassengerStops(hofStops);
@@ -1468,6 +1634,18 @@ void verifyDrivingBehavior() {
     requiredSequence.finalize();
     require(!requiredSequence.buildRoute(1022, 0, 0, 0.0, {}, {1022, 1023, 1024}),
             "a required timetable path cannot succeed after reaching a shorter dead end");
+    const auto disconnectedStop = requiredSequence.timetableStopPose(1023, 0, 5.0);
+    require(disconnectedStop.has_value(),
+            "a player stop can be sampled even when the complete AI route cannot be built");
+    requireNear(disconnectedStop->position[1], 25.0,
+                "a player stop uses its authored position on the individual spline");
+    const auto roundedEndpoint = requiredSequence.timetableStopPose(1023, 0, 20.00001);
+    require(roundedEndpoint.has_value(),
+            "rounded timetable lengths still locate stops at a spline endpoint");
+    require(!requiredSequence.timetableStopPose(1023, 0, 20.1),
+            "a materially out-of-range stop offset is not clamped to the endpoint");
+    require(!requiredSequence.timetableStopPose(1024, 0, 0.0),
+            "missing player stop geometry is reported rather than fabricated");
     const auto completeRequiredSequence =
         requiredSequence.buildRoute(1022, 0, 0, 0.0, {}, {1022, 1023});
     require(completeRequiredSequence && completeRequiredSequence->segments.size() == 2,

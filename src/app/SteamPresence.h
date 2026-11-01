@@ -19,7 +19,9 @@ class SteamPresence {
     bool initialize(const std::filesystem::path& libraryPath);
     void runCallbacks() const;
     void shutdown();
-    bool active() const noexcept { return active_; }
+    bool active() const noexcept {
+        return active_;
+    }
 
   private:
     using SteamError = char[1024];

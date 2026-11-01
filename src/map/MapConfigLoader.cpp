@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -585,39 +586,54 @@ void parseUnscheduledTrafficDensities(const std::filesystem::path& path,
     aiTraffic.hasUnscheduledTrafficDensityFile = !aiTraffic.unscheduledTrafficDensityGroups.empty();
 }
 
-void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTrafficData& aiTraffic,
-                            ConfigurationDiagnostics& diagnostics) {
-    if (!std::filesystem::is_directory(directory)) {
-        return;
-    }
+struct TimetableSource {
+    std::filesystem::path directory;
+    std::vector<std::string> deactivatedLines;
+};
+
+void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
+                            MapAiTrafficData& aiTraffic, ConfigurationDiagnostics& diagnostics) {
     std::unordered_map<std::string, std::filesystem::path> trackFiles;
+    std::unordered_map<std::string, std::filesystem::path> tripsByName;
+    std::unordered_map<std::string, std::filesystem::path> linesByName;
     std::vector<std::filesystem::path> tripFiles;
     std::vector<std::filesystem::path> lineFiles;
-    std::optional<std::filesystem::path> busStopsPath;
-    std::optional<std::filesystem::path> stationLinksPath;
-    for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(directory)) {
-        if (!entry.is_regular_file()) {
+    std::vector<std::filesystem::path> busStopsPaths;
+    std::vector<std::filesystem::path> stationLinksPaths;
+    for (const auto& source : sources) {
+        for (const auto& line : source.deactivatedLines)
+            linesByName.erase(lowerAscii(line));
+        if (!std::filesystem::is_directory(source.directory))
             continue;
-        }
-        std::string extension = lowerAscii(pathToUtf8(entry.path().extension()));
-        if (extension == ".ttr") {
-            trackFiles.emplace(lowerAscii(pathToUtf8(entry.path().stem())), entry.path());
-        } else if (extension == ".ttp") {
-            tripFiles.push_back(entry.path());
-        } else if (extension == ".ttl") {
-            lineFiles.push_back(entry.path());
-        } else if (lowerAscii(pathToUtf8(entry.path().filename())) == "busstops.cfg") {
-            busStopsPath = entry.path();
-        } else if (lowerAscii(pathToUtf8(entry.path().filename())) == "stnlinks.cfg") {
-            stationLinksPath = entry.path();
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(source.directory)) {
+            if (!entry.is_regular_file())
+                continue;
+            const std::string extension = lowerAscii(pathToUtf8(entry.path().extension()));
+            const std::string stem = lowerAscii(pathToUtf8(entry.path().stem()));
+            if (extension == ".ttr") {
+                trackFiles.insert_or_assign(stem, entry.path());
+            } else if (extension == ".ttp") {
+                tripsByName.insert_or_assign(stem, entry.path());
+            } else if (extension == ".ttl") {
+                linesByName.insert_or_assign(stem, entry.path());
+            } else if (lowerAscii(pathToUtf8(entry.path().filename())) == "busstops.cfg") {
+                busStopsPaths.push_back(entry.path());
+            } else if (lowerAscii(pathToUtf8(entry.path().filename())) == "stnlinks.cfg") {
+                stationLinksPaths.push_back(entry.path());
+            }
         }
     }
+    for (const auto& [name, path] : tripsByName)
+        tripFiles.push_back(path);
+    for (const auto& [name, path] : linesByName)
+        lineFiles.push_back(path);
     std::sort(tripFiles.begin(), tripFiles.end());
     std::sort(lineFiles.begin(), lineFiles.end());
 
-    if (busStopsPath) {
-        const std::vector<std::string> lines = splitLines(decodeText(*busStopsPath));
+    for (const auto& busStopsPath : busStopsPaths) {
+        const std::size_t oldCount = aiTraffic.busStops.size();
+        const std::vector<std::string> lines = splitLines(decodeText(busStopsPath));
         for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
             if (lowerAscii(trim(lines[lineIndex])) != "[busstop]") {
                 continue;
@@ -660,13 +676,23 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             } else {
                 diagnostics.warning(lineIndex + 1, "busstop",
                                     "invalid or incomplete bus-stop record in " +
-                                        pathToUtf8(busStopsPath->filename()));
+                                        pathToUtf8(busStopsPath.filename()));
             }
         }
+        std::unordered_set<int> overriddenIds;
+        for (auto it = aiTraffic.busStops.begin() + static_cast<std::ptrdiff_t>(oldCount);
+             it != aiTraffic.busStops.end(); ++it)
+            overriddenIds.insert(it->id);
+        const auto oldEnd = aiTraffic.busStops.begin() + static_cast<std::ptrdiff_t>(oldCount);
+        aiTraffic.busStops.erase(
+            std::remove_if(aiTraffic.busStops.begin(), oldEnd,
+                           [&](const auto& stop) { return overriddenIds.contains(stop.id); }),
+            oldEnd);
     }
 
-    if (stationLinksPath) {
-        const std::vector<std::string> lines = splitLines(decodeText(*stationLinksPath));
+    for (const auto& stationLinksPath : stationLinksPaths) {
+        const std::size_t oldCount = aiTraffic.stationLinks.size();
+        const std::vector<std::string> lines = splitLines(decodeText(stationLinksPath));
         for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
             const std::string section = lowerAscii(trim(lines[lineIndex]));
             if (section == "[stnlink]") {
@@ -702,7 +728,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 } else {
                     diagnostics.warning(lineIndex + 1, "StnLink",
                                         "invalid or incomplete station-link record in " +
-                                            pathToUtf8(stationLinksPath->filename()));
+                                            pathToUtf8(stationLinksPath.filename()));
                 }
             } else if (section == "[stnlink_entry]") {
                 std::array<std::string, 7> entryValues;
@@ -730,17 +756,28 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     double number = 0.0;
                     numericEntryValid = parseReal(entryValues[index], number);
                 }
-                if (complete && numericEntryValid && !aiTraffic.stationLinks.empty()) {
+                if (complete && numericEntryValid && aiTraffic.stationLinks.size() > oldCount) {
                     std::copy(entryValues.begin() + 4, entryValues.end(),
                               entry.remainingFields.begin());
                     aiTraffic.stationLinks.back().entries.push_back(std::move(entry));
                 } else {
                     diagnostics.warning(lineIndex + 1, "StnLink_entry",
                                         "invalid or orphaned station-link path entry in " +
-                                            pathToUtf8(stationLinksPath->filename()));
+                                            pathToUtf8(stationLinksPath.filename()));
                 }
             }
         }
+        std::set<std::pair<int, int>> overriddenLinks;
+        for (auto it = aiTraffic.stationLinks.begin() + static_cast<std::ptrdiff_t>(oldCount);
+             it != aiTraffic.stationLinks.end(); ++it)
+            overriddenLinks.emplace(it->fromStopId, it->toStopId);
+        const auto oldEnd = aiTraffic.stationLinks.begin() + static_cast<std::ptrdiff_t>(oldCount);
+        aiTraffic.stationLinks.erase(std::remove_if(aiTraffic.stationLinks.begin(), oldEnd,
+                                                    [&](const auto& link) {
+                                                        return overriddenLinks.contains(
+                                                            {link.fromStopId, link.toStopId});
+                                                    }),
+                                     oldEnd);
     }
 
     for (const std::filesystem::path& tripPath : tripFiles) {
@@ -1178,8 +1215,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         MapAiTimetableRoute route;
         route.timetableKey = timetable.timetableKey;
         route.tripName = timetable.tripName.empty() ? timetable.timetableKey : timetable.tripName;
-        route.destinationName = timetable.destinationName.empty() ? timetable.timetableKey
-                                                                   : timetable.destinationName;
+        route.destinationName =
+            timetable.destinationName.empty() ? timetable.timetableKey : timetable.destinationName;
         route.lineName = timetable.lineName.empty() ? timetable.timetableKey : timetable.lineName;
         route.stationCount = calls.size();
         route.stationIds = timetable.stationIds;
@@ -1532,6 +1569,65 @@ bool mapChronoDateRangeContains(const MapChronoDateRange& range, std::chrono::ye
            (!range.end.has_value() || current <= std::chrono::sys_days{*range.end});
 }
 
+std::vector<std::filesystem::path> mapChronoConfigPaths(const std::filesystem::path& chronoRoot) {
+    std::error_code error;
+    const bool exists = std::filesystem::exists(chronoRoot, error);
+    if (error)
+        throw std::filesystem::filesystem_error("Could not inspect map Chrono directory",
+                                                chronoRoot, error);
+    if (!exists)
+        return {};
+    if (!std::filesystem::is_directory(chronoRoot, error) || error)
+        throw std::filesystem::filesystem_error("Map Chrono path is not a readable directory",
+                                                chronoRoot, error);
+    std::vector<std::filesystem::path> paths;
+    std::filesystem::recursive_directory_iterator iterator(chronoRoot, error);
+    const std::filesystem::recursive_directory_iterator end;
+    for (; iterator != end; iterator.increment(error)) {
+        if (error)
+            throw std::filesystem::filesystem_error("Could not enumerate map Chrono directory",
+                                                    chronoRoot, error);
+        std::error_code statusError;
+        if (iterator->is_regular_file(statusError) && !statusError &&
+            lowerAscii(pathToUtf8(iterator->path().filename())) == "chrono.cfg")
+            paths.push_back(iterator->path());
+    }
+    if (error)
+        throw std::filesystem::filesystem_error("Could not enumerate map Chrono directory",
+                                                chronoRoot, error);
+    std::sort(paths.begin(), paths.end(), [](const auto& left, const auto& right) {
+        return lowerAscii(pathToUtf8(left)) < lowerAscii(pathToUtf8(right));
+    });
+    return paths;
+}
+
+std::chrono::year_month_day checkedChronoDate(int dateYyyyMmDd) {
+    if (dateYyyyMmDd < 0 || dateYyyyMmDd > 99'999'999)
+        throw std::invalid_argument("Map Chrono date must be a valid YYYYMMDD calendar date");
+    const std::chrono::year_month_day date{
+        std::chrono::year{dateYyyyMmDd / 10000},
+        std::chrono::month{static_cast<unsigned>((dateYyyyMmDd / 100) % 100)},
+        std::chrono::day{static_cast<unsigned>(dateYyyyMmDd % 100)}};
+    if (!date.ok())
+        throw std::invalid_argument("Map Chrono date must be a valid YYYYMMDD calendar date");
+    return date;
+}
+
+std::vector<std::string> chronoDeactivatedLines(const std::filesystem::path& configPath) {
+    const auto lines = splitLines(decodeText(configPath));
+    std::vector<std::string> result;
+    bool inSection = false;
+    for (const auto& rawLine : lines) {
+        const std::string line = trim(rawLine);
+        if (isSectionHeaderLine(line)) {
+            inSection = lowerAscii(line) == "[deactivate_lines]";
+        } else if (inSection && !line.empty()) {
+            result.push_back(lowerAscii(line));
+        }
+    }
+    return result;
+}
+
 void applyChronoTileSidecars(
     MapTileReference& tile, const std::filesystem::path& variantPath,
     const std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>>& sidecarsByTile) {
@@ -1558,54 +1654,45 @@ void applyChronoTileSidecars(
 
 } // namespace
 
-std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
-    if (dateYyyyMmDd < 0 || dateYyyyMmDd > 99'999'999) {
-        throw std::invalid_argument("Map Chrono date must be a valid YYYYMMDD calendar date");
+std::size_t applyMapChronoTimetables(MapDefinition& map, int dateYyyyMmDd) {
+    const auto date = checkedChronoDate(dateYyyyMmDd);
+    struct ActiveScenario {
+        std::chrono::year_month_day start;
+        std::filesystem::path config;
+    };
+    std::vector<ActiveScenario> scenarios;
+    for (const auto& config : mapChronoConfigPaths(map.rootPath / "Chrono")) {
+        const auto range = loadMapChronoDateRange(config, map.diagnostics);
+        if (range && mapChronoDateRangeContains(*range, date))
+            scenarios.push_back({range->start, config});
     }
-    const std::chrono::year_month_day date{
-        std::chrono::year{dateYyyyMmDd / 10000},
-        std::chrono::month{static_cast<unsigned>((dateYyyyMmDd / 100) % 100)},
-        std::chrono::day{static_cast<unsigned>(dateYyyyMmDd % 100)}};
-    if (!date.ok()) {
-        throw std::invalid_argument("Map Chrono date must be a valid YYYYMMDD calendar date");
+    std::stable_sort(scenarios.begin(), scenarios.end(), [](const auto& left, const auto& right) {
+        return std::chrono::sys_days{left.start} < std::chrono::sys_days{right.start};
+    });
+    std::vector<TimetableSource> sources{{map.rootPath / "TTData", {}}};
+    std::size_t applied = 0;
+    for (const auto& scenario : scenarios) {
+        auto deactivated = chronoDeactivatedLines(scenario.config);
+        const auto directory = scenario.config.parent_path() / "TTData";
+        if (!deactivated.empty() || std::filesystem::is_directory(directory)) {
+            sources.push_back({directory, std::move(deactivated)});
+            ++applied;
+        }
     }
-    const std::filesystem::path chronoRoot = map.rootPath / "Chrono";
-    std::error_code filesystemError;
-    const bool chronoRootExists = std::filesystem::exists(chronoRoot, filesystemError);
-    if (filesystemError) {
-        throw std::filesystem::filesystem_error("Could not inspect map Chrono directory",
-                                                chronoRoot, filesystemError);
-    }
-    if (!chronoRootExists) {
-        return 0;
-    }
-    if (!std::filesystem::is_directory(chronoRoot, filesystemError) || filesystemError) {
-        throw std::filesystem::filesystem_error("Map Chrono path is not a readable directory",
-                                                chronoRoot, filesystemError);
-    }
+    MapAiTrafficData timetables;
+    parseAiTimetableRoutes(sources, timetables, map.diagnostics);
+    map.aiTraffic.timetableRoutes = std::move(timetables.timetableRoutes);
+    map.aiTraffic.timetableCourses = std::move(timetables.timetableCourses);
+    map.aiTraffic.busStops = std::move(timetables.busStops);
+    map.aiTraffic.stationLinks = std::move(timetables.stationLinks);
+    map.aiTraffic.passengerTimetables = std::move(timetables.passengerTimetables);
+    return applied;
+}
 
-    std::vector<std::filesystem::path> configPaths;
-    std::filesystem::recursive_directory_iterator iterator(chronoRoot, filesystemError);
-    const std::filesystem::recursive_directory_iterator end;
-    for (; iterator != end; iterator.increment(filesystemError)) {
-        if (filesystemError) {
-            throw std::filesystem::filesystem_error("Could not enumerate map Chrono directory",
-                                                    chronoRoot, filesystemError);
-        }
-        std::error_code statusError;
-        if (iterator->is_regular_file(statusError) && !statusError &&
-            lowerAscii(pathToUtf8(iterator->path().filename())) == "chrono.cfg") {
-            configPaths.push_back(iterator->path());
-        }
-    }
-    if (filesystemError) {
-        throw std::filesystem::filesystem_error("Could not enumerate map Chrono directory",
-                                                chronoRoot, filesystemError);
-    }
-    std::sort(configPaths.begin(), configPaths.end(),
-              [](const std::filesystem::path& left, const std::filesystem::path& right) {
-                  return lowerAscii(pathToUtf8(left)) < lowerAscii(pathToUtf8(right));
-              });
+std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
+    const auto date = checkedChronoDate(dateYyyyMmDd);
+    const std::filesystem::path chronoRoot = map.rootPath / "Chrono";
+    const auto configPaths = mapChronoConfigPaths(chronoRoot);
 
     std::unordered_map<std::string, std::size_t> tileIndexByFilename;
     for (std::size_t index = 0; index < map.tiles.size(); ++index) {
@@ -2004,7 +2091,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                                          definition.diagnostics);
     }
     mapLog.Log("Loading AI timetables: " + pathToUtf8(mapDirectory / "TTData"));
-    parseAiTimetableRoutes(mapDirectory / "TTData", definition.aiTraffic, definition.diagnostics);
+    parseAiTimetableRoutes({{mapDirectory / "TTData", {}}}, definition.aiTraffic,
+                           definition.diagnostics);
     mapLog.Log("AI timetables loaded; loading driver and pedestrian lists.");
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
     if (std::filesystem::is_regular_file(driverListPath)) {

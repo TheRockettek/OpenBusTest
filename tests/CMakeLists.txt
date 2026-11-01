@@ -35,6 +35,8 @@ endforeach()
 add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProbe)
 
 # Core / configuration
+openbus_add_probe(OpenBusFrameTimingProbe FrameTimingProbe.cpp LIBS openbus_core)
+target_sources(OpenBusFrameTimingProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/FrameTiming.cpp")
 openbus_add_probe(OpenBusLoggerProbe LoggerProbe.cpp LIBS openbus_core)
 if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(OpenBusSteamApiFixture SHARED SteamApiFixture.cpp)
@@ -116,9 +118,11 @@ openbus_add_probe(OpenBusMapConfigProbe MapConfigLoaderProbe.cpp LIBS openbus_ma
 openbus_add_probe(OpenBusMapHofCompatibilityProbe MapHofCompatibilityProbe.cpp
     LIBS openbus_map openbus_scripting NO_TEST)
 target_sources(OpenBusMapHofCompatibilityProbe PRIVATE
+    "${OPENBUS_SOURCE_ROOT}/app/traffic/PassengerNetwork.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTimetableController.cpp")
 openbus_copy_lua_runtime(OpenBusMapHofCompatibilityProbe)
 openbus_add_probe(OpenBusMapChronoTileProbe MapChronoTileProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapChronoTimetableProbe MapChronoTimetableProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapSplineGeometryProbe MapSplineGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapRoadGeometryProbe MapRoadGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapCoordinatesProbe MapCoordinatesProbe.cpp LIBS openbus_map)
@@ -155,6 +159,7 @@ set_tests_properties(OpenBusMapSplineInspectionProbe PROPERTIES
     PASS_REGULAR_EXPRESSION "profile strips: 1, renderable: 1, fewer than two points: 0, invalid texture index: 0")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
 target_sources(OpenBusMapTrafficRuntimeProbe PRIVATE
+    "${OPENBUS_SOURCE_ROOT}/app/traffic/PassengerNetwork.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTripPolicy.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTimetableController.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/traffic/ScheduledBusTiming.cpp")

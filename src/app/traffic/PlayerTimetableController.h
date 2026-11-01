@@ -15,13 +15,10 @@ bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
                               const openbus::config::HofData& hof);
 const openbus::config::HofRoute* passengerRouteHofRoute(const PassengerStopRouteState& route,
                                                         const openbus::config::HofData& hof);
+std::string passengerRouteDisplayLine(const PassengerStopRouteState& route,
+                                      const openbus::config::HofRoute& hofRoute);
 
-enum class PassengerHofMatchStatus {
-    Matched,
-    TooFewStops,
-    NoMatchingSequence,
-    AmbiguousLines
-};
+enum class PassengerHofMatchStatus { Matched, TooFewStops, NoMatchingSequence, AmbiguousLines };
 
 struct PassengerHofMatch {
     const openbus::config::HofRoute* route = nullptr;
@@ -60,7 +57,9 @@ struct PlayerTimetableCatalogRoute {
 
 class PlayerTimetableCatalog {
   public:
-    void invalidate() noexcept { valid_ = false; }
+    void invalidate() noexcept {
+        valid_ = false;
+    }
     bool update(const std::vector<PassengerStopRouteState>& routes,
                 const std::vector<openbus::map::MapAiTimetableCourse>& courses,
                 const openbus::config::HofData& hof);

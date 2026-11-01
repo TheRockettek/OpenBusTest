@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/BusTypes.h"
+#include "app/FrameTiming.h"
 #include "app/traffic/PassengerNetwork.h"
 #include "app/traffic/PlayerTimetableController.h"
 #include "app/traffic/TrafficFleet.h"
@@ -22,7 +23,6 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <filesystem>
 #include <future>
 #include <limits>
@@ -113,7 +113,8 @@ struct TrafficSplineDebugLabel {
 
 class RenderLoop {
   public:
-    RenderLoop(int width, int height, const char* title, openbus::app::SteamPresence& steamPresence);
+    RenderLoop(int width, int height, const char* title,
+               openbus::app::SteamPresence& steamPresence);
     ~RenderLoop();
 
     RenderLoop(const RenderLoop&) = delete;
@@ -154,6 +155,9 @@ class RenderLoop {
         std::shared_ptr<const std::vector<openbus::map::MapAiTimetableProfile>> timetableProfiles =
             {},
         std::string timetableKey = {}, std::string timetableTripName = {});
+    void RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficData& traffic,
+                                       double scheduledHumanScale);
+    std::optional<std::size_t> playerTimetableRouteIndex(const std::string& key) const;
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -302,15 +306,7 @@ class RenderLoop {
     double viewLookYaw_ = 0.0;
     double viewLookPitch_ = 0.0;
     double lastStatsTitleTime_ = 0.0;
-    double fpsSampleStartTime_ = 0.0;
-    double displayedFps_ = 0.0;
-    std::uint64_t fpsSampleFrameCount_ = 0;
-    bool fpsSampleInitialized_ = false;
-    std::deque<double> frameStartTimes_;
-    double averageRenderFpsHz_ = 0.0;
-    double renderFpsCapHz_ = 0.0;
-    std::chrono::steady_clock::time_point nextFrameDeadline_{};
-    bool frameDeadlineInitialized_ = false;
+    openbus::app::FrameTiming frameTiming_;
     double cameraDistance_ = 24.0;
     openbus::rendering::FreeCameraPose freeCameraPose_{};
     OnFootState onFootState_{};

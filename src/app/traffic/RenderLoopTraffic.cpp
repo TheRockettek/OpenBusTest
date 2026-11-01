@@ -165,8 +165,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                            "RenderLoop::updateTrafficDriving.workerSchedulingAndResultSync");
     double aiRateHz = trafficFleet_.aiSimulationRateHz;
     if (aiRateHz <= 0.0) {
-        aiRateHz =
-            (averageRenderFpsHz_ > 0.0 ? averageRenderFpsHz_ : 60.0) / trafficFleet_.aiRateDivisor;
+        const double averageRenderFps = frameTiming_.averageRenderFps();
+        aiRateHz = (averageRenderFps > 0.0 ? averageRenderFps : 60.0) / trafficFleet_.aiRateDivisor;
     }
     if (trafficFleet_.aiMaximumRateHz > 0.0) {
         aiRateHz = std::min(aiRateHz, trafficFleet_.aiMaximumRateHz);

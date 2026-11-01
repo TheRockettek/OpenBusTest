@@ -53,12 +53,19 @@ panel offers **Drive a scheduled trip**. Select a line, tour/course, trip, and f
 stop, then **Start selected trip**. Available routes match the selected HOF's
 ordered stop sequence (stop identifiers or display names): the map may include
 extra stops between HOF-listed stops, or a shorter map trip may be an ordered
-subset of the HOF route. If an HOF route has no stop list, it is available only
+subset of the HOF route. Longer routes with different stop spellings or detours
+can also match when their endpoints and most ordered stops agree. If an HOF
+route has no stop list, it is available only
 when its line and destination/terminus match the map route. Public line numbers
-come from the HOF and departure times from the map timetable; HOF files do not
-supply departure times.
-Player route registration does not require an AI depot bus or an active AI bus
-population. **Cancel selection** closes setup, **Cancel trip now** immediately
+come from the HOF, except that an `XXX` placeholder uses the map's public line
+when available. Departure times come from the map timetable; HOF files do not
+supply departure times. Date-active Chrono timetables replace deactivated lines
+and add or override timetable data for both player and AI services, so available
+lines can change with the selected start date.
+Player routes come from the map's schedules independently of AI road-route
+construction, AI depot buses, or an active AI bus population. The panel warns
+if stop locations could not be resolved; those stops cannot be serviced.
+**Cancel selection** closes setup, **Cancel trip now** immediately
 releases the assigned trip and its AI replacement policy, and **Stop driving after
 this trip** ends the assignment at the terminus. Course progression also stays
 within the bus's HOF. Choose a map and one of its entrypoints; the date/time
@@ -144,10 +151,10 @@ time. The selected date sets the system variables `Day`, `Month`, and `Year`;
 starting weekday from this same calendar (Sunday `0` through Saturday `6`), and
 the date advances with simulation time across midnight and year boundaries.
 Chrono tile overrides are currently disabled; the base map tile files are used
-regardless of the selected date. The setup screen defaults to the host's local
-date and time. The selected date is fixed for the session; changing the
-simulation date and selector-based `[selobject]`/`[selspline]` edits are not yet
-applied. The current traffic clock is previewed as `TIME HH:MM` in the status
+regardless of the selected date. Chrono timetable scenarios are selected at
+startup and are not reapplied when the simulation date advances. The setup
+screen defaults to the host's local date and time. Selector-based
+`[selobject]`/`[selspline]` edits are not yet applied. The current traffic clock is previewed as `TIME HH:MM` in the status
 HUD. Road and pedestrian populations follow their map density schedules as the
 clock advances, with active population targets recalculated once per simulated
 minute rather than every rendered frame. A pool sized for each schedule's

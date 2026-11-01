@@ -172,6 +172,7 @@ openbus_add_module(openbus_render
 
 add_executable(OpenBus
     app/CrashHandler.cpp
+    app/FrameTiming.cpp
     app/ImGuiLayer.cpp
     app/MapTrafficWorker.cpp
     app/RenderLoop.cpp
@@ -180,8 +181,10 @@ add_executable(OpenBus
     app/RenderLoopSimulation.cpp
     app/RenderLoopSetup.cpp
     app/SteamPresence.cpp
+    app/traffic/PassengerNetwork.cpp
     app/traffic/PlayerTimetable.cpp
     app/traffic/PlayerTimetableController.cpp
+    app/traffic/PlayerTimetableDiagnostics.cpp
     app/traffic/PlayerTripPolicy.cpp
     app/traffic/ScheduledBusTiming.cpp
     app/traffic/RenderLoopTraffic.cpp

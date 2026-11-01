@@ -1091,6 +1091,14 @@ MapRenderer::lanesForTimetableEntry(int splineId,
     return impl_->roadTrafficLaneNetwork.lanesForTimetableEntry(splineId, sceneryPathIndex);
 }
 
+std::optional<openbus::map::MapTrafficPose>
+MapRenderer::timetableStopPose(int splineId, std::size_t pathIndex, double offsetMeters) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return std::nullopt;
+    }
+    return impl_->roadTrafficLaneNetwork.timetableStopPose(splineId, pathIndex, offsetMeters);
+}
+
 std::optional<openbus::map::MapTrafficLaneConnectionGap>
 MapRenderer::nearestTrafficLaneConnectionGap(int fromSplineId,
                                              std::optional<std::size_t> fromPathIndex,

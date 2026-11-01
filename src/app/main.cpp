@@ -925,6 +925,10 @@ int main() {
         if (!mapCalendarDate.ok()) {
             throw std::runtime_error("Map calendar system variables contain an invalid date");
         }
+        const auto chronoTimetableCount = openbus::map::applyMapChronoTimetables(
+            mapDefinition, mapCalendarYear * 10000 + mapCalendarMonth * 100 + mapCalendarDay);
+        applicationLog.Log("Active Chrono timetable scenarios: " +
+                           std::to_string(chronoTimetableCount));
         const int mapAiStartWeekdayIndex = static_cast<int>(
             std::chrono::weekday{std::chrono::sys_days{mapCalendarDate}}.c_encoding());
         applicationLog.Log("Chrono map tile overrides are disabled; using base map tile files.");
@@ -1412,15 +1416,10 @@ int main() {
         {
             openbus::rendering::TraceScope busTrafficTrace("startup",
                                                            "main.prepareScheduledBusTraffic");
+            renderer.RegisterPlayerTimetableRoutes(mapDefinition.aiTraffic, scheduledHumanScale);
             std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
-            const auto scheduledAiBusConfigurations = aiBusConfigurations;
-            // Player route registration must not depend on the map's AI depot list.
-            if (std::ranges::find(aiBusConfigurations, busConfigPath.string()) ==
-                aiBusConfigurations.end()) {
-                aiBusConfigurations.push_back(busConfigPath.string());
-            }
-            if (scheduledAiBusConfigurations.empty()) {
+            if (aiBusConfigurations.empty()) {
                 applicationLog.Warning(
                     "Map AI buses not spawned: ailists.cfg has no loadable depot bus "
                     "configurations.");
@@ -1545,14 +1544,10 @@ int main() {
                 std::vector<std::size_t> departureCounts;
                 departureCounts.reserve(matchedBusRoutes.size());
                 for (const MatchedBusRoute& matchedRoute : matchedBusRoutes) {
-                    const bool playerRouteOnly =
-                        std::ranges::find(scheduledAiBusConfigurations, matchedRoute.busPath) ==
-                        scheduledAiBusConfigurations.end();
                     const auto& timetable =
                         mapDefinition.aiTraffic
                             .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex];
-                    departureCounts.push_back(
-                        playerRouteOnly ? 0 : timetable.scheduledDepartureMinutes.size());
+                    departureCounts.push_back(timetable.scheduledDepartureMinutes.size());
                 }
                 const std::vector<std::size_t> busesPerRoute =
                     openbus::map::mapTrafficAllocateScheduledBuses(departureCounts, busPoolLimit);
@@ -1594,47 +1589,8 @@ int main() {
                                  : std::nullopt,
                              station.name, stationIndex});
                     }
-                    std::optional<std::size_t> passengerRouteIndex;
-                    if (matchedRoute.routeStart.itineraryInaccurateFallback) {
-                        applicationLog.Warning(
-                            "Player passenger stops are unavailable for timetable route " +
-                            timetable.lineName +
-                            " because only a partial road itinerary could be matched.");
-                    } else {
-                        std::size_t registeredPassengerRouteIndex = 0;
-                        try {
-                            if (!renderer.AddTrafficVehicle(
-                                    matchedRoute.routeStart.entry.splineId,
-                                    openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, matchedRoute.busPath,
-                                    std::nullopt, busTrafficSpeedMetersPerSecond,
-                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true,
-                                    matchedRoute.routeStart.entry.laneSelector,
-                                    matchedRoute.routeStart.routeSeed, {}, std::nullopt, 0,
-                                    matchedRoute.routeStart.requiredSplineSequence,
-                                    matchedRoute.routeStart.requiredSceneryPathSequence,
-                                    matchedRoute.routeStart.stopAtRequiredSequenceEnd,
-                                    matchedRoute.routeStart
-                                        .allowIntermediarySegmentsBetweenRequired,
-                                    matchedRoute.routeStart.allowReverseTraversalForRequired,
-                                    passengerStops, timetable.lineName, timetable.destinationName,
-                                    std::nullopt, true, std::nullopt,
-                                    &registeredPassengerRouteIndex, false, {}, {},
-                                    timetable.timetableKey, timetable.tripName)) {
-                                applicationLog.Warning(
-                                    "Player passenger stops are unavailable for timetable route " +
-                                    timetable.lineName +
-                                    " because its mapped road route could not "
-                                    "be registered.");
-                                continue;
-                            }
-                            passengerRouteIndex = registeredPassengerRouteIndex;
-                        } catch (const std::exception& error) {
-                            applicationLog.Warning(
-                                "Player passenger stops are unavailable for timetable route " +
-                                timetable.lineName + ": " + error.what());
-                            continue;
-                        }
-                    }
+                    const auto passengerRouteIndex =
+                        renderer.playerTimetableRouteIndex(timetable.timetableKey);
                     if (busesPerRoute[routeIndex] == 0) {
                         continue;
                     }
