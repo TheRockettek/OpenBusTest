@@ -125,7 +125,12 @@ struct PreparedHof {
                 PreparedHofStop stop;
                 stop.ident = normalizedHofName(ident);
                 stop.relaxedNames.push_back(normalizedStopName(ident));
-                const auto found = stopsByIdent.find(stop.ident);
+                auto found = stopsByIdent.find(stop.ident);
+                if (found == stopsByIdent.end()) {
+                    const auto suffix = stop.ident.find('*');
+                    if (suffix != std::string::npos)
+                        found = stopsByIdent.find(stop.ident.substr(0, suffix));
+                }
                 if (found != stopsByIdent.end()) {
                     for (const auto& name : found->second->strings) {
                         stop.names.push_back(normalizedHofName(name));
@@ -192,6 +197,11 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
                    (mapStop == stop.ident ||
                     std::ranges::find(stop.names, mapStop) != stop.names.end());
         };
+        if (candidate.stops.size() == 2 && mapStops.size() > 2 &&
+            (!matchesStop(candidate.stops.front(), mapStops.front()) ||
+             !matchesStop(candidate.stops.back(), mapStops.back()))) {
+            return false;
+        }
         std::size_t routeStopIndex = 0;
         const bool hofSequenceInMapRoute =
             std::ranges::all_of(candidate.stops, [&](const PreparedHofStop& stop) {
@@ -285,8 +295,16 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
         mapStops.size() >= 4) {
         std::vector<std::string> relaxedMapStops;
         relaxedMapStops.reserve(route.stops.size());
-        for (const auto& stop : route.stops)
-            relaxedMapStops.push_back(normalizedStopName(stop.name));
+        for (std::size_t index = 0; index < route.stops.size(); ++index) {
+            std::string name = route.stops[index].name;
+            if (index == 0 || index + 1 == route.stops.size()) {
+                const auto separator = name.find_last_of(" \t");
+                if (separator != std::string::npos &&
+                    normalizedLine(name.substr(separator + 1)) == mapLine)
+                    name.erase(separator);
+            }
+            relaxedMapStops.push_back(normalizedStopName(std::move(name)));
+        }
         std::size_t bestMatches = 0;
         std::size_t bestLength = 1;
         for (std::size_t index = 0; index < hof.routes.size(); ++index) {
@@ -318,8 +336,22 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
                 }
                 return false;
             };
-            if (!matchesStop(0, 0) ||
-                !matchesStop(relaxedMapStops.size() - 1, candidate.stops.size() - 1))
+            const std::size_t lastMapStop = relaxedMapStops.size() - 1;
+            const std::size_t lastHofStop = candidate.stops.size() - 1;
+            const auto isTerminalVariant = [&](std::size_t mapIndex, std::size_t adjacentIndex) {
+                const auto& adjacent = relaxedMapStops[adjacentIndex];
+                return normalizedHofName(route.stops[mapIndex].name).find("terminus") !=
+                           std::string::npos ||
+                       (adjacent.size() >= 8 && relaxedMapStops[mapIndex].starts_with(adjacent));
+            };
+            const bool startsAtHofStop =
+                matchesStop(0, 0) ||
+                (isTerminalVariant(0, 1) && matchesStop(1, 0));
+            const bool endsAtHofStop =
+                matchesStop(lastMapStop, lastHofStop) ||
+                (isTerminalVariant(lastMapStop, lastMapStop - 1) &&
+                 matchesStop(lastMapStop - 1, lastHofStop));
+            if (!startsAtHofStop || !endsAtHofStop)
                 continue;
             std::vector<std::size_t> previous(candidate.stops.size() + 1);
             std::vector<std::size_t> current(candidate.stops.size() + 1);

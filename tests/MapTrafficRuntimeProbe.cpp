@@ -752,6 +752,93 @@ void verifyPlayerTimetableController() {
                 report.routesWithoutStops == 0 && network.findRouteIndex("hof-trip") == 0 &&
                 network.queues.at(1) == 4 && !network.queues.contains(2),
             "registration reports missing locations and initializes only located stops");
+    openbus::map::MapAiTrafficData stopOnlyTraffic;
+    stopOnlyTraffic.busStops = {{"Alpha", 0, 10, {}}, {"Beta", 0, 11, {}},
+                                {"Gamma", 0, 12, {}}};
+    openbus::map::MapAiPassengerTimetable stopOnlyTimetable;
+    stopOnlyTimetable.timetableKey = "stop-only";
+    stopOnlyTimetable.lineName = "42";
+    stopOnlyTimetable.stationIds = {10, 11, 12};
+    stopOnlyTimetable.scheduledDepartureMinutes = {480.0};
+    stopOnlyTraffic.passengerTimetables.push_back(stopOnlyTimetable);
+    auto sharedDrivingTimetable = scheduledRoute;
+    sharedDrivingTimetable.timetableKey = "stop-only";
+    stopOnlyTraffic.timetableRoutes.push_back(sharedDrivingTimetable);
+    require(scheduledPlayerTimetableKeys(stopOnlyTraffic) == std::vector<std::string>{"stop-only"},
+            "scheduled route keys include passenger timetables without duplicating driving routes");
+    stopOnlyTraffic.timetableRoutes.clear();
+    openbus::map::MapAiStationLink partialLink;
+    partialLink.fromStopId = 10;
+    partialLink.toStopId = 11;
+    partialLink.entries = {{100, 1, 0, 20.0, {}}};
+    stopOnlyTraffic.stationLinks.push_back(partialLink);
+    PassengerNetwork stopOnlyNetwork;
+    const auto stopOnlyReport = stopOnlyNetwork.registerTimetables(
+        stopOnlyTraffic, 4, [](const auto&) -> std::optional<openbus::map::MapTrafficPose> {
+            return openbus::map::MapTrafficPose{};
+        });
+    require(stopOnlyNetwork.routes.size() == 1 &&
+                stopOnlyNetwork.routes[0].stops.size() == 3 &&
+                stopOnlyNetwork.routes[0].stops[0].name == "Alpha" &&
+                stopOnlyNetwork.routes[0].stops[2].name == "Gamma" &&
+                stopOnlyNetwork.routes[0].stopPose(0) && stopOnlyNetwork.routes[0].stopPose(1) &&
+                !stopOnlyNetwork.routes[0].stopPose(2) &&
+                stopOnlyNetwork.routes[0].stops[1].splinePositionMeters == 20.0 &&
+                stopOnlyReport.missingStops == 1 && stopOnlyReport.routesWithoutStops == 0,
+            "station-only trips register without complete links and use each available link");
+    stopOnlyTraffic.stationLinks.clear();
+    PassengerNetwork unlocatedNetwork;
+    const auto unlocatedReport = unlocatedNetwork.registerTimetables(
+        stopOnlyTraffic, 4, [](const auto&) -> std::optional<openbus::map::MapTrafficPose> {
+            throw std::logic_error("an unlocated stop must not invoke the pose resolver");
+        });
+    openbus::config::HofData stopOnlyHof;
+    stopOnlyHof.routes = {{"4201", 0, false, {"Alpha", "Beta", "Gamma"}, "Outbound", "42"}};
+    const std::vector<openbus::map::MapAiTimetableCourse> stopOnlyCourses{
+        {"course", {{"stop-only", 0, 480.0}}}};
+    PlayerTimetableCatalog stopOnlyCatalog;
+    stopOnlyCatalog.update(unlocatedNetwork.routes, stopOnlyCourses, stopOnlyHof);
+    PlayerTimetableController stopOnlyController;
+    require(unlocatedReport.routesWithoutStops == 1 && unlocatedNetwork.routes.size() == 1 &&
+                stopOnlyCatalog.lines.size() == 1 &&
+                stopOnlyController.select({PlayerTimetableSelection{0, 0, 0, 2, false}},
+                                          unlocatedNetwork.routes, stopOnlyCourses),
+            "trips with existing but unlocated stops remain selectable");
+    auto missingStopTraffic = stopOnlyTraffic;
+    missingStopTraffic.busStops.pop_back();
+    PassengerNetwork missingStopNetwork;
+    const auto missingStopReport = missingStopNetwork.registerTimetables(
+        missingStopTraffic, 4, [](const auto&) -> std::optional<openbus::map::MapTrafficPose> {
+            return std::nullopt;
+        });
+    require(missingStopNetwork.routes.empty() && missingStopReport.routesMissingStopDefinitions == 1 &&
+                missingStopReport.missingStopDefinitionExamples.find("stop ID 12") !=
+                    std::string::npos,
+            "missing stop definitions are diagnosed instead of inventing a stop name");
+    auto ambiguousStopTraffic = stopOnlyTraffic;
+    ambiguousStopTraffic.busStops.push_back(ambiguousStopTraffic.busStops.back());
+    PassengerNetwork ambiguousStopNetwork;
+    require(ambiguousStopNetwork.registerTimetables(
+                ambiguousStopTraffic, 4,
+                [](const auto&) -> std::optional<openbus::map::MapTrafficPose> {
+                    return std::nullopt;
+                }).routesMissingStopDefinitions == 1 &&
+                ambiguousStopNetwork.routes.empty(),
+            "ambiguous stop IDs are not resolved arbitrarily");
+    auto authoredStopTraffic = stopOnlyTraffic;
+    authoredStopTraffic.busStops.clear();
+    auto& authoredStops = authoredStopTraffic.passengerTimetables[0].stationRecords;
+    authoredStops = {openbus::map::MapAiTimetableRoute::Station{10, 0, "Alpha", 0, {}, {}},
+                     openbus::map::MapAiTimetableRoute::Station{11, 0, "Beta", 0, {}, {}},
+                     openbus::map::MapAiTimetableRoute::Station{12, 0, "Gamma", 0, {}, {}}};
+    PassengerNetwork authoredStopNetwork;
+    require(authoredStopNetwork.registerTimetables(
+                authoredStopTraffic, 4,
+                [](const auto&) -> std::optional<openbus::map::MapTrafficPose> {
+                    return std::nullopt;
+                }).routesWithoutStops == 1 &&
+                authoredStopNetwork.routes.size() == 1,
+            "explicit timetable stops register without Busstops.cfg or road links");
     network.queues.at(1) = 2;
     network.initializeQueues(independentRoute.stops.values());
     require(network.queues.at(1) == 2 && network.initialQueues.at(1) == 4 &&
@@ -896,6 +983,31 @@ void verifyPlayerTimetableController() {
     tripKeyBrt.lineName = tripKeyBrt.timetableKey;
     require(!passengerRouteMatchesHof(tripKeyBrt, brtHof),
             "relaxed matching cannot infer a public line from an internal trip key");
+    openbus::config::HofData x10Hof;
+    x10Hof.routes = {
+        {"510230", 0, false, {"Middle A", "Middle B"}, "Short route", "XXX"},
+        {"510002", 0, false,
+         {"Teltow Bahnhof", "Middle A", "Middle B", "Third", "Hertzallee*T13"},
+         "Outbound", "XXX"},
+    };
+    auto x10 = brtRoute({"Bahnhof Terminus", "Teltow Bahnhof", "Middle A", "Middle B",
+                         "Third", "Hertzallee X10"});
+    x10.lineName = "X10";
+    require(passengerRouteHofRoute(x10, x10Hof) &&
+                passengerRouteHofRoute(x10, x10Hof)->code == "510002",
+            "line-qualified and extra terminus stops match the full X10 HOF route");
+    x10Hof.routes.pop_back();
+    require(!passengerRouteMatchesHof(x10, x10Hof),
+            "a two-stop shared corridor cannot stand in for a longer HOF itinerary");
+    openbus::config::HofData suffixedHof;
+    suffixedHof.busstops = {{"Tel_Start", {"Start"}}, {"Tel_Middle1", {"Middle 1"}},
+                            {"Tel_Middle2", {"Middle 2"}}, {"Tel_End", {"End"}}};
+    suffixedHof.routes = {
+        {"4201", 0, false, {"Tel_Start", "Tel_Middle1", "Tel_Middle2", "Tel_End*T13"},
+         "Outbound", "XXX"}};
+    require(passengerRouteMatchesHof(brtRoute({"Start", "Middle 1", "Middle 2", "End"}),
+                                     suffixedHof),
+            "HOF stop timing suffixes retain the underlying stop's display aliases");
     std::vector<std::string> longHofStops{"Start"};
     std::vector<std::string> longMapStops{"Start"};
     for (int index = 0; index < 20; ++index) {

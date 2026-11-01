@@ -44,13 +44,17 @@ struct PassengerStopRouteState {
 PassengerStopRouteState makePlayerTimetableRoute(const openbus::map::MapAiTimetableRoute& route,
                                                  std::size_t waitingPassengers,
                                                  const PlayerStopPoseResolver& resolvePose);
+std::vector<std::string>
+scheduledPlayerTimetableKeys(const openbus::map::MapAiTrafficData& traffic);
 
 struct PassengerRouteRegistrationReport {
     std::size_t missingStops = 0;
     std::size_t routesWithMissingStops = 0;
     std::size_t routesWithoutStops = 0;
+    std::size_t routesMissingStopDefinitions = 0;
     std::string missingExamples;
     std::string routesWithoutStopExamples;
+    std::string missingStopDefinitionExamples;
 };
 
 struct NearbyPassengerStop {

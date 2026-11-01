@@ -836,6 +836,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                     route.stations.push_back(std::move(station));
                     route.stationIds.push_back(stationId);
                     passengerTimetable.stationIds.push_back(stationId);
+                    passengerTimetable.stationRecords.push_back(route.stations.back());
                 } else {
                     diagnostics.warning(lineIndex + 1, "station",
                                         "invalid or truncated timetable station record in " +
@@ -851,6 +852,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                     ++route.stationCount;
                     route.stationIds.push_back(stationId);
                     passengerTimetable.stationIds.push_back(stationId);
+                    passengerTimetable.stationRecords.push_back(std::nullopt);
                     lineIndex = valueLine;
                 } else {
                     diagnostics.warning(lineIndex + 1, "station_typ2",
@@ -1000,6 +1002,8 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             lineIndex = selectorLine - 1;
         }
         if (malformedTrackEntry || route.splineIds.size() < 2) {
+            if (!passengerTimetable.stationIds.empty())
+                aiTraffic.passengerTimetables.push_back(std::move(passengerTimetable));
             continue;
         }
         aiTraffic.timetableRoutes.push_back(std::move(route));

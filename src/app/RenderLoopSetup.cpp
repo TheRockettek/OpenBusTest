@@ -829,17 +829,6 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                             const std::size_t selectedStopIndex = std::min(
                                 selectedPlayerFirstStopIndex_, selectedRoute.stops.size() - 1);
                             selectedPlayerFirstStopIndex_ = selectedStopIndex;
-                            if (!selectedRoute.stopPoses.empty() &&
-                                !selectedRoute.stopPoses[selectedPlayerFirstStopIndex_]) {
-                                const auto firstLocated = std::ranges::find_if(
-                                    selectedRoute.stopPoses,
-                                    [](const auto& pose) { return pose.has_value(); });
-                                if (firstLocated != selectedRoute.stopPoses.end()) {
-                                    selectedPlayerFirstStopIndex_ =
-                                        static_cast<std::size_t>(std::distance(
-                                            selectedRoute.stopPoses.begin(), firstLocated));
-                                }
-                            }
                             const std::string& stopLabel =
                                 selectedRoute.stops[selectedPlayerFirstStopIndex_].name;
                             if (ImGui::BeginCombo("First stop", stopLabel.c_str())) {
@@ -847,14 +836,13 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                                      stopIndex < selectedRoute.stops.size(); ++stopIndex) {
                                     const bool selected =
                                         stopIndex == selectedPlayerFirstStopIndex_;
-                                    const std::string& label = selectedRoute.stops[stopIndex].name;
                                     const bool unavailable = !selectedRoute.stopPoses.empty() &&
                                                              !selectedRoute.stopPoses[stopIndex];
-                                    ImGui::BeginDisabled(unavailable);
+                                    const std::string label = selectedRoute.stops[stopIndex].name +
+                                        (unavailable ? " (location unavailable)" : "");
                                     if (ImGui::Selectable(label.c_str(), selected)) {
                                         selectedPlayerFirstStopIndex_ = stopIndex;
                                     }
-                                    ImGui::EndDisabled();
                                     if (selected) {
                                         ImGui::SetItemDefaultFocus();
                                     }
@@ -863,16 +851,11 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                             }
                             ImGui::Checkbox("Drive as an additional bus",
                                             &selectedPlayerDriveAsAdditionalBus_);
-                            if (selectedRoute.stopPoses.empty() ||
-                                static_cast<std::size_t>(missingStops) <
-                                    selectedRoute.stopPoses.size()) {
-                                selectedPlayerTimetableSelection_ =
-                                    SpawnBusRequest::TimetableSelection{
-                                        selectedTrip->routeIndex, selectedPlayerCourseIndex_,
-                                        selectedPlayerCourseTripIndex_,
-                                        selectedPlayerFirstStopIndex_,
-                                        selectedPlayerDriveAsAdditionalBus_};
-                            }
+                            selectedPlayerTimetableSelection_ =
+                                SpawnBusRequest::TimetableSelection{
+                                    selectedTrip->routeIndex, selectedPlayerCourseIndex_,
+                                    selectedPlayerCourseTripIndex_, selectedPlayerFirstStopIndex_,
+                                    selectedPlayerDriveAsAdditionalBus_};
                         }
                     }
                 } else {

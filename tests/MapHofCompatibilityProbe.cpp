@@ -14,9 +14,9 @@
 #include <vector>
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 5 || (argc == 5 && std::string(argv[3]) != "--catalog")) {
+    if (argc < 3 || argc > 5) {
         std::cerr << "usage: OpenBusMapHofCompatibilityProbe <map-directory> <hof-file> "
-                     "[timetable-key|--catalog [YYYYMMDD]]\n";
+                     "[timetable-key|--catalog] [YYYYMMDD]\n";
         return 2;
     }
 
@@ -58,25 +58,12 @@ int main(int argc, char** argv) {
             map.aiTraffic, 4, [](const auto&) -> std::optional<openbus::map::MapTrafficPose> {
                 return openbus::map::MapTrafficPose{};
             });
-        std::size_t passengerRouteIndex = 0;
-        std::size_t scheduledRoutes = 0;
-        std::size_t routesWithPassengerStops = 0;
-        for (const openbus::map::MapAiTimetableRoute& route :
-             map.aiTraffic.timetableRoutes) {
-            if (route.scheduledDepartureMinutes.empty()) {
-                continue;
-            }
-            ++scheduledRoutes;
-            if (route.stations.empty()) {
-                continue;
-            }
-            if (passengerRouteIndex >= passengerNetwork.routes.size())
-                throw std::runtime_error("registered passenger routes are incomplete");
-            const auto& passengerRoute = passengerNetwork.routes[passengerRouteIndex++];
-            if (passengerRoute.timetableKey != route.timetableKey)
-                throw std::runtime_error("registered passenger route order does not match map");
+        const auto scheduledKeys = openbus::app::scheduledPlayerTimetableKeys(map.aiTraffic);
+        const std::size_t scheduledRoutes = scheduledKeys.size();
+        const std::size_t routesWithPassengerStops = passengerNetwork.routes.size();
+        for (const auto& passengerRoute : passengerNetwork.routes) {
+            const auto& route = passengerRoute;
             const auto& stops = passengerRoute.stops;
-            ++routesWithPassengerStops;
             if (std::ranges::find(mapLines, route.lineName) == mapLines.end()) {
                 mapLines.push_back(route.lineName);
             }
@@ -120,7 +107,7 @@ int main(int argc, char** argv) {
                     matchingHofLineSamples.push_back(std::move(sample));
                 }
             }
-            if (argc == 4 && route.timetableKey == argv[3]) {
+            if (argc >= 4 && !catalogMode && route.timetableKey == argv[3]) {
                 std::cout << "timetable " << route.timetableKey << " line=" << route.lineName
                           << " destination=" << route.destinationName << " stops=";
                 for (const auto& stop : passengerRoute.stops)

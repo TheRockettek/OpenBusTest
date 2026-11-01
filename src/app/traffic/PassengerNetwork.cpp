@@ -8,6 +8,22 @@
 
 namespace openbus::app {
 
+std::vector<std::string>
+scheduledPlayerTimetableKeys(const openbus::map::MapAiTrafficData& traffic) {
+    std::vector<std::string> keys;
+    const auto add = [&](const auto& timetable) {
+        if (!timetable.scheduledDepartureMinutes.empty() &&
+            std::ranges::find(keys, timetable.timetableKey) == keys.end()) {
+            keys.push_back(timetable.timetableKey);
+        }
+    };
+    for (const auto& timetable : traffic.timetableRoutes)
+        add(timetable);
+    for (const auto& timetable : traffic.passengerTimetables)
+        add(timetable);
+    return keys;
+}
+
 PassengerStopRouteState makePlayerTimetableRoute(const openbus::map::MapAiTimetableRoute& route,
                                                  std::size_t waitingPassengers,
                                                  const PlayerStopPoseResolver& resolvePose) {
@@ -59,11 +75,7 @@ PassengerNetwork::registerTimetables(const openbus::map::MapAiTrafficData& traff
                                      std::size_t waitingPassengers,
                                      const PlayerStopPoseResolver& resolvePose) {
     PassengerRouteRegistrationReport report;
-    for (const auto& timetable : traffic.timetableRoutes) {
-        if (timetable.scheduledDepartureMinutes.empty() || timetable.stations.empty()) {
-            continue;
-        }
-        auto route = makePlayerTimetableRoute(timetable, waitingPassengers, resolvePose);
+    const auto registerRoute = [&](PassengerStopRouteState route) {
         const auto missing =
             std::ranges::count_if(route.stopPoses, [](const auto& pose) { return !pose; });
         report.missingStops += static_cast<std::size_t>(missing);
@@ -90,6 +102,90 @@ PassengerNetwork::registerTimetables(const openbus::map::MapAiTrafficData& traff
             initializeQueues(std::span(&stop, 1));
         }
         routes.push_back(std::move(route));
+    };
+    for (const auto& timetable : traffic.timetableRoutes) {
+        if (timetable.scheduledDepartureMinutes.empty() || timetable.stations.empty()) {
+            continue;
+        }
+        registerRoute(makePlayerTimetableRoute(timetable, waitingPassengers, resolvePose));
+    }
+    for (const auto& timetable : traffic.passengerTimetables) {
+        if (timetable.scheduledDepartureMinutes.empty() || timetable.stationIds.empty() ||
+            findRouteIndex(timetable.timetableKey)) {
+            continue;
+        }
+        if (!timetable.stationRecords.empty() &&
+            timetable.stationRecords.size() != timetable.stationIds.size()) {
+            throw std::logic_error("Passenger timetable station records lost alignment");
+        }
+        const auto calls = openbus::map::mapAiPassengerStopCalls(traffic, timetable);
+        PassengerStops::Container stops;
+        std::vector<std::optional<openbus::map::MapTrafficPose>> poses;
+        stops.reserve(calls.size());
+        poses.reserve(calls.size());
+        bool missingDefinition = false;
+        for (std::size_t index = 0; index < calls.size(); ++index) {
+            const auto& call = calls[index];
+            const auto* authored = !timetable.stationRecords.empty() &&
+                                           timetable.stationRecords[index]
+                                       ? &*timetable.stationRecords[index]
+                                       : nullptr;
+            if (!authored && !call.busStopIndex) {
+                missingDefinition = true;
+                if (report.missingStopDefinitionExamples.size() < 500) {
+                    report.missingStopDefinitionExamples +=
+                        (report.missingStopDefinitionExamples.empty() ? "" : "; ") +
+                        timetable.timetableKey + ": stop ID " + std::to_string(call.stationId);
+                }
+                continue;
+            }
+            openbus::map::MapTrafficPassengerStop stop;
+            stop.stopId = call.stationId;
+            stop.name = authored ? authored->name : traffic.busStops[*call.busStopIndex].name;
+            stop.timetableStationIndex = index;
+            stop.waitingPassengers = waitingPassengers;
+            stop.dwellSeconds = 8.0;
+            std::optional<openbus::map::MapTrafficPose> pose;
+            const openbus::map::MapAiStationLink::Entry* entry = nullptr;
+            bool useIncoming = false;
+            if (call.outgoingStationLinkIndex) {
+                const auto& link = traffic.stationLinks[*call.outgoingStationLinkIndex];
+                if (!link.entries.empty())
+                    entry = &link.entries.front();
+            }
+            if (!entry && index > 0 && calls[index - 1].outgoingStationLinkIndex) {
+                const auto& link =
+                    traffic.stationLinks[*calls[index - 1].outgoingStationLinkIndex];
+                if (!link.entries.empty()) {
+                    entry = &link.entries.back();
+                    useIncoming = true;
+                }
+            }
+            if (entry && entry->splineId != 0 && entry->pathIndex >= 0 &&
+                (!useIncoming || (std::isfinite(entry->lengthMeters) && entry->lengthMeters >= 0))) {
+                stop.splineId = entry->splineId;
+                stop.pathIndex = static_cast<std::size_t>(entry->pathIndex);
+                if (useIncoming)
+                    stop.splinePositionMeters = entry->lengthMeters;
+                pose = resolvePose(stop);
+            }
+            stops.push_back(std::move(stop));
+            poses.push_back(std::move(pose));
+        }
+        if (missingDefinition) {
+            ++report.routesMissingStopDefinitions;
+            continue;
+        }
+        for (std::size_t index = poses.size(); index > 0; --index) {
+            if (poses[index - 1]) {
+                stops[index - 1].passengersAlighting =
+                    (std::numeric_limits<std::size_t>::max)();
+                break;
+            }
+        }
+        registerRoute({{}, PassengerStops(std::move(stops)), timetable.timetableKey,
+                       timetable.lineName, timetable.destinationName, timetable.tripName,
+                       std::move(poses)});
     }
     return report;
 }

@@ -422,6 +422,8 @@ void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficD
     if (!mapRenderer_) {
         throw std::logic_error("Cannot register player timetable routes before loading a map");
     }
+    passengerTimetableCourses_ = traffic.timetableCourses;
+    playerTimetableMapKeys_ = openbus::app::scheduledPlayerTimetableKeys(traffic);
     const auto report = passengerNetwork_.registerTimetables(
         traffic, openbus::map::mapScheduledPassengerQueueSize(4, scheduledHumanScale),
         [&](const openbus::map::MapTrafficPassengerStop& stop) {
@@ -430,7 +432,8 @@ void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficD
         });
     playerTimetableCatalog_.invalidate();
     gameLog.Log("Player timetable routes registered from map schedules: " +
-                std::to_string(passengerNetwork_.routes.size()));
+                std::to_string(passengerNetwork_.routes.size()) + "; courses: " +
+                std::to_string(passengerTimetableCourses_.size()));
     if (report.missingStops != 0) {
         gameLog.Warning(
             "Player timetable cannot locate " + std::to_string(report.missingStops) + " stops on " +
@@ -441,6 +444,13 @@ void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficD
             (report.routesWithoutStopExamples.empty()
                  ? ""
                  : ". Routes with no located stops: " + report.routesWithoutStopExamples));
+    }
+    if (report.routesMissingStopDefinitions != 0) {
+        gameLog.Warning(
+            "Player timetable cannot register " +
+            std::to_string(report.routesMissingStopDefinitions) +
+            " routes with missing or ambiguous stop definitions. Examples: " +
+            report.missingStopDefinitionExamples);
     }
 }
 
@@ -974,22 +984,10 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
-    passengerTimetableCourses_ = map.aiTraffic.timetableCourses;
+    passengerTimetableCourses_.clear();
     playerTimetableCatalog_.invalidate();
     playerTimetableMapPath_ = openbus::pathToUtf8(map.rootPath);
     playerTimetableMapKeys_.clear();
-    for (const auto& route : map.aiTraffic.timetableRoutes) {
-        if (!route.scheduledDepartureMinutes.empty()) {
-            playerTimetableMapKeys_.push_back(route.timetableKey);
-        }
-    }
-    for (const auto& timetable : map.aiTraffic.passengerTimetables) {
-        if (!timetable.scheduledDepartureMinutes.empty() &&
-            std::ranges::find(playerTimetableMapKeys_, timetable.timetableKey) ==
-                playerTimetableMapKeys_.end()) {
-            playerTimetableMapKeys_.push_back(timetable.timetableKey);
-        }
-    }
     if (prepareInitialWindowAsync) {
         mapRenderer_.reset();
     }

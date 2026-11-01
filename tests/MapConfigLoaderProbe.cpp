@@ -163,6 +163,11 @@ void runFixtureProbe() {
                      "[trip]\nTrackFixture\nTown End\n12\n"
                      "[station_typ2]\n15479\n[station_typ2]\n15480\n"
                      "[profile]\nStandard\n12\n");
+        writeUtf16Le(timetableDirectory / "Broken.ttp",
+                     "[trip]\nBroken\nTown End\n12\n"
+                     "[station]\n19001\n0\nFirst Stop\n0\n0\n0\n0\n0\n"
+                     "[station]\n19002\n0\nLast Stop\n0\n0\n0\n0\n0\n");
+        writeUtf16Le(timetableDirectory / "Broken.ttr", "[track_entry]\ninvalid\n");
         writeUtf16Le(timetableDirectory / "BusOnly.ttl", "[newtour]\nBus\n1\nDep.: 8:15:0\n"
                                                          "[addtrip]\nBusOnly\n0\n495.000\n");
         writeUtf16Le(timetableDirectory / "Busstops.cfg",
@@ -186,7 +191,8 @@ void runFixtureProbe() {
         writeUtf16Le(timetableDirectory / "Fixture.ttl",
                      "[newtour]\nDriver\n1\n"
                      "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n1\n495.000\n"
-                     "Dep.: 6:45:0\n[addtrip]\nFixtureTrip\n0\n405.000\n");
+                     "Dep.: 6:45:0\n[addtrip]\nFixtureTrip\n0\n405.000\n"
+                     "[addtrip]\nBroken\n0\n515.000\n");
         writeUtf16Le(timetableDirectory / "TrackFixture.ttl",
                      "[newtour]\nDriver\n1\nDep.: 8:15:0\n"
                      "[addtrip]\nTrackFixture\n0\n495.000\n");
@@ -805,12 +811,32 @@ void runFixtureProbe() {
                     definition.aiTraffic.timetableCourses[1].name == "Fixture" &&
                     definition.aiTraffic.timetableCourses[1].trips ==
                         std::vector<openbus::map::MapAiTimetableCourseTrip>{
-                            {"fixturetrip", 1, 495.0}, {"fixturetrip", 0, 405.0}} &&
+                            {"fixturetrip", 1, 495.0}, {"fixturetrip", 0, 405.0},
+                            {"broken", 0, 515.0}} &&
                     definition.aiTraffic.timetableCourses[2].name == "TrackFixture" &&
                     definition.aiTraffic.timetableCourses[2].trips ==
                         std::vector<openbus::map::MapAiTimetableCourseTrip>{
                             {"trackfixture", 0, 495.0}},
                 "timetable courses retain source order, trip keys, profiles, and departure times");
+        const auto brokenTimetable = std::ranges::find(
+            definition.aiTraffic.passengerTimetables, std::string("broken"),
+            &openbus::map::MapAiPassengerTimetable::timetableKey);
+        require(brokenTimetable != definition.aiTraffic.passengerTimetables.end() &&
+                    brokenTimetable->stationIds == std::vector<int>{19001, 19002} &&
+                    brokenTimetable->stationRecords.size() == 2 &&
+                    brokenTimetable->stationRecords[0] &&
+                    brokenTimetable->stationRecords[0]->name == "First Stop" &&
+                    brokenTimetable->stationRecords[1] &&
+                    brokenTimetable->stationRecords[1]->name == "Last Stop" &&
+                    brokenTimetable->scheduledDepartureMinutes == std::vector<double>{515.0} &&
+                    std::ranges::none_of(definition.aiTraffic.timetableRoutes, [](const auto& route) {
+                        return route.timetableKey == "broken";
+                    }) &&
+                    std::ranges::any_of(definition.diagnostics.entries, [](const auto& diagnostic) {
+                        return diagnostic.keyword == "track_entry" &&
+                               diagnostic.message.find("Broken.ttr") != std::string::npos;
+                    }),
+                "broken driving tracks preserve scheduled authored stops and retain diagnostics");
         const openbus::map::MapAiTimetableCourse progressionCourse{
             "Progression",
             {{"unavailable", 0, 100.0}, {"fixturetrip", 0, 110.0}, {"otherline", 1, 120.0}}};
