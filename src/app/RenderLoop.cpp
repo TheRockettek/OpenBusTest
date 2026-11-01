@@ -653,8 +653,8 @@ bool RenderLoop::AddTrafficVehicle(
                                  static_cast<std::ptrdiff_t>(routeSegmentCursor),
                              trafficState.actor.route.segments.end(),
                              [&](const openbus::map::MapTrafficRouteSegment& candidate) {
-                                 return candidate.spline.placement.splineId == stop.splineId &&
-                                        candidate.sceneryPathIndex == stop.pathIndex;
+                                 return openbus::map::mapTrafficSegmentMatchesTimetablePath(
+                                     candidate, stop.splineId, stop.pathIndex);
                              });
             if (segment == trafficState.actor.route.segments.end()) {
                 logUnmatchedStop();
@@ -693,6 +693,7 @@ bool RenderLoop::AddTrafficVehicle(
                 {trafficState.workerActorTemplate, trafficState.bus->passengerStops,
                  trafficState.bus->timetableKey, trafficState.bus->timetableLineName,
                  trafficState.bus->timetableDestinationName, std::move(timetableTripName)});
+            playerTimetableCatalog_.invalidate();
             if (registeredPassengerRouteIndex != nullptr) {
                 *registeredPassengerRouteIndex = routeIndex;
             }
@@ -716,6 +717,7 @@ bool RenderLoop::AddTrafficVehicle(
                     {trafficState.workerActorTemplate, trafficState.bus->passengerStops,
                      trafficState.bus->timetableKey, trafficState.bus->timetableLineName,
                      trafficState.bus->timetableDestinationName, std::move(timetableTripName)});
+                playerTimetableCatalog_.invalidate();
             }
         }
         for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.bus->passengerStops) {
@@ -972,6 +974,7 @@ void RenderLoop::SetSunAltitude(double altitudeDegrees) {
 }
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
+    playerTimetableCatalog_.invalidate();
     playerVehicle_ = model;
     if (playerVehicle_ != nullptr) {
         playerPassengerServiceEnabled_ = true;
@@ -992,6 +995,21 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
     passengerTimetableCourses_ = map.aiTraffic.timetableCourses;
+    playerTimetableCatalog_.invalidate();
+    playerTimetableMapPath_ = openbus::pathToUtf8(map.rootPath);
+    playerTimetableMapKeys_.clear();
+    for (const auto& route : map.aiTraffic.timetableRoutes) {
+        if (!route.scheduledDepartureMinutes.empty()) {
+            playerTimetableMapKeys_.push_back(route.timetableKey);
+        }
+    }
+    for (const auto& timetable : map.aiTraffic.passengerTimetables) {
+        if (!timetable.scheduledDepartureMinutes.empty() &&
+            std::ranges::find(playerTimetableMapKeys_, timetable.timetableKey) ==
+                playerTimetableMapKeys_.end()) {
+            playerTimetableMapKeys_.push_back(timetable.timetableKey);
+        }
+    }
     if (prepareInitialWindowAsync) {
         mapRenderer_.reset();
     }

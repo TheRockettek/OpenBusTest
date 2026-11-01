@@ -870,8 +870,12 @@ void runFixtureProbe() {
                             {2, 3, 4, 5.5, {"6", "7", "8"}}} &&
                     busOnlyTimetable != definition.aiTraffic.passengerTimetables.end() &&
                     busOnlyTimetable->stationIds == std::vector<int>{15479, 15480} &&
+                    busOnlyTimetable->destinationName == "Town End" &&
+                    busOnlyTimetable->lineName == "12" &&
                     busOnlyTimetable->scheduledDepartureMinutes == std::vector<double>{495.0} &&
                     busOnlyRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    busOnlyRoute->lineName == "12" &&
+                    busOnlyRoute->destinationName == "Town End" &&
                     busOnlyRoute->stations.size() == 2 &&
                     busOnlyRoute->stations[0].trackEntryIndex == 0 &&
                     busOnlyRoute->stations[1].trackEntryIndex == 2 &&

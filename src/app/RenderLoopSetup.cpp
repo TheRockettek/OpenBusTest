@@ -58,6 +58,119 @@ void copyToInputBuffer(std::array<char, 256>& buffer, const std::string& value) 
     buffer[count] = '\0';
 }
 
+void logPlayerTimetableCatalog(
+    const openbus::app::PlayerTimetableCatalog& catalog,
+    const std::vector<openbus::app::PassengerStopRouteState>& routes,
+    const std::vector<openbus::map::MapAiTimetableCourse>& courses,
+    const std::vector<std::string>& mapKeys, const std::string& mapPath,
+    const std::string& hofPath, const openbus::config::HofData& hof,
+    const std::vector<std::string>& scriptErrors) {
+    using openbus::app::PassengerHofMatchStatus;
+    std::size_t matched = 0;
+    std::size_t ambiguous = 0;
+    std::size_t tooFew = 0;
+    std::size_t noSequence = 0;
+    for (const auto& route : catalog.routes) {
+        switch (route.status) {
+        case PassengerHofMatchStatus::Matched: ++matched; break;
+        case PassengerHofMatchStatus::TooFewStops: ++tooFew; break;
+        case PassengerHofMatchStatus::NoMatchingSequence: ++noSequence; break;
+        case PassengerHofMatchStatus::AmbiguousLines: ++ambiguous; break;
+        }
+    }
+    std::size_t selectableCourses = 0;
+    std::size_t selectableTrips = 0;
+    for (const auto& line : catalog.lines) {
+        selectableCourses += line.courses.size();
+        for (const auto& course : line.courses)
+            selectableTrips += course.trips.size();
+    }
+    gameLog.Log("Player timetable catalog: map=" + mapPath + " HOF=" + hofPath +
+                " map_scheduled_routes=" + std::to_string(mapKeys.size()) +
+                " registered_routes=" + std::to_string(routes.size()) +
+                " courses=" + std::to_string(courses.size()) +
+                " HOF_routes=" + std::to_string(hof.routes.size()) +
+                " HOF_stops=" + std::to_string(hof.busstops.size()) +
+                " matched=" + std::to_string(matched) +
+                " no_sequence=" + std::to_string(noSequence) +
+                " ambiguous_lines=" + std::to_string(ambiguous) +
+                " too_few_stops=" + std::to_string(tooFew) +
+                " selectable_lines=" + std::to_string(catalog.lines.size()) +
+                " selectable_courses=" + std::to_string(selectableCourses) +
+                " selectable_trips=" + std::to_string(selectableTrips));
+    if (selectableTrips != 0) {
+        return;
+    }
+    gameLog.Warning("Player timetable has no selectable trips. Only registered player routes "
+                    "are matched; failed or partial AI road itineraries are not registered.");
+    for (std::size_t index = 0; index < std::min<std::size_t>(scriptErrors.size(), 4); ++index)
+        gameLog.Warning("Player timetable HOF script error: " + scriptErrors[index]);
+    std::size_t unregistered = 0;
+    std::string examples;
+    for (const auto& key : mapKeys) {
+        if (std::ranges::any_of(routes, [&](const auto& route) {
+                return route.timetableKey == key;
+            })) {
+            continue;
+        }
+        ++unregistered;
+        if (unregistered <= 8)
+            examples += (examples.empty() ? "" : ", ") + key;
+    }
+    if (unregistered != 0) {
+        gameLog.Warning("Player timetable unregistered map routes=" + std::to_string(unregistered) +
+                        " examples=" + examples);
+    }
+    for (std::size_t index = 0; index < std::min<std::size_t>(routes.size(), 12); ++index) {
+        const auto& route = routes[index];
+        const auto& result = catalog.routes[index];
+        const char* status =
+            result.status == PassengerHofMatchStatus::Matched ? "matched" :
+            result.status == PassengerHofMatchStatus::TooFewStops ? "too-few-stops" :
+            result.status == PassengerHofMatchStatus::AmbiguousLines ? "ambiguous-lines" :
+                                                                      "no-matching-sequence";
+        std::string stops;
+        for (std::size_t stop = 0; stop < std::min<std::size_t>(route.stops.size(), 6); ++stop)
+            stops += (stops.empty() ? "" : " | ") + route.stops[stop].name;
+        gameLog.Warning("Player timetable route: key=" + route.timetableKey +
+                        " line=" + route.lineName + " destination=" + route.destinationName +
+                        " stops=" + std::to_string(route.stops.size()) +
+                        " status=" + status +
+                        " matching_sequences_seen=" + std::to_string(result.matchingSequences) +
+                        " same_line_candidates_seen=" + std::to_string(result.sameLineCandidates) +
+                        " first_stops=" + stops +
+                        (result.status == PassengerHofMatchStatus::Matched
+                             ? " HOF_code=" + result.hofCode + " HOF_line=" + result.hofLine
+                             : ""));
+        if (result.exampleSameLineRoute) {
+            const auto& candidate = hof.routes[*result.exampleSameLineRoute];
+            std::string candidateStops;
+            for (std::size_t stop = 0;
+                 stop < std::min<std::size_t>(candidate.busstopIdents.size(), 6); ++stop) {
+                candidateStops += (candidateStops.empty() ? "" : " | ") +
+                                  candidate.busstopIdents[stop];
+            }
+            gameLog.Warning("Player timetable same-line HOF example: code=" + candidate.code +
+                            " name=" + candidate.name +
+                            " stops=" + std::to_string(candidate.busstopIdents.size()) +
+                            (candidate.busstopIdents.empty()
+                                 ? ""
+                                 : " first_stops=" + candidateStops +
+                                       " last=" + candidate.busstopIdents.back()));
+        }
+    }
+    for (std::size_t index = 0; index < std::min<std::size_t>(hof.routes.size(), 8); ++index) {
+        const auto& route = hof.routes[index];
+        gameLog.Warning("Player timetable HOF route: code=" + route.code + " line=" + route.line +
+                        " name=" + route.name +
+                        " stops=" + std::to_string(route.busstopIdents.size()) +
+                        (route.busstopIdents.empty()
+                             ? ""
+                             : " first=" + route.busstopIdents.front() +
+                                   " last=" + route.busstopIdents.back()));
+    }
+}
+
 std::string environmentValue(const char* name) {
     const char* value = openbus::getEnvironment(name);
     return value == nullptr ? std::string{} : std::string(value);
@@ -702,33 +815,28 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
     }
     if (selectedPlayerUseTimetable_) {
         const auto& hof = playerVehicle_->scripts->hofData();
-        const auto selectableRoute = [&](const PassengerStopRouteState& route) {
-            return openbus::app::passengerRouteMatchesHof(route, hof);
-        };
-        const auto hofLineName = [&](const PassengerStopRouteState& route) {
-            const auto* matched = openbus::app::passengerRouteHofRoute(route, hof);
-            return matched ? matched->line : std::string{};
-        };
-        std::vector<std::string> lines;
-        for (const PassengerStopRouteState& route : passengerNetwork_.routes) {
-            if (selectableRoute(route) &&
-                std::ranges::find(lines, hofLineName(route)) == lines.end()) {
-                lines.push_back(hofLineName(route));
-            }
+        if (playerTimetableCatalog_.update(passengerNetwork_.routes, passengerTimetableCourses_,
+                                           hof)) {
+            logPlayerTimetableCatalog(playerTimetableCatalog_, passengerNetwork_.routes,
+                                      passengerTimetableCourses_, playerTimetableMapKeys_,
+                                      playerTimetableMapPath_,
+                                      playerVehicle_->variables.getString("hof_file"), hof,
+                                      playerVehicle_->scripts->errors());
         }
-        std::ranges::sort(lines);
+        const auto& lines = playerTimetableCatalog_.lines;
         if (!lines.empty()) {
-            if (std::ranges::find(lines, selectedPlayerLineName_) == lines.end()) {
-                selectedPlayerLineName_ = lines.front();
+            if (std::ranges::find(lines, selectedPlayerLineName_,
+                                  &openbus::app::PlayerTimetableCatalogLine::name) == lines.end()) {
+                selectedPlayerLineName_ = lines.front().name;
                 selectedPlayerCourseIndex_ = 0;
                 selectedPlayerCourseTripIndex_ = 0;
                 selectedPlayerFirstStopIndex_ = 0;
             }
             if (ImGui::BeginCombo("Line", selectedPlayerLineName_.c_str())) {
-                for (const std::string& line : lines) {
-                    const bool selected = line == selectedPlayerLineName_;
-                    if (ImGui::Selectable(line.c_str(), selected)) {
-                        selectedPlayerLineName_ = line;
+                for (const auto& line : lines) {
+                    const bool selected = line.name == selectedPlayerLineName_;
+                    if (ImGui::Selectable(line.name.c_str(), selected)) {
+                        selectedPlayerLineName_ = line.name;
                         selectedPlayerCourseIndex_ = 0;
                         selectedPlayerCourseTripIndex_ = 0;
                         selectedPlayerFirstStopIndex_ = 0;
@@ -739,33 +847,22 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                 }
                 ImGui::EndCombo();
             }
-            std::vector<std::size_t> courses;
-            for (std::size_t courseIndex = 0; courseIndex < passengerTimetableCourses_.size();
-                 ++courseIndex) {
-                const auto& course = passengerTimetableCourses_[courseIndex];
-                const bool hasLineTrip = std::ranges::any_of(
-                    course.trips, [&](const openbus::map::MapAiTimetableCourseTrip& trip) {
-                        return std::ranges::any_of(
-                            passengerNetwork_.routes, [&](const PassengerStopRouteState& route) {
-                                return route.timetableKey == trip.timetableKey &&
-                                       hofLineName(route) == selectedPlayerLineName_ &&
-                                       selectableRoute(route);
-                            });
-                    });
-                if (hasLineTrip) {
-                    courses.push_back(courseIndex);
-                }
-            }
+            const auto& line = *std::ranges::find(
+                lines, selectedPlayerLineName_, &openbus::app::PlayerTimetableCatalogLine::name);
+            const auto& courses = line.courses;
             if (!courses.empty()) {
-                if (std::ranges::find(courses, selectedPlayerCourseIndex_) == courses.end()) {
-                    selectedPlayerCourseIndex_ = courses.front();
+                if (std::ranges::find(courses, selectedPlayerCourseIndex_,
+                                      &openbus::app::PlayerTimetableCatalogCourse::courseIndex) ==
+                    courses.end()) {
+                    selectedPlayerCourseIndex_ = courses.front().courseIndex;
                     selectedPlayerCourseTripIndex_ = 0;
                     selectedPlayerFirstStopIndex_ = 0;
                 }
                 const auto& displayedCourse =
                     passengerTimetableCourses_[selectedPlayerCourseIndex_];
                 if (ImGui::BeginCombo("Tour / course", displayedCourse.name.c_str())) {
-                    for (const std::size_t courseIndex : courses) {
+                    for (const auto& cachedCourse : courses) {
+                        const std::size_t courseIndex = cachedCourse.courseIndex;
                         const auto& option = passengerTimetableCourses_[courseIndex];
                         const bool selected = courseIndex == selectedPlayerCourseIndex_;
                         if (ImGui::Selectable(option.name.c_str(), selected)) {
@@ -780,31 +877,22 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                     ImGui::EndCombo();
                 }
                 const auto& course = passengerTimetableCourses_[selectedPlayerCourseIndex_];
-                std::vector<std::size_t> trips;
-                for (std::size_t tripIndex = 0; tripIndex < course.trips.size(); ++tripIndex) {
-                    const auto& trip = course.trips[tripIndex];
-                    if (std::ranges::any_of(
-                            passengerNetwork_.routes, [&](const PassengerStopRouteState& route) {
-                                return route.timetableKey == trip.timetableKey &&
-                                       hofLineName(route) == selectedPlayerLineName_ &&
-                                       selectableRoute(route);
-                            })) {
-                        trips.push_back(tripIndex);
-                    }
-                }
+                const auto& trips = std::ranges::find(
+                    courses, selectedPlayerCourseIndex_,
+                    &openbus::app::PlayerTimetableCatalogCourse::courseIndex)->trips;
                 if (!trips.empty()) {
-                    if (std::ranges::find(trips, selectedPlayerCourseTripIndex_) == trips.end()) {
-                        selectedPlayerCourseTripIndex_ = trips.front();
+                    if (std::ranges::find(
+                            trips, selectedPlayerCourseTripIndex_,
+                            &openbus::app::PlayerTimetableCatalogTrip::tripIndex) == trips.end()) {
+                        selectedPlayerCourseTripIndex_ = trips.front().tripIndex;
                         selectedPlayerFirstStopIndex_ = 0;
                     }
                     const auto& trip = course.trips[selectedPlayerCourseTripIndex_];
-                    const auto route = std::ranges::find_if(
-                        passengerNetwork_.routes, [&](const PassengerStopRouteState& candidate) {
-                            return candidate.timetableKey == trip.timetableKey &&
-                                   hofLineName(candidate) == selectedPlayerLineName_ &&
-                                   selectableRoute(candidate);
-                        });
-                    if (route != passengerNetwork_.routes.end()) {
+                    const auto cachedTrip = std::ranges::find(
+                        trips, selectedPlayerCourseTripIndex_,
+                        &openbus::app::PlayerTimetableCatalogTrip::tripIndex);
+                    const auto& route = passengerNetwork_.routes[cachedTrip->routeIndex];
+                    {
                         const auto tripDisplayLabel = [](const std::string& tripName,
                                                          double departureMinutes) {
                             const int minuteOfDay = static_cast<int>(std::floor(departureMinutes));
@@ -814,19 +902,14 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                                    (minute < 10 ? "0" : "") + std::to_string(minute) + ")";
                         };
                         const std::string tripLabel =
-                            tripDisplayLabel(route->tripName, trip.departureMinutes);
+                            tripDisplayLabel(route.tripName, trip.departureMinutes);
                         if (ImGui::BeginCombo("Trip", tripLabel.c_str())) {
-                            for (const std::size_t tripIndex : trips) {
+                            for (const auto& option : trips) {
+                                const std::size_t tripIndex = option.tripIndex;
                                 const auto& optionTrip = course.trips[tripIndex];
-                                const auto optionRoute = std::ranges::find_if(
-                                    passengerNetwork_.routes,
-                                    [&](const PassengerStopRouteState& candidate) {
-                                        return candidate.timetableKey == optionTrip.timetableKey &&
-                                               hofLineName(candidate) == selectedPlayerLineName_ &&
-                                               selectableRoute(candidate);
-                                    });
+                                const auto& optionRoute = passengerNetwork_.routes[option.routeIndex];
                                 const std::string label = tripDisplayLabel(
-                                    optionRoute->tripName, optionTrip.departureMinutes);
+                                    optionRoute.tripName, optionTrip.departureMinutes);
                                 const bool selected = tripIndex == selectedPlayerCourseTripIndex_;
                                 if (ImGui::Selectable(label.c_str(), selected)) {
                                     selectedPlayerCourseTripIndex_ = tripIndex;
@@ -838,25 +921,21 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                             }
                             ImGui::EndCombo();
                         }
-                        const auto& selectedTrip = course.trips[selectedPlayerCourseTripIndex_];
-                        const auto selectedRoute = std::ranges::find_if(
-                            passengerNetwork_.routes,
-                            [&](const PassengerStopRouteState& candidate) {
-                                return candidate.timetableKey == selectedTrip.timetableKey &&
-                                       hofLineName(candidate) == selectedPlayerLineName_ &&
-                                       selectableRoute(candidate);
-                            });
-                        if (selectedRoute != passengerNetwork_.routes.end()) {
+                        const auto selectedTrip = std::ranges::find(
+                            trips, selectedPlayerCourseTripIndex_,
+                            &openbus::app::PlayerTimetableCatalogTrip::tripIndex);
+                        const auto& selectedRoute = passengerNetwork_.routes[selectedTrip->routeIndex];
+                        {
                             const std::size_t selectedStopIndex = std::min(
-                                selectedPlayerFirstStopIndex_, selectedRoute->stops.size() - 1);
+                                selectedPlayerFirstStopIndex_, selectedRoute.stops.size() - 1);
                             selectedPlayerFirstStopIndex_ = selectedStopIndex;
                             const std::string& stopLabel =
-                                selectedRoute->stops[selectedStopIndex].name;
+                                selectedRoute.stops[selectedStopIndex].name;
                             if (ImGui::BeginCombo("First stop", stopLabel.c_str())) {
                                 for (std::size_t stopIndex = 0;
-                                     stopIndex < selectedRoute->stops.size(); ++stopIndex) {
+                                     stopIndex < selectedRoute.stops.size(); ++stopIndex) {
                                     const bool selected = stopIndex == selectedStopIndex;
-                                    const std::string& label = selectedRoute->stops[stopIndex].name;
+                                    const std::string& label = selectedRoute.stops[stopIndex].name;
                                     if (ImGui::Selectable(label.c_str(), selected)) {
                                         selectedPlayerFirstStopIndex_ = stopIndex;
                                     }
@@ -869,8 +948,7 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                             ImGui::Checkbox("Drive as an additional bus",
                                             &selectedPlayerDriveAsAdditionalBus_);
                             selectedPlayerTimetableSelection_ = SpawnBusRequest::TimetableSelection{
-                                static_cast<std::size_t>(
-                                    std::distance(passengerNetwork_.routes.begin(), selectedRoute)),
+                                selectedTrip->routeIndex,
                                 selectedPlayerCourseIndex_, selectedPlayerCourseTripIndex_,
                                 selectedPlayerFirstStopIndex_, selectedPlayerDriveAsAdditionalBus_};
                         }
@@ -889,9 +967,15 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                 for (const auto& error : playerVehicle_->scripts->errors()) {
                     ImGui::TextWrapped("%s", error.c_str());
                 }
+            } else if (passengerNetwork_.routes.empty()) {
+                ImGui::TextWrapped(
+                    "No player timetable routes were registered. Map road-route or passenger "
+                    "stop preparation may have failed; see the log for details.");
             } else {
-                ImGui::TextUnformatted(
-                    "No map timetable routes have an unambiguous matching HOF stop sequence.");
+                ImGui::TextWrapped(
+                    "No registered player timetable routes match this HOF unambiguously. "
+                    "Some map trips may be unavailable because their road routes or stops "
+                    "could not be registered; see the log for details.");
             }
         }
         ImGui::BeginDisabled(!selectedPlayerTimetableSelection_);

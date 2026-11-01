@@ -759,6 +759,42 @@ void verifyPlayerTimetableController() {
     const std::vector<PassengerStopRouteState> hofRoutes{hofRoute, routes[1]};
     const std::vector<openbus::map::MapAiTimetableCourse> hofCourses{
         {"HOF course", {{"hof-trip", 0, 480.0}, {"return", 0, 520.0}}}};
+    PlayerTimetableCatalog catalog;
+    require(catalog.update(hofRoutes, hofCourses, hof) && catalog.routes.size() == 2 &&
+                catalog.routes[0].status == PassengerHofMatchStatus::Matched &&
+                catalog.routes[1].status == PassengerHofMatchStatus::NoMatchingSequence &&
+                catalog.lines.size() == 1 && catalog.lines[0].name == "100" &&
+                catalog.lines[0].courses.size() == 1 &&
+                catalog.lines[0].courses[0].courseIndex == 0 &&
+                catalog.lines[0].courses[0].trips.size() == 1 &&
+                catalog.lines[0].courses[0].trips[0].tripIndex == 0 &&
+                catalog.lines[0].courses[0].trips[0].routeIndex == 0,
+            "catalog caches only HOF-compatible course trips");
+    require(!catalog.update(hofRoutes, hofCourses, {}) && catalog.lines.size() == 1,
+            "repeated frames reuse the catalog without matching the HOF again");
+    catalog.invalidate();
+    require(catalog.update(hofRoutes, hofCourses, {}) && catalog.lines.empty() &&
+                catalog.routes[0].status == PassengerHofMatchStatus::NoMatchingSequence,
+            "catalog invalidation rebuilds the results for changed input");
+    auto appendedRoute = hofRoute;
+    appendedRoute.timetableKey = "second-trip";
+    const std::vector<PassengerStopRouteState> expandedRoutes{hofRoute, appendedRoute};
+    const std::vector<openbus::map::MapAiTimetableCourse> expandedCourses{
+        {"updated", {{"hof-trip", 0, 480.0}, {"second-trip", 0, 520.0}}}};
+    catalog.invalidate();
+    require(catalog.update(expandedRoutes, expandedCourses, hof) &&
+                catalog.lines.size() == 1 && catalog.lines[0].courses[0].trips.size() == 2 &&
+                catalog.lines[0].courses[0].trips[1].routeIndex == 1,
+            "catalog rebuild includes newly registered routes and courses");
+    const auto ambiguousMatch = analyzePassengerRouteHof(tripKeyLine, ambiguousHof);
+    require(ambiguousMatch.status == PassengerHofMatchStatus::AmbiguousLines &&
+                ambiguousMatch.matchingSequences == 2,
+            "diagnostics distinguish ambiguous matching HOF lines");
+    auto oneStopRoute = hofRoute;
+    oneStopRoute.stops = PassengerStops({hofRoute.stops.front()});
+    require(analyzePassengerRouteHof(oneStopRoute, hof).status ==
+                PassengerHofMatchStatus::TooFewStops,
+            "diagnostics identify routes with too few registered stops");
     controller.select(PlayerTimetableSelection{0, 0, 0, 0, false}, hofRoutes, hofCourses);
     require(!controller.advance(hofRoutes, hofCourses, &hof) && !controller.state,
             "course progression cannot switch to a trip outside the bus's HOF");
@@ -1156,6 +1192,17 @@ void verifyDrivingBehavior() {
             "passenger stops project onto the correct subdivided spline segment");
     requireNear(splitStopPosition->distanceMeters, 15.0,
                 "passenger stop route distance includes its within-spline offset");
+    MapTrafficRouteSegment ordinarySpline = longStraight;
+    ordinarySpline.sceneryPathIndex.reset();
+    require(mapTrafficSegmentMatchesTimetablePath(ordinarySpline, 1899, 3) &&
+                !mapTrafficSegmentMatchesTimetablePath(longStraight, 1899, 3),
+            "passenger stop segment lookup distinguishes spline and scenery paths");
+    const auto ordinaryStopPosition =
+        mapTrafficRoutePositionOnSpline(oneSegment(ordinarySpline), 1899, 3, 15.0);
+    require(ordinaryStopPosition && ordinaryStopPosition->distanceMeters == 15.0,
+            "ordinary spline passenger stops do not require a scenery path index");
+    require(!mapTrafficRoutePositionOnSpline(unsplitStraightRoute, 1899, 3, 15.0),
+            "scenery passenger stops require the matching scenery path index");
     MapTrafficRouteSegment reversedSpline = longStraight;
     reversedSpline.reversed = true;
     const auto reversedStopPosition =

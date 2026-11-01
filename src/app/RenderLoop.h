@@ -447,6 +447,9 @@ class RenderLoop {
     openbus::app::TrafficFleet trafficFleet_;
     openbus::app::PassengerNetwork passengerNetwork_;
     std::vector<openbus::map::MapAiTimetableCourse> passengerTimetableCourses_;
+    openbus::app::PlayerTimetableCatalog playerTimetableCatalog_;
+    std::vector<std::string> playerTimetableMapKeys_;
+    std::string playerTimetableMapPath_;
     std::string selectedPlayerLineName_;
     std::size_t selectedPlayerCourseIndex_ = 0;
     std::size_t selectedPlayerCourseTripIndex_ = 0;

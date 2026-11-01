@@ -5,6 +5,7 @@
 #include "scripting/ScriptRuntime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -13,8 +14,9 @@
 #include <vector>
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
-        std::cerr << "usage: OpenBusMapHofCompatibilityProbe <map-directory> <hof-file>\n";
+    if (argc != 3 && argc != 4) {
+        std::cerr << "usage: OpenBusMapHofCompatibilityProbe <map-directory> <hof-file> "
+                     "[timetable-key|--catalog]\n";
         return 2;
     }
 
@@ -40,6 +42,7 @@ int main(int argc, char** argv) {
         std::vector<std::string> matchingHofLineSamples;
         std::vector<std::string> mapLines;
         std::vector<std::string> hofLines;
+        std::vector<openbus::app::PassengerStopRouteState> passengerRoutes;
         std::size_t scheduledRoutes = 0;
         std::size_t routesWithPassengerStops = 0;
         for (const openbus::map::MapAiTimetableRoute& route :
@@ -110,11 +113,52 @@ int main(int argc, char** argv) {
             const openbus::app::PassengerStopRouteState passengerRoute{
                 {}, openbus::app::PassengerStops(std::move(stops)), route.timetableKey,
                 route.lineName, route.destinationName, route.tripName};
+            if (argc == 4 && route.timetableKey == argv[3]) {
+                std::cout << "timetable " << route.timetableKey << " line=" << route.lineName
+                          << " destination=" << route.destinationName << " stops=";
+                for (const auto& stop : passengerRoute.stops)
+                    std::cout << stop.name << '|';
+                std::cout << '\n';
+                for (const auto& candidate : hof.routes) {
+                    if (candidate.line.empty() || route.timetableKey.find(candidate.line) != 0)
+                        continue;
+                    std::cout << "HOF " << candidate.code << " line=" << candidate.line
+                              << " name=" << candidate.name << " stops=";
+                    for (const auto& ident : candidate.busstopIdents)
+                        std::cout << ident << '|';
+                    std::cout << '\n';
+                }
+            }
             if (openbus::app::passengerRouteMatchesHof(passengerRoute, hof)) {
                 matchedTimetables.push_back(route.timetableKey);
             }
+            if (argc == 4 && std::string(argv[3]) == "--catalog") {
+                passengerRoutes.push_back(passengerRoute);
+            }
         }
 
+        if (argc == 4 && std::string(argv[3]) == "--catalog") {
+            openbus::app::PlayerTimetableCatalog catalog;
+            const auto start = std::chrono::steady_clock::now();
+            if (!catalog.update(passengerRoutes, map.aiTraffic.timetableCourses, hof))
+                throw std::runtime_error("initial timetable catalog was not built");
+            const auto built = std::chrono::steady_clock::now();
+            for (int frame = 0; frame < 300; ++frame) {
+                if (catalog.update(passengerRoutes, map.aiTraffic.timetableCourses, hof))
+                    throw std::runtime_error("timetable catalog was rebuilt on an unchanged frame");
+            }
+            const auto reused = std::chrono::steady_clock::now();
+            const auto catalogMatches =
+                std::ranges::count(catalog.routes, openbus::app::PassengerHofMatchStatus::Matched,
+                                   &openbus::app::PlayerTimetableCatalogRoute::status);
+            if (static_cast<std::size_t>(catalogMatches) != matchedTimetables.size())
+                throw std::runtime_error("cached HOF matches differ from direct matching");
+            std::cout << "catalog_build_ms="
+                      << std::chrono::duration<double, std::milli>(built - start).count()
+                      << " 300_cached_updates_ms="
+                      << std::chrono::duration<double, std::milli>(reused - built).count()
+                      << " selectable_lines=" << catalog.lines.size() << '\n';
+        }
         std::cout << "map=" << map.metadata.name << " scheduled_routes=" << scheduledRoutes
                   << " routes_with_passenger_stops=" << routesWithPassengerStops
                   << " HOF_matches=" << matchedTimetables.size() << '\n';

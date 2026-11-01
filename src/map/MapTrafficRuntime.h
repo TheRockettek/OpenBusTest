@@ -430,6 +430,8 @@ std::optional<MapTrafficPose> sampleMapTrafficActorPose(const MapTrafficRoute& r
                                                         double distanceMeters,
                                                         double lateralOffsetMeters,
                                                         double rearAxleOffsetMeters);
+bool mapTrafficSegmentMatchesTimetablePath(const MapTrafficRouteSegment& segment, int splineId,
+                                           std::size_t pathIndex) noexcept;
 std::optional<MapTrafficRoutePosition>
 mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
                                 std::size_t sceneryPathIndex, double splinePositionMeters,

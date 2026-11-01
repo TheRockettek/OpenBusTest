@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace openbus::app {
 
@@ -29,6 +30,58 @@ std::string normalizedLine(const std::string& value) {
     return result;
 }
 
+struct PreparedHofStop {
+    std::string ident;
+    std::vector<std::string> names;
+};
+
+struct PreparedHofRoute {
+    std::string line;
+    std::string name;
+    std::vector<std::string> terminusNames;
+    std::vector<PreparedHofStop> stops;
+};
+
+struct PreparedHof {
+    explicit PreparedHof(const openbus::config::HofData& data) : source(data) {
+        std::unordered_map<std::string, const openbus::config::HofBusstop*> stopsByIdent;
+        for (const auto& stop : data.busstops)
+            stopsByIdent.try_emplace(normalizedHofName(stop.ident), &stop);
+        routes.reserve(data.routes.size());
+        for (const auto& route : data.routes) {
+            PreparedHofRoute prepared;
+            prepared.line = normalizedLine(route.line);
+            prepared.name = normalizedHofName(route.name);
+            if (route.hasTerminusIndex) {
+                const auto terminus = std::ranges::find(
+                    data.termini, route.terminusIndex, &openbus::config::HofTerminus::code);
+                if (terminus != data.termini.end()) {
+                    for (const auto& name : terminus->strings)
+                        prepared.terminusNames.push_back(normalizedHofName(name));
+                }
+            }
+            prepared.stops.reserve(route.busstopIdents.size());
+            for (const auto& ident : route.busstopIdents) {
+                PreparedHofStop stop;
+                stop.ident = normalizedHofName(ident);
+                const auto found = stopsByIdent.find(stop.ident);
+                if (found != stopsByIdent.end()) {
+                    for (const auto& name : found->second->strings)
+                        stop.names.push_back(normalizedHofName(name));
+                }
+                prepared.stops.push_back(std::move(stop));
+            }
+            routes.push_back(std::move(prepared));
+        }
+    }
+
+    const openbus::config::HofData& source;
+    std::vector<PreparedHofRoute> routes;
+};
+
+PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState& route,
+                                                   const PreparedHof& hof);
+
 } // namespace
 
 bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
@@ -38,44 +91,48 @@ bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
 
 const openbus::config::HofRoute* passengerRouteHofRoute(const PassengerStopRouteState& route,
                                                         const openbus::config::HofData& hof) {
+    return analyzePassengerRouteHof(route, hof).route;
+}
+
+PassengerHofMatch analyzePassengerRouteHof(const PassengerStopRouteState& route,
+                                           const openbus::config::HofData& hof) {
+    return analyzePreparedPassengerRouteHof(route, PreparedHof(hof));
+}
+
+namespace {
+
+PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState& route,
+                                                   const PreparedHof& hof) {
     if (route.stops.size() < 2) {
-        return nullptr;
+        return {nullptr, PassengerHofMatchStatus::TooFewStops, 0, 0, std::nullopt};
     }
-    const auto matchesStops = [&](const openbus::config::HofRoute& candidate) {
-        if (candidate.busstopIdents.size() < 2) {
+    std::vector<std::string> mapStops;
+    mapStops.reserve(route.stops.size());
+    for (const auto& stop : route.stops)
+        mapStops.push_back(normalizedHofName(stop.name));
+    const std::string mapLine = normalizedLine(route.lineName);
+    const auto matchesStops = [&](const PreparedHofRoute& candidate) {
+        if (candidate.stops.size() < 2) {
             return false;
         }
-        const auto matchesStop = [&](const std::string& stopIdent,
-                                     const openbus::map::MapTrafficPassengerStop& mapStop) {
-            const std::string ident = normalizedHofName(stopIdent);
-            if (ident.empty()) {
-                return false;
-            }
-            const auto busstop =
-                std::ranges::find_if(hof.busstops, [&](const openbus::config::HofBusstop& stop) {
-                    return normalizedHofName(stop.ident) == ident;
-                });
-            const std::string stopName = normalizedHofName(mapStop.name);
-            return !stopName.empty() &&
-                   (stopName == ident ||
-                    (busstop != hof.busstops.end() &&
-                     std::ranges::any_of(busstop->strings, [&](const std::string& name) {
-                         return !name.empty() && normalizedHofName(name) == stopName;
-                     })));
+        const auto matchesStop = [](const PreparedHofStop& stop, const std::string& mapStop) {
+            return !stop.ident.empty() && !mapStop.empty() &&
+                   (mapStop == stop.ident ||
+                    std::ranges::find(stop.names, mapStop) != stop.names.end());
         };
         std::size_t routeStopIndex = 0;
         const bool hofSequenceInMapRoute =
-            std::ranges::all_of(candidate.busstopIdents, [&](const std::string& stopIdent) {
+            std::ranges::all_of(candidate.stops, [&](const PreparedHofStop& stop) {
                 const auto mapStop =
-                    std::find_if(route.stops.begin() + static_cast<std::ptrdiff_t>(routeStopIndex),
-                                 route.stops.end(), [&](const auto& mapStop) {
-                                     return matchesStop(stopIdent, mapStop);
+                    std::find_if(mapStops.begin() + static_cast<std::ptrdiff_t>(routeStopIndex),
+                                 mapStops.end(), [&](const auto& mapStop) {
+                                     return matchesStop(stop, mapStop);
                                  });
-                if (mapStop == route.stops.end()) {
+                if (mapStop == mapStops.end()) {
                     return false;
                 }
                 routeStopIndex =
-                    static_cast<std::size_t>(std::distance(route.stops.begin(), mapStop)) + 1;
+                    static_cast<std::size_t>(std::distance(mapStops.begin(), mapStop)) + 1;
                 return true;
             });
         if (hofSequenceInMapRoute) {
@@ -83,69 +140,132 @@ const openbus::config::HofRoute* passengerRouteHofRoute(const PassengerStopRoute
         }
 
         std::size_t hofStopIndex = 0;
-        return std::ranges::all_of(route.stops, [&](const auto& mapStop) {
+        return std::ranges::all_of(mapStops, [&](const auto& mapStop) {
             const auto hofStop = std::find_if(
-                candidate.busstopIdents.begin() + static_cast<std::ptrdiff_t>(hofStopIndex),
-                candidate.busstopIdents.end(),
-                [&](const std::string& stopIdent) { return matchesStop(stopIdent, mapStop); });
-            if (hofStop == candidate.busstopIdents.end()) {
+                candidate.stops.begin() + static_cast<std::ptrdiff_t>(hofStopIndex),
+                candidate.stops.end(),
+                [&](const PreparedHofStop& stop) { return matchesStop(stop, mapStop); });
+            if (hofStop == candidate.stops.end()) {
                 return false;
             }
             hofStopIndex =
-                static_cast<std::size_t>(std::distance(candidate.busstopIdents.begin(), hofStop)) +
+                static_cast<std::size_t>(std::distance(candidate.stops.begin(), hofStop)) +
                 1;
             return true;
         });
     };
-    const auto matchesDestination = [&](const openbus::config::HofRoute& candidate) {
-        if (!candidate.busstopIdents.empty() || candidate.line.empty() ||
-            normalizedLine(candidate.line) != normalizedLine(route.lineName)) {
+    const auto matchesDestination = [&](const PreparedHofRoute& candidate,
+                                        const openbus::config::HofRoute& source) {
+        if (!candidate.stops.empty() || source.line.empty() || candidate.line != mapLine) {
             return false;
         }
         std::vector<std::string> destinations{normalizedHofName(route.destinationName)};
         const std::size_t separator = route.destinationName.find_first_of(" \t");
         if (separator != std::string::npos &&
-            normalizedLine(route.destinationName.substr(0, separator)) ==
-                normalizedLine(route.lineName)) {
+            normalizedLine(route.destinationName.substr(0, separator)) == mapLine) {
             destinations.push_back(normalizedHofName(route.destinationName.substr(separator + 1)));
         }
-        const auto matchesDestinationName = [&](const std::string& name) {
-            const std::string normalizedName = normalizedHofName(name);
+        const auto matchesDestinationName = [&](const std::string& normalizedName) {
             return !normalizedName.empty() &&
                    std::ranges::find(destinations, normalizedName) != destinations.end();
         };
         if (matchesDestinationName(candidate.name)) {
             return true;
         }
-        if (!candidate.hasTerminusIndex) {
-            return false;
-        }
-        const auto terminus = std::ranges::find(hof.termini, candidate.terminusIndex,
-                                                &openbus::config::HofTerminus::code);
-        return terminus != hof.termini.end() &&
-               std::ranges::any_of(terminus->strings, matchesDestinationName);
+        return std::ranges::any_of(candidate.terminusNames, matchesDestinationName);
     };
     const openbus::config::HofRoute* match = nullptr;
     bool ambiguousLine = false;
-    for (const auto& candidate : hof.routes) {
-        if (matchesDestination(candidate)) {
-            return &candidate;
+    std::size_t matchingSequences = 0;
+    std::size_t sameLineCandidates = 0;
+    std::optional<std::size_t> exampleSameLineRoute;
+    for (std::size_t index = 0; index < hof.routes.size(); ++index) {
+        const auto& candidate = hof.routes[index];
+        const auto& source = hof.source.routes[index];
+        if (!source.line.empty() && !route.lineName.empty() && candidate.line == mapLine) {
+            ++sameLineCandidates;
+            if (!exampleSameLineRoute)
+                exampleSameLineRoute = index;
+        }
+        if (matchesDestination(candidate, source)) {
+            return {&source, PassengerHofMatchStatus::Matched, matchingSequences,
+                    sameLineCandidates, exampleSameLineRoute};
         }
         if (!matchesStops(candidate)) {
             continue;
         }
-        if (normalizedLine(candidate.line) == normalizedLine(route.lineName)) {
-            return &candidate;
+        ++matchingSequences;
+        if (candidate.line == mapLine) {
+            return {&source, PassengerHofMatchStatus::Matched, matchingSequences,
+                    sameLineCandidates, exampleSameLineRoute};
         }
-        if (match && normalizedLine(match->line) != normalizedLine(candidate.line)) {
+        if (match && normalizedLine(match->line) != candidate.line) {
             ambiguousLine = true;
         }
         if (!match) {
-            match = &candidate;
+            match = &source;
         }
     }
     // Passenger-only map timetables use their trip key, not a public line number.
-    return ambiguousLine ? nullptr : match;
+    if (ambiguousLine) {
+        return {nullptr, PassengerHofMatchStatus::AmbiguousLines, matchingSequences,
+                sameLineCandidates, exampleSameLineRoute};
+    }
+    return {match, match ? PassengerHofMatchStatus::Matched
+                         : PassengerHofMatchStatus::NoMatchingSequence,
+            matchingSequences, sameLineCandidates, exampleSameLineRoute};
+}
+
+} // namespace
+
+bool PlayerTimetableCatalog::update(const std::vector<PassengerStopRouteState>& passengerRoutes,
+                                   const std::vector<openbus::map::MapAiTimetableCourse>& courses,
+                                   const openbus::config::HofData& hof) {
+    if (valid_) {
+        return false;
+    }
+    std::vector<PlayerTimetableCatalogRoute> newRoutes;
+    std::vector<PlayerTimetableCatalogLine> newLines;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::size_t>> routeByLineAndKey;
+    const PreparedHof prepared(hof);
+    newRoutes.reserve(passengerRoutes.size());
+    for (const auto& passengerRoute : passengerRoutes) {
+        const PassengerHofMatch match = analyzePreparedPassengerRouteHof(passengerRoute, prepared);
+        newRoutes.push_back({match.status, match.matchingSequences, match.sameLineCandidates,
+                             match.exampleSameLineRoute,
+                             match.route ? match.route->line : std::string{},
+                             match.route ? match.route->code : std::string{}});
+        if (match.route) {
+            routeByLineAndKey[match.route->line].try_emplace(passengerRoute.timetableKey,
+                                                             newRoutes.size() - 1);
+        }
+        if (match.route &&
+            std::ranges::find(newLines, match.route->line, &PlayerTimetableCatalogLine::name) ==
+                newLines.end()) {
+            newLines.push_back({match.route->line, {}});
+        }
+    }
+    std::ranges::sort(newLines, {}, &PlayerTimetableCatalogLine::name);
+    for (PlayerTimetableCatalogLine& line : newLines) {
+        const auto& routeByKey = routeByLineAndKey.at(line.name);
+        for (std::size_t courseIndex = 0; courseIndex < courses.size(); ++courseIndex) {
+            PlayerTimetableCatalogCourse course{courseIndex, {}};
+            for (std::size_t tripIndex = 0; tripIndex < courses[courseIndex].trips.size();
+                 ++tripIndex) {
+                const auto& trip = courses[courseIndex].trips[tripIndex];
+                const auto route = routeByKey.find(trip.timetableKey);
+                if (route != routeByKey.end())
+                    course.trips.push_back({tripIndex, route->second});
+            }
+            if (!course.trips.empty()) {
+                line.courses.push_back(std::move(course));
+            }
+        }
+    }
+    routes = std::move(newRoutes);
+    lines = std::move(newLines);
+    valid_ = true;
+    return true;
 }
 
 const openbus::map::MapAiTimetableCourseTrip*

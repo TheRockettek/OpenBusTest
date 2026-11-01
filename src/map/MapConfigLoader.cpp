@@ -885,6 +885,9 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 }
             }
         }
+        passengerTimetable.tripName = route.tripName;
+        passengerTimetable.destinationName = route.destinationName;
+        passengerTimetable.lineName = route.lineName;
         passengerTimetable.profiles = route.profiles;
         if (routeHeaderFields != 3 || route.destinationName.empty() || route.lineName.empty() ||
             route.stationCount == 0) {
@@ -1174,9 +1177,10 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
 
         MapAiTimetableRoute route;
         route.timetableKey = timetable.timetableKey;
-        route.tripName = timetable.timetableKey;
-        route.destinationName = timetable.timetableKey;
-        route.lineName = timetable.timetableKey;
+        route.tripName = timetable.tripName.empty() ? timetable.timetableKey : timetable.tripName;
+        route.destinationName = timetable.destinationName.empty() ? timetable.timetableKey
+                                                                   : timetable.destinationName;
+        route.lineName = timetable.lineName.empty() ? timetable.timetableKey : timetable.lineName;
         route.stationCount = calls.size();
         route.stationIds = timetable.stationIds;
         route.scheduledDepartureMinutes = timetable.scheduledDepartureMinutes;

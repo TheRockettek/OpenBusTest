@@ -213,6 +213,9 @@ struct MapAiStationLink {
 
 struct MapAiPassengerTimetable {
     std::string timetableKey;
+    std::string tripName;
+    std::string destinationName;
+    std::string lineName;
     std::vector<int> stationIds;
     std::vector<double> scheduledDepartureMinutes;
     std::vector<int> scheduledDepartureProfileIndices;

@@ -2182,6 +2182,12 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
     return result;
 }
 
+bool mapTrafficSegmentMatchesTimetablePath(const MapTrafficRouteSegment& segment, int splineId,
+                                           std::size_t pathIndex) noexcept {
+    return segment.spline.placement.splineId == splineId &&
+           (!segment.sceneryPathIndex || *segment.sceneryPathIndex == pathIndex);
+}
+
 std::optional<MapTrafficRoutePosition>
 mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
                                 std::size_t sceneryPathIndex, double splinePositionMeters,
@@ -2199,8 +2205,7 @@ mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
     for (std::size_t segmentIndex = firstSegmentIndex; segmentIndex < route.segments.size();
          ++segmentIndex) {
         const MapTrafficRouteSegment& segment = route.segments[segmentIndex];
-        if (segment.spline.placement.splineId != splineId ||
-            segment.sceneryPathIndex != sceneryPathIndex) {
+        if (!mapTrafficSegmentMatchesTimetablePath(segment, splineId, sceneryPathIndex)) {
             continue;
         }
         const double routeSegmentStartMeters =

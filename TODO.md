@@ -243,7 +243,16 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   Player buses board and alight at nearby mapped calls when stopped and
   direction-aligned. Player stop discovery is registered from matched
   timetable routes independently of the scheduled AI bus population; it still
-  requires a loadable bus configuration and routable route. Passenger mass,
+  requires a loadable bus configuration and a complete routable route.
+  Station-only timetables retain their authored line and destination, and
+  ordinary spline stops no longer require a scenery-path index. Many trips
+  remain unavailable when AI road-route construction cannot connect their
+  checkpoints; player timetable registration must be decoupled from that
+  requirement without fabricating stop positions. The timetable panel caches
+  HOF matching and course/trip choices until the player, map, or registered
+  routes change. Catalog diagnostics report HOF data, rejection counts, and
+  samples of unavailable routes rather than repeating matching every frame.
+  Passenger mass,
   passenger ticket purchase, fare
   transactions, and physical/audible coin output remain incomplete. Map
   ticket-pack/currency records now feed ticket and
