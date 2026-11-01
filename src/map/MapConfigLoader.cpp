@@ -176,6 +176,14 @@ bool parseSize(const std::string& value, std::size_t& result) {
     return true;
 }
 
+int checkedIndexToInt(std::size_t index, std::string_view description) {
+    if (index > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        throw std::overflow_error(std::string(description) +
+                                  " exceeds the supported integer range");
+    }
+    return static_cast<int>(index);
+}
+
 bool parseReal(const std::string& value, double& result) {
     if (value.empty()) {
         return false;
@@ -1146,13 +1154,15 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 station.name = busStop.name;
                 station.tileIndex = busStop.tileIndex;
                 if (stationIndex + 1 < calls.size()) {
-                    station.trackEntryIndex = static_cast<int>(linkStartIndices[stationIndex]);
+                    station.trackEntryIndex =
+                        checkedIndexToInt(linkStartIndices[stationIndex], "Track-entry index");
                 } else {
                     const MapAiStationLink& incomingLink =
                         aiTraffic.stationLinks[*calls[stationIndex - 1].outgoingStationLinkIndex];
                     const std::size_t previousEntryIndex =
                         linkStartIndices.back() + incomingLink.entries.size() - 1;
-                    station.trackEntryIndex = static_cast<int>(previousEntryIndex + 1);
+                    station.trackEntryIndex =
+                        checkedIndexToInt(previousEntryIndex + 1, "Track-entry index");
                     station.positionOnPreviousTrackEntryMeters =
                         drivingRoute->trackEntries[previousEntryIndex].lengthMeters;
                 }
@@ -1188,7 +1198,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     completeRoute = false;
                     break;
                 }
-                station.trackEntryIndex = static_cast<int>(route.trackEntries.size());
+                station.trackEntryIndex =
+                    checkedIndexToInt(route.trackEntries.size(), "Track-entry index");
                 for (const MapAiStationLink::Entry& entry : link.entries) {
                     route.trackEntries.push_back(
                         {entry.splineId, entry.pathIndex, entry.tileIndex, entry.lengthMeters});
@@ -1197,7 +1208,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     }
                 }
             } else if (!route.trackEntries.empty()) {
-                station.trackEntryIndex = static_cast<int>(route.trackEntries.size());
+                station.trackEntryIndex =
+                    checkedIndexToInt(route.trackEntries.size(), "Track-entry index");
                 station.positionOnPreviousTrackEntryMeters = route.trackEntries.back().lengthMeters;
             } else {
                 completeRoute = false;
@@ -1543,6 +1555,9 @@ void applyChronoTileSidecars(
 } // namespace
 
 std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
+    if (dateYyyyMmDd < 0 || dateYyyyMmDd > 99'999'999) {
+        throw std::invalid_argument("Map Chrono date must be a valid YYYYMMDD calendar date");
+    }
     const std::chrono::year_month_day date{
         std::chrono::year{dateYyyyMmDd / 10000},
         std::chrono::month{static_cast<unsigned>((dateYyyyMmDd / 100) % 100)},
@@ -2814,7 +2829,8 @@ mapGroundTextureTiling(const GroundTextureDefinition& groundTexture) noexcept {
         double value = 0.0;
         const auto parsed = std::from_chars(begin, end, value);
         if (begin == end || parsed.ec != std::errc{} || parsed.ptr != end ||
-            !std::isfinite(value) || value <= 0.0) {
+            !std::isfinite(value) || value <= 0.0 ||
+            value > static_cast<double>((std::numeric_limits<float>::max)())) {
             return 1.0;
         }
         return value;
@@ -2849,6 +2865,21 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         return std::find(boundaries.begin(), boundaries.end(), line) != boundaries.end();
     };
     std::size_t automaticRecordId = 0;
+    const auto nextAutomaticRecordId = [&]() {
+        if (automaticRecordId >= static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+            throw std::overflow_error("Automatic map record IDs exceed the supported range in " +
+                                      pathToUtf8(tile.textPath));
+        }
+        return -static_cast<int>(++automaticRecordId);
+    };
+    const auto currentTileVersion = [&]() {
+        int tileVersion = 0;
+        if (!data.version.empty() &&
+            (!parseInteger(data.version, tileVersion) || tileVersion < 0)) {
+            throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
+        }
+        return tileVersion;
+    };
     enum class ModifierTarget { None, SceneryObject, AttachedObject, SplineAttachment, Spline };
     ModifierTarget modifierTarget = ModifierTarget::None;
     std::size_t modifierTargetIndex = 0;
@@ -2930,10 +2961,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 "dynamic terrain lightmap behavior is not implemented");
         } else if (section == "[spline]" || section == "[spline_h]") {
             const bool elevated = section == "[spline_h]";
-            int tileVersion = 0;
-            if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
-                throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
-            }
+            const int tileVersion = currentTileVersion();
             const auto hasField = [tileVersion](int version) {
                 return tileVersion == 0 || tileVersion >= version;
             };
@@ -2961,7 +2989,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                     throw std::runtime_error("Invalid spline ID in " + pathToUtf8(tile.textPath));
                 }
             } else {
-                spline.splineId = -static_cast<int>(++automaticRecordId);
+                spline.splineId = nextAutomaticRecordId();
             }
             if (hasField(11)) {
                 if (!parseInteger(trim(readSplineField()), spline.previousSplineId) ||
@@ -3027,10 +3055,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             cursor = field - 1;
         } else if (section == "[object]") {
             ++data.objectCount;
-            int tileVersion = 0;
-            if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
-                throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
-            }
+            const int tileVersion = currentTileVersion();
             const auto hasField = [tileVersion](int version) {
                 return tileVersion == 0 || tileVersion >= version;
             };
@@ -3058,7 +3083,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                     throw std::runtime_error("Invalid [object] ID in " + pathToUtf8(tile.textPath));
                 }
             } else {
-                object.id = -static_cast<int>(++automaticRecordId);
+                object.id = nextAutomaticRecordId();
             }
             object.transformValid = true;
             for (std::size_t axis = 0; axis < object.localPosition.size(); ++axis) {
@@ -3096,10 +3121,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             modifierTargetIndex = data.sceneryObjects.size() - 1;
             cursor = field - 1;
         } else if (section == "[attachObj]") {
-            int tileVersion = 0;
-            if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
-                throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
-            }
+            const int tileVersion = currentTileVersion();
             std::size_t field = cursor + 1;
             const auto requireField = [&](std::size_t at) -> const std::string& {
                 if (at >= lines.size()) {
@@ -3120,7 +3142,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                                              pathToUtf8(tile.textPath));
                 }
             } else {
-                object.id = -static_cast<int>(++automaticRecordId);
+                object.id = nextAutomaticRecordId();
             }
             if (!parseInteger(trim(requireField(field++)), object.attachedToObjectId)) {
                 throw std::runtime_error("Invalid [attachObj] parent object ID in " +
@@ -3172,9 +3194,9 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             } else {
                 ++data.splineAttachmentCount;
             }
-            const int tileVersion = data.version.empty() ? 0 : std::stoi(data.version);
+            const int tileVersion = currentTileVersion();
             if (tileVersion < 6) {
-                ++automaticRecordId;
+                static_cast<void>(nextAutomaticRecordId());
             }
             const bool hasDetail = tileVersion == 0 || tileVersion >= 9;
             const bool modernRotation = tileVersion == 0 || tileVersion >= 12;

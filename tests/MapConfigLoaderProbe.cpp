@@ -104,6 +104,9 @@ void runFixtureProbe() {
                      "[spline_terrain_align]\n[rule]\nattached rule 1\nattached rule 2\n"
                      "attached rule 3\nattached rule 4\n");
         writeUtf16Le(root / "tile_1_0.map", "Second fixture tile\n[version]\n14\n[terrain]\n");
+        writeUtf16Le(root / "tile_invalid_version.map",
+                     "Invalid version fixture\n[version]\n12junk\n[terrain]\n"
+                     "[splineAttachement]\n");
         writeUtf16Le(root / "ailists.cfg",
                      "[aigroup_2]\nNormalCars\nvehicles\\sedan.bus\t7\n"
                      "vehicles\\delivery van.ovh\n[end]\n"
@@ -958,6 +961,14 @@ void runFixtureProbe() {
                     fallbackTiling.textureRepeatsPerTile == 1.0 &&
                     fallbackTiling.detailTextureRepeatsPerTile == 1.0,
                 "groundtex repeat fields are parsed independently with safe defaults");
+        openbus::map::GroundTextureDefinition oversizedTiling = definition.groundTextures[1];
+        oversizedTiling.parameters[1] = "1e100";
+        oversizedTiling.parameters[2] = "1e100";
+        const openbus::map::MapGroundTextureTiling boundedTiling =
+            openbus::map::mapGroundTextureTiling(oversizedTiling);
+        require(boundedTiling.textureRepeatsPerTile == 1.0 &&
+                    boundedTiling.detailTextureRepeatsPerTile == 1.0,
+                "unrepresentable ground-texture repeat counts use safe defaults");
         require(openbus::map::selectMapGroundTextureIndex(definition, "") == 0 &&
                     openbus::map::selectMapGroundTextureIndex(definition, "1") == 1,
                 "ground texture preview selector defaults to first record and accepts index");
@@ -1052,6 +1063,17 @@ void runFixtureProbe() {
                 tile.unsupportedSections[0].payloadLines ==
                         std::vector<std::string>{" opaque tile payload ", ""},
             "unsupported tile section payload is preserved verbatim");
+        openbus::map::MapTileReference invalidVersionTile;
+        invalidVersionTile.textPath = root / "tile_invalid_version.map";
+        bool invalidVersionRejected = false;
+        try {
+            static_cast<void>(openbus::map::loadMapTile(invalidVersionTile));
+        } catch (const std::runtime_error& error) {
+            invalidVersionRejected =
+                std::string(error.what()).find("Invalid [version]") != std::string::npos;
+        }
+        require(invalidVersionRejected,
+                "spline-attachment parsing rejects tile versions with trailing characters");
         require(tile.splineCount == 1 && tile.elevatedSplineCount == 1 && tile.objectCount == 1 &&
                     tile.splineAttachmentCount == 1 && tile.splineRepeaterCount == 1 &&
                     tile.attachedObjects.size() == 1,

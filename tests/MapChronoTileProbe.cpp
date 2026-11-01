@@ -160,6 +160,13 @@ void runProbe() {
             invalidDateRejected = true;
         }
         require(invalidDateRejected, "invalid calendar dates are rejected for Chrono selection");
+        bool oversizedDateRejected = false;
+        try {
+            static_cast<void>(openbus::map::applyMapChronoTiles(map, 655360101));
+        } catch (const std::invalid_argument&) {
+            oversizedDateRejected = true;
+        }
+        require(oversizedDateRejected, "oversized Chrono dates are rejected before year conversion");
     } catch (...) {
         openbus::probe::removeProbeDirectory(root);
         throw;

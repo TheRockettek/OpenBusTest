@@ -86,6 +86,23 @@ int main(int argc, char** argv) {
             ++count;
         }
         passed = savedTrace(contents) && count == 2;
+    } else if (mode == "escaping") {
+        SetRecording(true);
+        const std::string name = "quote \" slash \\ newline\n tab\t control\x01";
+        const std::string category = "category \" slash \\ newline\n control\x02";
+        {
+            TraceScope scope(category.c_str(), name.c_str());
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        SetRecording(false);
+        const std::string contents = readTrace(path);
+        passed = savedTrace(contents) &&
+                 contents.find(
+                     "\"name\":\"quote \\\" slash \\\\ newline\\n tab\\t control\\u0001\"") !=
+                     std::string::npos &&
+                 contents.find(
+                     "\"cat\":\"category \\\" slash \\\\ newline\\n control\\u0002\"") !=
+                     std::string::npos;
     } else {
         passed = !IsRecording();
         record("before-start");

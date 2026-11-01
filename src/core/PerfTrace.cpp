@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 #if OPENBUS_ENABLE_PERF_TRACE
 #include <atomic>
@@ -26,6 +27,45 @@
 namespace openbus::rendering {
 #if OPENBUS_ENABLE_PERF_TRACE
 namespace {
+
+void writeJsonString(std::ostream& output, std::string_view value) {
+    constexpr char hexDigits[] = "0123456789abcdef";
+    output.put('"');
+    for (const char rawCharacter : value) {
+        const auto character = static_cast<unsigned char>(rawCharacter);
+        switch (character) {
+        case '"':
+            output << "\\\"";
+            break;
+        case '\\':
+            output << "\\\\";
+            break;
+        case '\b':
+            output << "\\b";
+            break;
+        case '\f':
+            output << "\\f";
+            break;
+        case '\n':
+            output << "\\n";
+            break;
+        case '\r':
+            output << "\\r";
+            break;
+        case '\t':
+            output << "\\t";
+            break;
+        default:
+            if (character < 0x20) {
+                output << "\\u00" << hexDigits[character >> 4] << hexDigits[character & 0x0f];
+            } else {
+                output.put(rawCharacter);
+            }
+            break;
+        }
+    }
+    output.put('"');
+}
 
 struct TraceEvent {
     char phase = 'X';
@@ -192,8 +232,11 @@ class PerfTraceState {
                 traceOutput << ",\n";
             }
             traceFirstEvent = false;
-            traceOutput << "    {\"name\":\"" << event.name << "\",\"cat\":\"" << event.category
-                        << "\",\"ph\":\"" << event.phase << "\",\"ts\":" << event.timestampUs
+            traceOutput << "    {\"name\":";
+            writeJsonString(traceOutput, event.name);
+            traceOutput << ",\"cat\":";
+            writeJsonString(traceOutput, event.category);
+            traceOutput << ",\"ph\":\"" << event.phase << "\",\"ts\":" << event.timestampUs
                         << ",\"dur\":" << event.durationUs
                         << ",\"pid\":1,\"tid\":" << event.threadId << "}";
         }

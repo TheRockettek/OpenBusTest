@@ -1,4 +1,5 @@
 #include "audio/SoundEngine.h"
+#include "audio/WavPcm.h"
 
 #include "core/Environment.h"
 #include "core/Logger.h"
@@ -192,7 +193,7 @@ struct SoundEngine::Backend {
                 }
                 integer >>= 8;
             } else {
-                integer = static_cast<std::int32_t>(read32(data, sampleOffset) >> 16);
+                integer = openbus::audio::detail::signedPcm32HighWord(read32(data, sampleOffset));
             }
             clip->samples[sample] = static_cast<std::int16_t>(std::clamp(integer, -32768, 32767));
         }
