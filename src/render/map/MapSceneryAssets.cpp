@@ -178,7 +178,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 }
                 for (const auto& change : state.textureChanges) {
                     for (const auto& item : change.items) {
-                        if (item && !item->nightmapTextureName.empty()) {
+                        if (item && (!item->lightmapTextureName.empty() ||
+                                     !item->nightmapTextureName.empty())) {
                             sceneryAssetsNeedingVariables.insert(cacheKey);
                         }
                     }
@@ -302,15 +303,21 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                              batch.material.useLightmap);
             uploadAuxTexture(preparedBatch.nightmap, "nightmap", batch.material.nightmap,
                              batch.material.useNightmap);
-            for (const PreparedSceneryAuxTexture& texture : preparedBatch.itemNightmaps) {
-                if (batch.itemNightmaps.contains(texture.name)) {
-                    continue;
+            const auto uploadItemTextures = [&](const std::vector<PreparedSceneryAuxTexture>& textures,
+                                                const std::string& type,
+                                                std::unordered_map<std::string, GLuint>& handles) {
+                for (const PreparedSceneryAuxTexture& texture : textures) {
+                    if (handles.contains(texture.name)) {
+                        continue;
+                    }
+                    GLuint handle = 0;
+                    bool enabled = false;
+                    uploadAuxTexture(texture, type, handle, enabled);
+                    handles.emplace(texture.name, handle);
                 }
-                GLuint handle = 0;
-                bool enabled = false;
-                uploadAuxTexture(texture, "nightmap", handle, enabled);
-                batch.itemNightmaps.emplace(texture.name, handle);
-            }
+            };
+            uploadItemTextures(preparedBatch.itemLightmaps, "lightmap", batch.itemLightmaps);
+            uploadItemTextures(preparedBatch.itemNightmaps, "nightmap", batch.itemNightmaps);
             uploadAuxTexture(preparedBatch.bumpmap, "bumpmap", batch.material.bumpmap,
                              batch.material.useBumpmap);
             uploadAuxTexture(preparedBatch.environment, "environment map",

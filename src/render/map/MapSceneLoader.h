@@ -81,6 +81,7 @@ class MapSceneLoader {
         std::filesystem::path transmapTexturePath;
         PreparedSceneryAuxTexture lightmap;
         PreparedSceneryAuxTexture nightmap;
+        std::vector<PreparedSceneryAuxTexture> itemLightmaps;
         std::vector<PreparedSceneryAuxTexture> itemNightmaps;
         PreparedSceneryAuxTexture bumpmap;
         PreparedSceneryAuxTexture environment;

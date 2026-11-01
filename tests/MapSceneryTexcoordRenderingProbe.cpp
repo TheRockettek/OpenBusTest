@@ -169,6 +169,135 @@ void runLightmapProbe(const std::filesystem::path& root) {
           "Alpha scale was not clamped");
 }
 
+void runItemLightmapProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "script");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeSolidTexture(root / "blue.tga", {0, 0, 255});
+    writeSolidTexture(root / "red.tga", {255, 0, 0});
+    writeSolidTexture(root / "green.tga", {0, 255, 0});
+    writeSolidTexture(root / "white.tga", {255, 255, 255});
+    writeText(root / "invalid.tga", "invalid image");
+    writeText(root / "model" / "surface.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -1.7;0;-2;, 1.7;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
+    const std::string script =
+        "[script]\n1\nscript\\lamp.osc\n[varnamelist]\n1\nscript\\vars.txt\n"
+        "[stringvarnamelist]\n1\nscript\\strings.txt\n";
+    const std::string mesh = "[mesh]\nsurface.x\n[matl]\nbase.tga\n0\n";
+    const std::string change = "[matl_change]\nbase.tga\n0\nselector\n";
+    writeText(root / "items.sco", script + mesh + "[matl_lightmap]\nblue.tga\nbase_power\n" +
+              change + "[matl_item]\n[matl_lightmap]\nred.tga\nred_power\n"
+                       "[matl_item]\n[matl_lightmap]\ngreen.tga\ngreen_power\n");
+    writeText(root / "uncontrolled.sco", script + mesh + change +
+              "[matl_item]\n[matl_lightmap]\nwhite.tga\n");
+    writeText(root / "missing.sco", script + mesh + "[matl_lightmap]\nblue.tga\nbase_power\n" +
+              change + "[matl_item]\n[matl_lightmap]\nmissing.tga\nred_power\n");
+    writeText(root / "invalid.sco", script + mesh + "[matl_lightmap]\nblue.tga\nbase_power\n" +
+              change + "[matl_item]\n[matl_lightmap]\ninvalid.tga\nred_power\n");
+    writeText(root / "reference.sco", mesh);
+    writeText(root / "script" / "vars.txt",
+              "instance_id\nselector\nbase_power\nred_power\ngreen_power\n");
+    writeText(root / "script" / "strings.txt", "placement_id\n");
+    writeText(root / "script" / "lamp.osc",
+              "{init}\n(L.$.placement_id) $StrToFloat (S.L.instance_id)\n{end}\n"
+              "{frame}\n"
+              "(L.S.test_selector) (L.L.instance_id) * (S.L.selector)\n"
+              "1 (S.L.base_power)\n"
+              "(L.S.test_red) (S.L.red_power)\n"
+              "(L.S.test_green) (S.L.green_power)\n{end}\n");
+    writeText(root / "tile.map",
+              "[version]\n14\n[terrain]\n"
+              "[object]\n0\nitems.sco\n101\n-10\n0\n5\n0\n0\n0\n1\n1\n"
+              "[object]\n0\nitems.sco\n102\n-6\n0\n5\n0\n0\n0\n1\n2\n"
+              "[object]\n0\nuncontrolled.sco\n103\n-2\n0\n5\n0\n0\n0\n1\n1\n"
+              "[object]\n0\nmissing.sco\n104\n2\n0\n5\n0\n0\n0\n1\n1\n"
+              "[object]\n0\ninvalid.sco\n105\n6\n0\n5\n0\n0\n0\n1\n1\n"
+              "[object]\n0\nreference.sco\n106\n10\n0\n5\n0\n0\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write scenery item-lightmap terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.renderStats().activeSceneryObjects == 6,
+          "Item-lightmap scenery or optional-map fallback did not load");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, 0, -16}));
+    using Pixel = std::array<std::uint8_t, 4>;
+    const auto draw = [&](float selector, float red, float green) {
+        simulation.sharedVariables().set("test_selector", selector);
+        simulation.sharedVariables().set("test_red", red);
+        simulation.sharedVariables().set("test_green", green);
+        renderer.updateScripts();
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer.draw();
+        std::array<Pixel, 6> pixels = {};
+        const std::array<int, 6> x = {3, 14, 26, 38, 49, 61};
+        for (std::size_t index = 0; index < x.size(); ++index) {
+            glReadPixels(x[index], 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels[index].data());
+        }
+        return pixels;
+    };
+    const auto base = draw(0, 1, 1);
+    const auto off = draw(1, 0, 0);
+    const auto half = draw(1, 0.5F, 0.5F);
+    const auto full = draw(1, 1, 1);
+    check(base[0] == base[1] && base[0] == base[3] && base[0] == base[4] &&
+              base[0][2] > base[0][0] && base[2] == base[5] && base[5][3] > 0,
+          "Base and unlit lightmap states did not load");
+    check(off[0] == base[5] && off[1] == base[5] &&
+              half[0][0] > off[0][0] && half[0][0] < full[0][0] &&
+              half[1][1] > off[1][1] && half[1][1] < full[1][1] &&
+              full[0][0] > full[0][1] && full[1][1] > full[1][0],
+          "Item masks or independent lightmap controllers did not render correctly");
+    check(full[2][0] > base[2][0] && full[2][0] == full[2][1] &&
+              full[3] == base[5] && full[4] == base[5],
+          "Uncontrolled item or unavailable lightmap fallback failed");
+    const auto independent = draw(1, 1, 0);
+    check(independent[0] == full[0] && independent[1] == off[1],
+          "Selected lightmap controllers are not independent");
+    check(draw(1, -1, 2)[0] == off[0] && draw(1, -1, 2)[1] == full[1] &&
+              draw(0, 1, 1) == base && draw(3, 1, 1)[0] == base[0],
+          "Item lightmap clamping or base restoration failed");
+
+    writeText(root / "required.sco", mesh + change +
+              "[matl_item]\n[matl_lightmap]\ninvalid.tga\n"
+              "[mesh]\nsurface.x\n[matl]\ninvalid.tga\n0\n");
+    writeText(root / "required.map",
+              "[version]\n14\n[terrain]\n"
+              "[object]\n0\nrequired.sco\n201\n0\n0\n5\n0\n0\n0\n0\n");
+    openbus::map::MapDefinition requiredMap = map;
+    requiredMap.tiles[0].textPath = root / "required.map";
+    bool requiredTextureFailed = false;
+    try {
+        AssetRequestManager requiredAssets;
+        MapRenderer requiredRenderer(requiredMap, 0, 0, 0, 0, root, simulation, requiredAssets);
+    } catch (const std::runtime_error& error) {
+        requiredTextureFailed = std::string_view(error.what()).find(
+                                    "Could not decode scenery texture") != std::string_view::npos;
+    }
+    check(requiredTextureFailed,
+          "An item lightmap failure must not hide a later required texture failure");
+}
+
 void runNightmapProbe(const std::filesystem::path& root) {
     std::filesystem::create_directories(root / "model");
     std::filesystem::create_directories(root / "script");
@@ -562,7 +691,8 @@ int main(int argc, char** argv) {
     const bool bumpmap = argc == 2 && std::string_view(argv[1]) == "--bumpmap";
     const bool environment = argc == 2 && std::string_view(argv[1]) == "--envmap";
     const bool nightmap = argc == 2 && std::string_view(argv[1]) == "--nightmap";
-    if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap) {
+    const bool itemLightmap = argc == 2 && std::string_view(argv[1]) == "--item-lightmap";
+    if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap && !itemLightmap) {
         return 2;
     }
     if (!glfwInit()) {
@@ -574,8 +704,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, indirect ? 4 : 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(lightmap || bumpmap || environment || nightmap ? 64 : 32,
-                                          lightmap || bumpmap || environment || nightmap ? 64 : 32,
+    GLFWwindow* window = glfwCreateWindow(
+        lightmap || bumpmap || environment || nightmap || itemLightmap ? 64 : 32,
+        lightmap || bumpmap || environment || nightmap || itemLightmap ? 64 : 32,
                                           "Scenery material probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
@@ -595,6 +726,8 @@ int main(int argc, char** argv) {
                 runEnvironmentProbe(root);
             } else if (nightmap) {
                 runNightmapProbe(root);
+            } else if (itemLightmap) {
+                runItemLightmapProbe(root);
             } else {
                 runProbe(root);
             }

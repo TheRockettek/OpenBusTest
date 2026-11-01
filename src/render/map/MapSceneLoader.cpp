@@ -517,6 +517,7 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
             for (const auto& change : state.textureChanges) {
                 for (const auto& item : change.items) {
                     if (item) {
+                        decodeOptionalTexture(item->lightmapTextureName);
                         decodeOptionalTexture(item->nightmapTextureName);
                     }
                 }
@@ -628,9 +629,15 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
                 preparedBatch.nightmap = preparedAuxTexture(state->nightmapTextureName);
                 for (const auto& change : state->textureChanges) {
                     for (const auto& item : change.items) {
-                        if (item && !item->nightmapTextureName.empty()) {
-                            preparedBatch.itemNightmaps.push_back(
-                                preparedAuxTexture(item->nightmapTextureName));
+                        if (item) {
+                            if (!item->lightmapTextureName.empty()) {
+                                preparedBatch.itemLightmaps.push_back(
+                                    preparedAuxTexture(item->lightmapTextureName));
+                            }
+                            if (!item->nightmapTextureName.empty()) {
+                                preparedBatch.itemNightmaps.push_back(
+                                    preparedAuxTexture(item->nightmapTextureName));
+                            }
                         }
                     }
                 }
@@ -674,8 +681,8 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
                 batch.texcoordTransYVariable = state->texcoordTransYVariable;
                 batch.lightmapStrengthVariable = state->lightmapStrengthVariable;
                 batch.alphaScaleVariable = state->alphaScaleVariable;
-                if (!preparedBatch.itemNightmaps.empty()) {
-                    batch.nightmapSelection = *state;
+                if (!preparedBatch.itemLightmaps.empty() || !preparedBatch.itemNightmaps.empty()) {
+                    batch.auxiliaryMaterialSelection = *state;
                 }
                 batch.material.lightmapStrength =
                     state->lightmapStrengthVariable.empty() ? 1.0F : 0.0F;

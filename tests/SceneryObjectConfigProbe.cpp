@@ -221,6 +221,7 @@ int main(int argc, char** argv) {
                   "[matl_nightmap]\nnight.bmp\n"
                   "[matl_change]\nborder.bmp\n0\nnight_selector\n"
                   "[matl_item]\n[matl_nightmap]\nitem_night.bmp\n"
+                  "[matl_lightmap]\nitem_light.bmp\nitem_light_strength\n"
                   "[matl]\nclamp.bmp\n1\n[matl_texadress_clamp]\n"
                   "[matl]\nmirror.bmp\n2\n[matl_texadress_mirror]\n"
                   "[matl]\nonce.bmp\n3\n[matl_texadress_mirroronce]\n";
@@ -321,7 +322,13 @@ int main(int argc, char** argv) {
             addressParts[0].materialStatesInOrder[0].textureChanges[0].items[0] &&
             addressParts[0].materialStatesInOrder[0]
                     .textureChanges[0].items[0]->nightmapTextureName == "item_night.bmp" &&
+            addressParts[0].materialStatesInOrder[0]
+                    .textureChanges[0].items[0]->lightmapTextureName == "item_light.bmp" &&
+            addressParts[0].materialStatesInOrder[0]
+                    .textureChanges[0].items[0]->lightmapStrengthVariable ==
+                "item_light_strength" &&
             textureAddressVariables.has("night_selector") &&
+            textureAddressVariables.has("item_light_strength") &&
             textureAddressVariables.has("scroll_x") && textureAddressVariables.has("scroll_y") &&
             textureAddressVariables.has("lamp_alpha") && textureAddressVariables.has("lamp_light") &&
             addressParts[0].materialStatesInOrder[0].textureAddressS == TextureAddressMode::Border &&

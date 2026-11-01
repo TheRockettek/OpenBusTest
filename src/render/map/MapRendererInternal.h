@@ -243,7 +243,8 @@ struct MapRenderer::Impl {
         std::string texcoordTransYVariable;
         std::string lightmapStrengthVariable;
         std::string alphaScaleVariable;
-        std::optional<ModelMaterialState> nightmapSelection;
+        std::optional<ModelMaterialState> auxiliaryMaterialSelection;
+        std::unordered_map<std::string, GLuint> itemLightmaps;
         std::unordered_map<std::string, GLuint> itemNightmaps;
         std::filesystem::path textureObjectRoot;
         std::filesystem::path textureModelRoot;

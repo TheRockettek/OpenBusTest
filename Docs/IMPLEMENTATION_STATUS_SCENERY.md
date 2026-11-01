@@ -15,11 +15,12 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[texcoordtransX]` and `[texcoordtransY]` translate material UVs using each
   placement's current script variables, as for vehicle materials. Installed-scene
   visual parity remains unverified.
-- `[matl_lightmap]` loads the material's emissive mask and applies its optional
-  per-placement controller; `[alphascale]` scales its material opacity. Both
+- `[matl_lightmap]` loads the material's emissive mask, including
+  script-selected `[matl_item]` masks, and applies the selected map's optional
+  per-placement controller; `[alphascale]` scales base material opacity. Both
   use the vehicle renderer's clamped controller semantics. Missing or undecodable
-  lightmaps are reported and fall back to ordinary surface lighting. Dynamic
-  `[matl_item]` selection and installed-scene visual parity remain unverified.
+  lightmaps are reported and fall back to ordinary surface lighting. Other
+  item modifiers and installed-scene visual parity remain unverified.
 - `[matl_bumpmap]` loads the material's normal map and applies its configured
   strength using the same shader as vehicle materials. Missing or undecodable
   maps are reported and fall back to unperturbed shading. Native bump and
@@ -34,8 +35,8 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
   and script-selected `[matl_item]` nightmaps render at full strength. Missing
   or undecodable maps are reported and leave the underlying surface unchanged.
   `[NightMapMode]` does not yet set `nightlighta` or schedule lighting, and
-  item selection currently changes only the nightmap, not other material
-  modifiers. Native visual parity remains unverified.
+  item selection currently changes only nightmap and lightmap properties, not
+  other material modifiers. Native visual parity remains unverified.
 - `[collision_mesh]` O3D geometry from SCOs and external model CFGs is spatially indexed and clipped into each overlapped streamed tile, including long bridges and custom junction meshes. Without an authored collision mesh, `[boundingbox]` supplies a box collider; when neither is present, first-LOD O3D model geometry is used. `[nocollision]` suppresses collision unless the SCO also declares `[surface]`. Attached/scenery repeater collision and non-O3D formats remain unsupported.
 - `[crashmode_pole]` scenery is removed from static mesh collision and represented as a streamed capsule. Its shaft center and width are estimated from the lower collision-mesh bounds, avoiding offsets from lamp arms; authored bounding boxes use map x/y/z axes. Vehicle chassis impacts accumulate configured momentum-based rotation; physics and rendering bend around the same collision base and disable collision at the break angle. The response is a kinematic approximation: the capsule does not reproduce every model shape, bending is applied per contact episode, breakage does not produce a detached/falling body, and broad live-map behavior still needs validation.
 - `[groups]`, `[friendlyname]`, and `[helparrow]` are accepted as SCO metadata/editor fields and ignored by static rendering.

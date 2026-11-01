@@ -101,10 +101,10 @@ validation notes.
 | `[tree]` | Partial | Crossed textured preview cards are used instead of full vegetation/helper-mesh behavior. |
 | `[varparent]` | Parsed/validated only | Editor references are checked; scenery script-variable inheritance is not evaluated. |
 | `[script]` and model animation/material directives | Partial | Basic script frames, visibility, and dynamic surfaces work; scripted mesh animation, full material changes, sound callbacks, and scenery mouse events do not. |
-| `[matl_lightmap]`, `[alphascale]` | Partial | Base material masks and per-placement controllers work; dynamic material-item selection and native visual parity remain unverified. |
+| `[matl_lightmap]`, `[alphascale]` | Partial | Base and selected item lightmaps and per-placement controllers work; alpha-scale item selection and native visual parity remain unverified. |
 | `[matl_bumpmap]` | Partial | Base materials use the shared normal-map shader and configured strength; native bump/parallax and dynamic material-item behavior remain unverified. |
 | `[matl_envmap]` | Partial | Base materials render spherical reflections with the vehicle opacity factor; dynamic material-item behavior and native visual parity remain unverified. |
-| `[matl_nightmap]`, `[matl_change]`, `[matl_item]` | Partial | Base and script-selected item nightmaps render; automatic night scheduling and selection of other item modifiers are not implemented. |
+| `[matl_nightmap]`, `[matl_change]`, `[matl_item]` | Partial | Base and script-selected item nightmaps and lightmaps render; automatic night scheduling and selection of other item modifiers are not implemented. |
 | `[spline_terrain_align]` | Provisional | Placement tilt follows sampled terrain normal; exact behavior is unverified. |
 | `[collision_mesh]`, `[boundingbox]`, `[nocollision]` | Partial | O3D collision subsets work; attached/repeater collision and complete collision semantics remain incomplete. |
 | `[surface]` | Parsed only | The flag is retained, but surface-type/friction behavior is not derived from it. |

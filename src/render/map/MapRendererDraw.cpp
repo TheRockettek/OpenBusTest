@@ -815,17 +815,24 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                     Impl::SceneryScriptState& scriptState =
                         *impl_->sceneryScriptStates[instance.scriptStateIndex];
                     bool selectedItem = false;
-                    if (batch.nightmapSelection) {
+                    const std::string* lightmapStrengthVariable = &batch.lightmapStrengthVariable;
+                    if (batch.auxiliaryMaterialSelection) {
                         const ModelMaterialState& selected = selectModelMaterial(
-                            *batch.nightmapSelection, [&](const std::string& name) {
+                            *batch.auxiliaryMaterialSelection, [&](const std::string& name) {
                                 return scriptState.variables.get(name);
                             });
-                        selectedItem = &selected != &*batch.nightmapSelection;
+                        selectedItem = &selected != &*batch.auxiliaryMaterialSelection;
                         if (selectedItem) {
-                            const auto texture =
+                            const auto lightmap =
+                                batch.itemLightmaps.find(selected.lightmapTextureName);
+                            sceneryMaterial.lightmap =
+                                lightmap == batch.itemLightmaps.end() ? 0 : lightmap->second;
+                            sceneryMaterial.useLightmap = sceneryMaterial.lightmap != 0;
+                            lightmapStrengthVariable = &selected.lightmapStrengthVariable;
+                            const auto nightmap =
                                 batch.itemNightmaps.find(selected.nightmapTextureName);
                             sceneryMaterial.nightmap =
-                                texture == batch.itemNightmaps.end() ? 0 : texture->second;
+                                nightmap == batch.itemNightmaps.end() ? 0 : nightmap->second;
                             sceneryMaterial.useNightmap = sceneryMaterial.nightmap != 0;
                         }
                     }
@@ -841,10 +848,11 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                         sceneryMaterial.texcoordOffsetY = static_cast<float>(
                             scriptState.variables.get(batch.texcoordTransYVariable));
                     }
-                    if (!batch.lightmapStrengthVariable.empty()) {
-                        sceneryMaterial.lightmapStrength = std::clamp(
-                            scriptState.variables.get(batch.lightmapStrengthVariable), 0.0F, 1.0F);
-                    }
+                    sceneryMaterial.lightmapStrength = lightmapStrengthVariable->empty()
+                                                           ? 1.0F
+                                                           : std::clamp(scriptState.variables.get(
+                                                                            *lightmapStrengthVariable),
+                                                                        0.0F, 1.0F);
                     if (!batch.alphaScaleVariable.empty()) {
                         alphaScale = std::clamp(scriptState.variables.get(batch.alphaScaleVariable),
                                                 0.0F, 1.0F);

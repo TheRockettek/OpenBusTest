@@ -93,9 +93,9 @@ motion checks in both supported rendering modes.
   both axes. Generated rendering coverage exercises independent placements;
   representative OMSI visual parity remains unverified.
 - [~] Scenery `[matl_lightmap]` and `[alphascale]` apply per-placement
-  controllers, with generated rendering coverage for interpolation, missing
-  textures, and clamping. Dynamic material items and native visual parity
-  remain unverified.
+  controllers. Base and selected item lightmaps have generated rendering
+  coverage for interpolation, missing textures, and clamping. Other material
+  item modifiers and native visual parity remain unverified.
 - [~] Scenery `[matl_bumpmap]` uses the vehicle normal-map shader, with
   generated coverage for strength, map directions, and unavailable textures.
   Native bump/parallax behavior and representative visual parity remain
@@ -106,8 +106,9 @@ motion checks in both supported rendering modes.
   native visual parity remain unverified.
 - [~] Scenery `[matl_nightmap]` supports base and script-selected item maps,
   with generated coverage for independent placements, visibility gates, and
-  missing textures. Automatic `[NightMapMode]` scheduling and non-nightmap item
-  modifiers remain unsupported; native visual parity remains unverified.
+  missing textures. Automatic `[NightMapMode]` scheduling and item modifiers
+  other than nightmaps and lightmaps remain unsupported; native visual parity
+  remains unverified.
 
 Done when every supported material keyword has a documented runtime semantic,
 representative assets exercise it, and screenshots/logs or focused tests prove

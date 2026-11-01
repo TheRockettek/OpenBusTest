@@ -230,11 +230,14 @@ foreach(backend IN ITEMS cpu compute-indirect)
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --envmap)
     add_test(NAME OpenBusMapSceneryNightmapRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --nightmap)
+    add_test(NAME OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --item-lightmap)
     set_tests_properties(OpenBusMapSceneryTexcoordRenderingProbe.${backend}
         OpenBusMapSceneryLightmapRenderingProbe.${backend}
         OpenBusMapSceneryBumpmapRenderingProbe.${backend}
         OpenBusMapSceneryEnvironmentRenderingProbe.${backend}
         OpenBusMapSceneryNightmapRenderingProbe.${backend}
+        OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
         PROPERTIES SKIP_RETURN_CODE 77
         ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=${backend};OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
 endforeach()
