@@ -701,15 +701,16 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                                          const Impl::ModelBatch& batch,
                                          const ModelMaterial& sceneryMaterial, int alphaMode,
                                          OcclusionPassState* occlusionState = nullptr,
-                                         double visibilityFade = 1.0) {
+                                         double visibilityFade = 1.0, double alphaScale = 1.0) {
         selectIndirect(&instance);
         const bool conditionalRender =
             !instance.poleCrash && beginOcclusionProxy({instance.x, instance.y, instance.z},
                                                        instance.boundingRadius, occlusionState);
         pushMatrix();
         multiplyMatrix(instance.transform);
-        drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color, batch.alpha,
-                       alphaMode, batch.cullBackFaces, std::nullopt, visibilityFade);
+        drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color,
+                       batch.alpha * alphaScale, alphaMode, batch.cullBackFaces, std::nullopt,
+                       visibilityFade);
         popMatrix();
         if (conditionalRender) {
             pglEndConditionalRender();
@@ -809,9 +810,45 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 }
                 ModelMaterial sceneryMaterial = batch.material;
                 int alphaMode = batch.alphaMode;
+                double alphaScale = batch.alphaScaleVariable.empty() ? 1.0 : 0.0;
                 if (instance.scriptStateIndex < impl_->sceneryScriptStates.size()) {
                     Impl::SceneryScriptState& scriptState =
                         *impl_->sceneryScriptStates[instance.scriptStateIndex];
+                    bool selectedItem = false;
+                    if (batch.nightmapSelection) {
+                        const ModelMaterialState& selected = selectModelMaterial(
+                            *batch.nightmapSelection, [&](const std::string& name) {
+                                return scriptState.variables.get(name);
+                            });
+                        selectedItem = &selected != &*batch.nightmapSelection;
+                        if (selectedItem) {
+                            const auto texture =
+                                batch.itemNightmaps.find(selected.nightmapTextureName);
+                            sceneryMaterial.nightmap =
+                                texture == batch.itemNightmaps.end() ? 0 : texture->second;
+                            sceneryMaterial.useNightmap = sceneryMaterial.nightmap != 0;
+                        }
+                    }
+                    sceneryMaterial.nightmapStrength =
+                        selectedItem || !batch.visibilityVariable.empty()
+                            ? 1.0F
+                            : std::clamp(scriptState.variables.get("nightlighta"), 0.0F, 1.0F);
+                    if (!batch.texcoordTransXVariable.empty()) {
+                        sceneryMaterial.texcoordOffsetX = static_cast<float>(
+                            scriptState.variables.get(batch.texcoordTransXVariable));
+                    }
+                    if (!batch.texcoordTransYVariable.empty()) {
+                        sceneryMaterial.texcoordOffsetY = static_cast<float>(
+                            scriptState.variables.get(batch.texcoordTransYVariable));
+                    }
+                    if (!batch.lightmapStrengthVariable.empty()) {
+                        sceneryMaterial.lightmapStrength = std::clamp(
+                            scriptState.variables.get(batch.lightmapStrengthVariable), 0.0F, 1.0F);
+                    }
+                    if (!batch.alphaScaleVariable.empty()) {
+                        alphaScale = std::clamp(scriptState.variables.get(batch.alphaScaleVariable),
+                                                0.0F, 1.0F);
+                    }
                     if (batch.textTextureIndex >= 0) {
                         sceneryMaterial.textTexture = refreshSceneryTexture(
                             scriptState, true, batch.textTextureIndex, sceneryMaterial);
@@ -820,6 +857,9 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                             // Text glyphs include partial alpha for antialiasing and a
                             // transparent background, so draw them as a blended overlay.
                             alphaMode = 2;
+                        }
+                        if (alphaScale <= 0.0) {
+                            continue;
                         }
                     } else if (batch.scriptTextureIndex >= 0) {
                         sceneryMaterial.freeTexture = refreshSceneryTexture(
@@ -851,7 +891,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 const double viewDepth = -(view[2] * instance.x + view[6] * instance.y +
                                            view[10] * instance.z + view[14]);
                 sceneryDraws.push_back({&instance, &batch, std::move(sceneryMaterial), alphaMode,
-                                        viewDepth, visibilityFade});
+                                        viewDepth, visibilityFade, alphaScale});
             }
         }
     }
@@ -932,7 +972,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                                         !scenery->batch->noZwrite && !scenery->batch->noZcheck
                                     ? &occlusionState
                                     : nullptr,
-                                scenery->visibilityFade);
+                                scenery->visibilityFade, scenery->alphaScale);
             if (skipDepthCheck) {
                 glEnable(GL_DEPTH_TEST);
             }
@@ -970,7 +1010,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 // transmap texels. Record those surfaces in depth before the
                 // blended pass, matching the vehicle renderer's treatment.
                 drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material, 3,
-                                    nullptr, scenery->visibilityFade);
+                                    nullptr, scenery->visibilityFade, scenery->alphaScale);
             }
             glColorMask(previousColorMask[0], previousColorMask[1], previousColorMask[2],
                         previousColorMask[3]);
@@ -1000,7 +1040,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                                         !scenery->batch->noZcheck
                                     ? &occlusionState
                                     : nullptr,
-                                scenery->visibilityFade);
+                                scenery->visibilityFade, scenery->alphaScale);
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);

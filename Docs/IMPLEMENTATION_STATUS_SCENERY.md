@@ -12,13 +12,37 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[attachObj]` translations follow the decoded scenery mesh's local X/Y basis. This keeps the London traffic-light bracket's authored CFG-Y arm offset aligned with its O3D mesh; attachment rotation parity remains provisional.
 - Repeated SCO `[matl]` overrides are associated with O3D material slots by matching texture basename and authored occurrence order when numeric slot IDs disagree. This handles the London underground entrance's repeated `Fence_3.dds` alpha modes without overwriting unrelated entrance and kerb textures.
 - `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and `[constfile]` resources initialize per-placement scenery scripts. Basic `init`/`frame`, `[visible]`, and per-placement `[usescripttexture]` / `[usetexttexture]` surfaces are active. Counted map `[object]` labels feed recognized label-oriented inline SCO `[texttexture]` slots by slot index; this format/ordering is inferred from installed assets and still needs native OMSI visual comparison.
+- `[texcoordtransX]` and `[texcoordtransY]` translate material UVs using each
+  placement's current script variables, as for vehicle materials. Installed-scene
+  visual parity remains unverified.
+- `[matl_lightmap]` loads the material's emissive mask and applies its optional
+  per-placement controller; `[alphascale]` scales its material opacity. Both
+  use the vehicle renderer's clamped controller semantics. Missing or undecodable
+  lightmaps are reported and fall back to ordinary surface lighting. Dynamic
+  `[matl_item]` selection and installed-scene visual parity remain unverified.
+- `[matl_bumpmap]` loads the material's normal map and applies its configured
+  strength using the same shader as vehicle materials. Missing or undecodable
+  maps are reported and fall back to unperturbed shading. Native bump and
+  parallax behavior and installed-scene visual parity remain unverified.
+- `[matl_envmap]` applies a spherical environment reflection in the material
+  shader, scaled by the vehicle renderer's opacity factor and respecting the
+  material's alpha. Missing or undecodable maps are reported and fall back to
+  the unreflected surface. Dynamic material items and native visual parity
+  remain unverified.
+- `[matl_nightmap]` uses the vehicle nightmap shader. Base maps follow the
+  placement's clamped `nightlighta` script variable; visibility-gated meshes
+  and script-selected `[matl_item]` nightmaps render at full strength. Missing
+  or undecodable maps are reported and leave the underlying surface unchanged.
+  `[NightMapMode]` does not yet set `nightlighta` or schedule lighting, and
+  item selection currently changes only the nightmap, not other material
+  modifiers. Native visual parity remains unverified.
 - `[collision_mesh]` O3D geometry from SCOs and external model CFGs is spatially indexed and clipped into each overlapped streamed tile, including long bridges and custom junction meshes. Without an authored collision mesh, `[boundingbox]` supplies a box collider; when neither is present, first-LOD O3D model geometry is used. `[nocollision]` suppresses collision unless the SCO also declares `[surface]`. Attached/scenery repeater collision and non-O3D formats remain unsupported.
 - `[crashmode_pole]` scenery is removed from static mesh collision and represented as a streamed capsule. Its shaft center and width are estimated from the lower collision-mesh bounds, avoiding offsets from lamp arms; authored bounding boxes use map x/y/z axes. Vehicle chassis impacts accumulate configured momentum-based rotation; physics and rendering bend around the same collision base and disable collision at the break angle. The response is a kinematic approximation: the capsule does not reproduce every model shape, bending is applied per contact episode, breakage does not produce a detached/falling body, and broad live-map behavior still needs validation.
 - `[groups]`, `[friendlyname]`, and `[helparrow]` are accepted as SCO metadata/editor fields and ignored by static rendering.
 - `[description]` blocks are ignored by scenery rendering and by the inline-model
   loader, even when their free-form text resembles model directives. An absent
   `[end]` is reported as an error.
-- Text-texture glyphs (`[texttexture]`, `[texttexture_enh]`) are multiplied by the mesh's diffuse colour and receive the same ambient/sun, lightmap and interior lighting as ordinary textures; nightmap, transmap and bumpmap layers are not applied to them. `[matl_freetex]` surfaces are lit the same way.
+- Text-texture glyphs (`[texttexture]`, `[texttexture_enh]`) are multiplied by the mesh's diffuse colour. Lightmap, nightmap, transmap and bumpmap layers are not applied to them. `[matl_freetex]` uses its own dynamic texture path.
 - Material emission blends the shaded surface toward its sampled, unlit colour. White emission in route-arrow, route-text and DL05 display O3D materials therefore preserves texture RGB and black pixels instead of adding white and saturating the surface.
 
 ### Cotterell sign investigation
@@ -48,7 +72,9 @@ no sign-specific colour correction is applied.
 | `[collision_mesh]`, `[boundingbox]`, `[nocollision]`, `[surface]` | Partial | Supported O3D collision meshes from SCOs and external model CFGs are split across overlapped streamed tiles. If no collision mesh is available, a configured bounding box is used; otherwise first-LOD O3D render geometry is the fallback. `[nocollision]` suppresses collision unless `[surface]` is also present. Unsupported formats, attached/repeater collision, complete collision semantics, and broad contact validation remain. |
 | `[crashmode_pole]` | Partial runtime | Positive finite resistance and break angle are parsed. Lower O3D collision-mesh bounds or authored bounding boxes provide an approximate capsule; physics applies resistance-scaled chassis momentum once per contact episode, and rendering rotates about the same collision base. Poles disable collision on break; exact mesh collision, hinge/fall dynamics and broad live-map validation remain incomplete. |
 | `[surface]` | Parsed only | The SCO flag is retained, but no full surface-type/friction behavior is derived from it. |
-| `[maplight]`, `[nightmapmode]` | Parsed/consumed only | These records do not generate map lighting/lightmaps. |
+| `[complexity]` | Parsed/retained only | The authored integer is retained, but scenery detail filtering is not implemented. |
+| `[nightmapmode]` | Parsed/retained only | The authored integer is retained, but its rendering behavior is not implemented. |
+| `[maplight]` | Parsed/consumed only | Does not generate map lighting/lightmaps. |
 | `[rendertype]` | Partial | SCO and scenery-model CFGs accept numeric values plus `presurface`, `surface`, and `on_surface`. An explicit model-part value takes precedence over the SCO value; otherwise the SCO value is used. Render passes route these categories, but precedence and native OMSI parity remain unverified. |
 | Dynamic sound and interaction fields | Not implemented | Scenery sound playback/callbacks and scenery-object mouse-event dispatch are not connected. |
 

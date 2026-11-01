@@ -98,6 +98,7 @@ struct ScriptRuntime::Impl {
     std::vector<float> floatStack;
     std::vector<std::string> stringStack;
     std::unordered_set<std::string> warnedUnavailableMacros;
+    std::unordered_set<std::string> warnedMissingSystemTriggers;
     HofData hofData;
     bool hasHofData = false;
     bool warnedInvalidRandomSeed = false;

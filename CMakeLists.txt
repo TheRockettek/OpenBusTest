@@ -158,6 +158,13 @@ endif()
 
 find_package(OpenGL REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(TIFF QUIET)
+if(TARGET TIFF::TIFF)
+    set(OPENBUS_HAVE_TIFF 1)
+else()
+    set(OPENBUS_HAVE_TIFF 0)
+    message(STATUS "libtiff was not found; TIFF texture decoding will be unavailable.")
+endif()
 
 if(TARGET ODE::ODE)
     set(OPENBUS_ODE_TARGET ODE::ODE)

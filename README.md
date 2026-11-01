@@ -987,8 +987,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   the final OpenGL image-origin correction;
 - MAN DL05 OBJ lateral coordinates are mirrored into the simulator convention so
   the modeled right-side exit remains on the vehicle's right
-- TGA, BMP, PNG/JPEG, and DXT1/DXT5 DDS texture data are decoded for model
-  materials, including BMP and PNG payloads with a `.dds` filename
+- TGA, BMP, PNG/JPEG, TIFF (when libtiff is available), and DXT1/DXT5 DDS
+  texture data are decoded for model materials, including BMP and PNG payloads
+  with a `.dds` filename
 - OBJ `mtllib`/`usemtl` groups are rendered with their material textures;
   converter-generated texture extensions are resolved by filename stem
 - Window meshes use a depth-write-disabled, controlled translucent glass pass

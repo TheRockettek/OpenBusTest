@@ -101,11 +101,17 @@ validation notes.
 | `[tree]` | Partial | Crossed textured preview cards are used instead of full vegetation/helper-mesh behavior. |
 | `[varparent]` | Parsed/validated only | Editor references are checked; scenery script-variable inheritance is not evaluated. |
 | `[script]` and model animation/material directives | Partial | Basic script frames, visibility, and dynamic surfaces work; scripted mesh animation, full material changes, sound callbacks, and scenery mouse events do not. |
+| `[matl_lightmap]`, `[alphascale]` | Partial | Base material masks and per-placement controllers work; dynamic material-item selection and native visual parity remain unverified. |
+| `[matl_bumpmap]` | Partial | Base materials use the shared normal-map shader and configured strength; native bump/parallax and dynamic material-item behavior remain unverified. |
+| `[matl_envmap]` | Partial | Base materials render spherical reflections with the vehicle opacity factor; dynamic material-item behavior and native visual parity remain unverified. |
+| `[matl_nightmap]`, `[matl_change]`, `[matl_item]` | Partial | Base and script-selected item nightmaps render; automatic night scheduling and selection of other item modifiers are not implemented. |
 | `[spline_terrain_align]` | Provisional | Placement tilt follows sampled terrain normal; exact behavior is unverified. |
 | `[collision_mesh]`, `[boundingbox]`, `[nocollision]` | Partial | O3D collision subsets work; attached/repeater collision and complete collision semantics remain incomplete. |
 | `[surface]` | Parsed only | The flag is retained, but surface-type/friction behavior is not derived from it. |
 | `[crashmode_pole]` | Partial | Kinematic bending/breaking exists; hinge/fall dynamics and broad asset parity are incomplete. |
-| `[maplight]`, `[nightmapmode]` | Parsed/consumed only | These records do not generate map lighting/lightmaps. |
+| `[complexity]` | Parsed/retained only | The authored integer is retained, but scenery detail filtering is not implemented. |
+| `[nightmapmode]` | Parsed/retained only | The authored integer is retained, but its rendering behavior is not implemented. |
+| `[maplight]` | Parsed/consumed only | Does not generate map lighting/lightmaps. |
 | `[rendertype]` | Partial | Render-pass routing works for supported values; precedence and native ordering parity are unverified. |
 | `[terrainmapping]` | Not implemented | Terrain/material mapping is not handled by the shared model-config loader. |
 | Scenery sound and mouse-event dispatch | Not implemented | Playback/callbacks and scenery-object interaction are not connected. |
@@ -118,8 +124,8 @@ See [scenery status](IMPLEMENTATION_STATUS_SCENERY.md).
 | --- | --- | --- |
 | `[sound]`, `[trigger]` | Active subset | Playback works for configured/known triggers; unknown authored triggers are logged and do not play. |
 | `[loop]`, `[looped]`, `[noloop]`, `[viewpoint]` | Active subset | Basic loop and view masks work; full native channel/ownership behavior is not established. |
-| `[3d]` | Partial | Source position and maximum distance are used; complete spatialization and attenuation parity are unverified. |
-| `[volcurve]`, `[pnt]` | Partial | Curves affect supported trigger/ambient paths; complete controller and curve semantics are unverified. |
+| `[3d]` | Partial | Source position and maximum distance are used, including for independent ambient definitions sharing a file; complete spatialization and attenuation parity are unverified. |
+| `[volcurve]`, `[pnt]` | Partial | Named curves use script variables for triggered and ambient sounds, including updates to active player and AI voices. Special-curve and complete controller semantics remain unverified. |
 | `[conditionSingle]` | Active subset | Single-variable comparisons work; complex condition/group logic is absent. |
 | `[loopsound]` | Partial | Ambient loops support a subset of the configured control/curve/condition fields. |
 | Start/loop/end filename families and same-file retrigger | Heuristic / partial | Filename pairing is heuristic; exact native retrigger behavior is unverified. |

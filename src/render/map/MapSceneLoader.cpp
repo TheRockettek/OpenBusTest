@@ -465,12 +465,13 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
         ++prepared.textureResolutions;
         const std::filesystem::path texturePath = map_detail::findSceneryTexture(
             configPath.parent_path(), prepared.modelRoot, omsiRootPath, textureName);
-        prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
         if (texturePath.empty()) {
+            prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
             return;
         }
         const std::string key = openbus::pathToUtf8(texturePath.lexically_normal());
         if (prepared.decodedTextures.contains(key)) {
+            prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
             return;
         }
         auto image = textureImages.getOrDecode(key, [&texturePath] {
@@ -482,6 +483,17 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
             return decoded;
         });
         prepared.decodedTextures.emplace(key, std::move(image));
+        prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
+    };
+    const auto decodeOptionalTexture = [&](const std::string& textureName) {
+        if (prepared.auxiliaryTexturePreparationErrors.contains(textureName)) {
+            return;
+        }
+        try {
+            decodeTexture(textureName);
+        } catch (const std::runtime_error& error) {
+            prepared.auxiliaryTexturePreparationErrors.try_emplace(textureName, error.what());
+        }
     };
     for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
         decodeTexture(tree.texturePath);
@@ -500,6 +512,19 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
         for (const ModelMaterialState& state : part.materialStatesInOrder) {
             decodeTexture(state.textureName);
             decodeTexture(state.transmapTextureName);
+            decodeOptionalTexture(state.lightmapTextureName);
+            decodeOptionalTexture(state.nightmapTextureName);
+            for (const auto& change : state.textureChanges) {
+                for (const auto& item : change.items) {
+                    if (item) {
+                        decodeOptionalTexture(item->nightmapTextureName);
+                    }
+                }
+            }
+            decodeOptionalTexture(state.bumpmapTextureName);
+            if (state.environmentStrength > 0.0) {
+                decodeOptionalTexture(state.environmentTextureName);
+            }
             decodeTexture(state.freeTextureName);
         }
     }
@@ -512,6 +537,17 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
             throw std::logic_error("Scenery texture path was not prepared: " + textureName);
         }
         return texture->second;
+    };
+    const auto preparedAuxTexture = [&](const std::string& textureName) {
+        PreparedSceneryAuxTexture result;
+        result.name = textureName;
+        const auto error = prepared.auxiliaryTexturePreparationErrors.find(textureName);
+        if (error != prepared.auxiliaryTexturePreparationErrors.end()) {
+            result.preparationError = error->second;
+        } else {
+            result.path = resolvedTexture(textureName);
+        }
+        return result;
     };
     for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
         const std::filesystem::path texturePath = resolvedTexture(tree.texturePath);
@@ -588,6 +624,20 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
             if (state != nullptr) {
                 preparedBatch.transmapTextureName = state->transmapTextureName;
                 preparedBatch.transmapTexturePath = resolvedTexture(state->transmapTextureName);
+                preparedBatch.lightmap = preparedAuxTexture(state->lightmapTextureName);
+                preparedBatch.nightmap = preparedAuxTexture(state->nightmapTextureName);
+                for (const auto& change : state->textureChanges) {
+                    for (const auto& item : change.items) {
+                        if (item && !item->nightmapTextureName.empty()) {
+                            preparedBatch.itemNightmaps.push_back(
+                                preparedAuxTexture(item->nightmapTextureName));
+                        }
+                    }
+                }
+                preparedBatch.bumpmap = preparedAuxTexture(state->bumpmapTextureName);
+                if (state->environmentStrength > 0.0) {
+                    preparedBatch.environment = preparedAuxTexture(state->environmentTextureName);
+                }
                 preparedBatch.freeTextureName = state->freeTextureName;
                 preparedBatch.freeTexturePath = resolvedTexture(state->freeTextureName);
                 preparedBatch.hasMaterialState = true;
@@ -620,6 +670,19 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
                 batch.textTextureIndex = state->textTextureIndex;
                 batch.freeTextureName = state->freeTextureName;
                 batch.freeTextureVariable = state->freeTextureVariable;
+                batch.texcoordTransXVariable = state->texcoordTransXVariable;
+                batch.texcoordTransYVariable = state->texcoordTransYVariable;
+                batch.lightmapStrengthVariable = state->lightmapStrengthVariable;
+                batch.alphaScaleVariable = state->alphaScaleVariable;
+                if (!preparedBatch.itemNightmaps.empty()) {
+                    batch.nightmapSelection = *state;
+                }
+                batch.material.lightmapStrength =
+                    state->lightmapStrengthVariable.empty() ? 1.0F : 0.0F;
+                batch.material.bumpmapStrength =
+                    static_cast<float>(std::clamp(state->bumpmapStrength, 0.0, 1.0));
+                batch.material.environmentStrength = static_cast<float>(
+                    std::clamp(state->environmentStrength * ENVIRONMENT_MAP_OPACITY, 0.0, 1.0));
                 batch.textureObjectRoot = configPath.parent_path();
                 batch.textureModelRoot = prepared.modelRoot;
                 batch.material.textureWrapS = textureAddressModeToGl(state->textureAddressS);

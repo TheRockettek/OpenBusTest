@@ -7,6 +7,12 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#ifndef OPENBUS_HAVE_TIFF
+#define OPENBUS_HAVE_TIFF 0
+#endif
+#if OPENBUS_HAVE_TIFF
+#include <tiffio.h>
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -23,6 +29,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <string>
 
 namespace openbus::rendering {
@@ -112,6 +119,50 @@ bool readStbImage(const std::filesystem::path& path, Image& image) {
     stbi_image_free(pixels);
     return true;
 }
+
+#if OPENBUS_HAVE_TIFF
+bool readTiffImage(const std::filesystem::path& path, Image& image) {
+#ifdef _WIN32
+    std::unique_ptr<TIFF, decltype(&TIFFClose)> tiff(TIFFOpenW(path.c_str(), "r"), TIFFClose);
+#else
+    std::unique_ptr<TIFF, decltype(&TIFFClose)> tiff(TIFFOpen(path.c_str(), "r"), TIFFClose);
+#endif
+    if (!tiff) {
+        return false;
+    }
+
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    if (TIFFGetField(tiff.get(), TIFFTAG_IMAGEWIDTH, &width) != 1 ||
+        TIFFGetField(tiff.get(), TIFFTAG_IMAGELENGTH, &height) != 1 || width == 0 || height == 0 ||
+        width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+        height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+
+    std::size_t rgbaSize = 0;
+    if (!checkedBufferSize(width, height, 4, rgbaSize)) {
+        return false;
+    }
+    std::vector<std::uint32_t> raster(rgbaSize / 4);
+    if (TIFFReadRGBAImageOriented(tiff.get(), width, height, raster.data(), ORIENTATION_TOPLEFT,
+                                  0) != 1) {
+        return false;
+    }
+
+    std::vector<std::uint8_t> rgba(rgbaSize);
+    for (std::size_t pixel = 0; pixel < raster.size(); ++pixel) {
+        rgba[pixel * 4] = TIFFGetR(raster[pixel]);
+        rgba[pixel * 4 + 1] = TIFFGetG(raster[pixel]);
+        rgba[pixel * 4 + 2] = TIFFGetB(raster[pixel]);
+        rgba[pixel * 4 + 3] = TIFFGetA(raster[pixel]);
+    }
+    image.width = static_cast<int>(width);
+    image.height = static_cast<int>(height);
+    image.rgba.swap(rgba);
+    return true;
+}
+#endif
 
 bool readTgaImage(const std::filesystem::path& path, Image& image) {
     std::ifstream input(path, std::ios::binary);
@@ -640,6 +691,13 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     }
     if (extension == ".dds") {
         return readDdsImage(path, image);
+    }
+    if (extension == ".tif" || extension == ".tiff") {
+#if OPENBUS_HAVE_TIFF
+        return readTiffImage(path, image);
+#else
+        return false;
+#endif
     }
     if (extension == ".tga") {
         return readTgaImage(path, image);

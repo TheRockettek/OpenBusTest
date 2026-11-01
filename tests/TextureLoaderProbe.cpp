@@ -38,6 +38,48 @@ bool writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_
     return output.good();
 }
 
+void appendU16(std::vector<std::uint8_t>& bytes, std::uint16_t value) {
+    bytes.push_back(static_cast<std::uint8_t>(value & 0xffU));
+    bytes.push_back(static_cast<std::uint8_t>(value >> 8U));
+}
+
+void appendU32(std::vector<std::uint8_t>& bytes, std::uint32_t value) {
+    for (unsigned int shift = 0; shift < 32; shift += 8) {
+        bytes.push_back(static_cast<std::uint8_t>(value >> shift));
+    }
+}
+
+void appendTiffEntry(std::vector<std::uint8_t>& bytes, std::uint16_t tag, std::uint16_t type,
+                     std::uint32_t count, std::uint32_t value) {
+    appendU16(bytes, tag);
+    appendU16(bytes, type);
+    appendU32(bytes, count);
+    appendU32(bytes, value);
+}
+
+std::vector<std::uint8_t> rgb16Tiff() {
+    std::vector<std::uint8_t> bytes = {'I', 'I', 42, 0, 8, 0, 0, 0};
+    appendU16(bytes, 10);
+    appendTiffEntry(bytes, 256, 3, 1, 1);
+    appendTiffEntry(bytes, 257, 3, 1, 1);
+    appendTiffEntry(bytes, 258, 3, 3, 134);
+    appendTiffEntry(bytes, 259, 3, 1, 1);
+    appendTiffEntry(bytes, 262, 3, 1, 2);
+    appendTiffEntry(bytes, 273, 4, 1, 140);
+    appendTiffEntry(bytes, 277, 3, 1, 3);
+    appendTiffEntry(bytes, 278, 4, 1, 1);
+    appendTiffEntry(bytes, 279, 4, 1, 6);
+    appendTiffEntry(bytes, 284, 3, 1, 1);
+    appendU32(bytes, 0);
+    appendU16(bytes, 16);
+    appendU16(bytes, 16);
+    appendU16(bytes, 16);
+    appendU16(bytes, 0xffff);
+    appendU16(bytes, 0);
+    appendU16(bytes, 0x8000);
+    return bytes;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -330,6 +372,19 @@ int main(int argc, char** argv) {
                          image.rgba[3] == 78,
                      "PNG RGBA channels decode unchanged");
     openbus::probe::removeProbeFile(pngPath);
+
+#if OPENBUS_HAVE_TIFF
+    const std::filesystem::path tiffPath =
+        std::filesystem::temp_directory_path() / "openbus_rgb16.tif";
+    valid &= require(writeBytes(tiffPath, rgb16Tiff()), "write 16-bit RGB TIFF fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(tiffPath, image),
+                     "16-bit RGB TIFF image loads");
+    valid &= require(image.width == 1 && image.height == 1 && image.rgba.size() == 4 &&
+                         image.rgba[0] == 255 && image.rgba[1] == 0 && image.rgba[2] == 128 &&
+                         image.rgba[3] == 255,
+                     "16-bit RGB TIFF samples convert to RGBA8");
+    openbus::probe::removeProbeFile(tiffPath);
+#endif
 
     const std::filesystem::path mislabeledPngPath =
         std::filesystem::temp_directory_path() / "openbus_png_payload.dds";

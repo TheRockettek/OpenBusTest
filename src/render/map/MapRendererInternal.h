@@ -239,6 +239,12 @@ struct MapRenderer::Impl {
         int textTextureIndex = -1;
         std::string freeTextureName;
         std::string freeTextureVariable;
+        std::string texcoordTransXVariable;
+        std::string texcoordTransYVariable;
+        std::string lightmapStrengthVariable;
+        std::string alphaScaleVariable;
+        std::optional<ModelMaterialState> nightmapSelection;
+        std::unordered_map<std::string, GLuint> itemNightmaps;
         std::filesystem::path textureObjectRoot;
         std::filesystem::path textureModelRoot;
         std::array<double, 3> color = {1.0, 1.0, 1.0};
@@ -400,6 +406,7 @@ struct MapRenderer::Impl {
         int alphaMode = 0;
         double viewDepth = 0.0;
         double visibilityFade = 1.0;
+        double alphaScale = 1.0;
     };
 
     static constexpr std::size_t SCENERY_DRAW_GROUP_COUNT = 7;

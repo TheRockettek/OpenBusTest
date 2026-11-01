@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -46,7 +47,6 @@ struct SoundTriggerDefinition {
     std::string controlVariable;
     float controlCenter = 0.0F;
     double baseGain = 1.0;
-    std::vector<SoundCurvePoint> volumeCurve;
     std::vector<SoundVolumeCurve> volumeCurves;
     std::vector<SoundCondition> conditions;
 };
@@ -64,6 +64,8 @@ class VehicleSoundBank {
     void stop(SoundPlayback& playback, const std::string& name);
     void updateAmbient(SoundPlayback& playback, const Variables& variables,
                        openbus::rendering::ViewpointContext viewpoint);
+    void updateActiveSounds(SoundPlayback& playback, const Variables& variables,
+                            openbus::rendering::ViewpointContext viewpoint);
     void stopAllLoops(SoundPlayback& playback);
     void stopAll(SoundPlayback& playback);
 
@@ -71,6 +73,9 @@ class VehicleSoundBank {
     struct ActiveSound {
         std::filesystem::path file;
         SoundPlaybackHandle handle = 0;
+        std::optional<SoundTriggerDefinition> dynamicDefinition;
+        float controlValue = 0.0F;
+        float gain = 0.0F;
     };
 
     static bool conditionsAllow(const SoundTriggerDefinition& definition,
@@ -78,13 +83,13 @@ class VehicleSoundBank {
     std::filesystem::path resolvedFile(const SoundTriggerDefinition& definition) const;
     void stopTriggeredLoop(SoundPlayback& playback, SoundDefinitionId id);
     void stopOneShot(SoundPlayback& playback, SoundDefinitionId id);
-    void stopAmbientLoopFile(SoundPlayback& playback, const std::filesystem::path& path);
+    void stopAmbientLoop(SoundPlayback& playback, SoundDefinitionId id);
 
     std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;
     std::unordered_set<std::string> warnedUnknownTriggers_;
     std::vector<SoundTriggerDefinition> untriggeredLoopSounds_;
     std::filesystem::path basePath_;
     std::unordered_map<SoundDefinitionId, ActiveSound> activeTriggeredLoops_;
-    std::unordered_map<std::string, SoundPlaybackHandle> activeAmbientLoops_;
+    std::unordered_map<SoundDefinitionId, SoundPlaybackHandle> activeAmbientLoops_;
     std::unordered_map<SoundDefinitionId, ActiveSound> activeOneShots_;
 };

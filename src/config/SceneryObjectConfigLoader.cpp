@@ -112,11 +112,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             continue;
         }
         if (keyword == "groups" || keyword == "friendlyname") {
-            // These SCO metadata/editor fields do not affect static model rendering. Their
-            // payload lines are intentionally left for the line-oriented parser to ignore.
-            openbus::config::logUnhandledConfigurationTag(
-                "scenery object (.sco)", configPath, line.number, line.keyword(),
-                "metadata is recognized but not used by the renderer");
+            // These editor metadata fields do not affect static model rendering.
             continue;
         }
         if (keyword == "model") {
@@ -133,6 +129,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         static const std::unordered_set<std::string> inlineModelKeywords = {
             "mesh_ident",
             "lod",
+            "alphascale",
             "matl",
             "matl_alpha",
             "matl_bumpmap",
@@ -152,6 +149,8 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             "scripttexture",
             "texttexture",
             "texttexture_enh",
+            "texcoordtransx",
+            "texcoordtransy",
             "usescripttexture",
             "usetexttexture",
             "visible",
@@ -400,12 +399,24 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             readDoubles(reader, keyword, 7, values, result.diagnostics);
             continue;
         }
-        if (keyword == "nightmapmode") {
+        if (keyword == "complexity" || keyword == "nightmapmode") {
             Line value;
             int mode = 0;
-            if (reader.readPayload(value, result.diagnostics, keyword) &&
-                !parseInt(value.text, mode)) {
-                result.diagnostics.error(value.number, keyword, "expected a numeric mode");
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                if (!parseInt(value.text, mode)) {
+                    result.diagnostics.error(value.number, keyword, "expected an integer value");
+                } else {
+                    if (keyword == "complexity") {
+                        result.complexity = mode;
+                    } else {
+                        result.nightMapMode = mode;
+                    }
+                    openbus::config::logUnhandledConfigurationTag(
+                        "scenery object (.sco)", configPath, line.number, line.keyword(),
+                        keyword == "complexity"
+                            ? "value retained but scenery detail filtering is not implemented"
+                            : "value retained but night-map mode behavior is not implemented");
+                }
             }
             continue;
         }

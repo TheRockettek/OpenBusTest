@@ -60,6 +60,8 @@ struct SceneryObjectConfig {
     std::vector<PassengerCabinPosition> passengerPositions;
     bool absoluteHeight = false;
     std::optional<SceneryPoleCrashConfiguration> poleCrash;
+    std::optional<int> complexity;
+    std::optional<int> nightMapMode;
     bool helpArrow = false;
     bool trafficLight = false;
     int renderType = 2;

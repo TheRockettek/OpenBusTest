@@ -211,7 +211,8 @@ float ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
     const std::size_t errorCount = impl_->errors.size();
     const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                               : impl_->invoke(functionName.c_str());
-    if (!invoked && impl_->errors.size() == errorCount) {
+    if (!invoked && impl_->errors.size() == errorCount &&
+        impl_->warnedMissingSystemTriggers.insert(lower(triggerName)).second) {
         impl_->log(LogLevel::Warning,
                    "warning: system trigger " + triggerName + " -> " + functionName + " not found");
     }

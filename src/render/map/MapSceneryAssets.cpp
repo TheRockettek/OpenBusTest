@@ -169,8 +169,19 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 sceneryAssetsNeedingVariables.insert(cacheKey);
             }
             for (const ModelMaterialState& state : part.materialStatesInOrder) {
-                if (state.scriptTextureIndex >= 0 || state.textTextureIndex >= 0) {
+                if (state.scriptTextureIndex >= 0 || state.textTextureIndex >= 0 ||
+                    !state.texcoordTransXVariable.empty() ||
+                    !state.texcoordTransYVariable.empty() ||
+                    !state.lightmapStrengthVariable.empty() || !state.nightmapTextureName.empty() ||
+                    !state.alphaScaleVariable.empty()) {
                     sceneryAssetsNeedingVariables.insert(cacheKey);
+                }
+                for (const auto& change : state.textureChanges) {
+                    for (const auto& item : change.items) {
+                        if (item && !item->nightmapTextureName.empty()) {
+                            sceneryAssetsNeedingVariables.insert(cacheKey);
+                        }
+                    }
                 }
                 if (!state.freeTextureVariable.empty()) {
                     sceneryAssetsNeedingVariables.insert(cacheKey);
@@ -266,6 +277,44 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                     batch.material.useTransmap = batch.material.transmap != 0;
                 }
             }
+            const auto uploadAuxTexture = [&](const PreparedSceneryAuxTexture& texture,
+                                              const std::string& type, GLuint& handle,
+                                              bool& enabled) {
+                if (texture.name.empty()) {
+                    return;
+                }
+                if (!texture.preparationError.empty()) {
+                    recordSkipped(skipped, "scenery " + type + " textures that failed to decode",
+                                  openbus::pathToUtf8(modelConfigPath.filename()) + " " + type +
+                                      "=" + texture.name + ": " + texture.preparationError);
+                } else if (texture.path.empty()) {
+                    recordSkipped(skipped, "scenery " + type + " textures not found",
+                                  openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
+                                      openbus::pathToUtf8(
+                                          openbus::pathFromUtf8(preparedBatch.meshKey).filename()) +
+                                      " " + type + "=" + texture.name);
+                } else {
+                    handle = getTexture(texture.path);
+                    enabled = handle != 0;
+                }
+            };
+            uploadAuxTexture(preparedBatch.lightmap, "lightmap", batch.material.lightmap,
+                             batch.material.useLightmap);
+            uploadAuxTexture(preparedBatch.nightmap, "nightmap", batch.material.nightmap,
+                             batch.material.useNightmap);
+            for (const PreparedSceneryAuxTexture& texture : preparedBatch.itemNightmaps) {
+                if (batch.itemNightmaps.contains(texture.name)) {
+                    continue;
+                }
+                GLuint handle = 0;
+                bool enabled = false;
+                uploadAuxTexture(texture, "nightmap", handle, enabled);
+                batch.itemNightmaps.emplace(texture.name, handle);
+            }
+            uploadAuxTexture(preparedBatch.bumpmap, "bumpmap", batch.material.bumpmap,
+                             batch.material.useBumpmap);
+            uploadAuxTexture(preparedBatch.environment, "environment map",
+                             batch.material.environmentMap, batch.material.useEnvironmentMap);
             if (!preparedBatch.freeTextureName.empty()) {
                 if (preparedBatch.freeTexturePath.empty()) {
                     recordSkipped(skipped, "scenery free textures not found",

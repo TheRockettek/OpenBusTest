@@ -1,4 +1,5 @@
 #include "config/SceneryObjectConfigLoader.h"
+#include "config/ModelConfigLoader.h"
 #include "core/Variables.h"
 #include "ProbeTempDirectory.h"
 
@@ -75,6 +76,10 @@ int main(int argc, char** argv) {
     const std::filesystem::path editorPassengersPath = directory / "editor-passengers.sco";
     const std::filesystem::path missingPassengersPath = directory / "missing-passengers.sco";
     const std::filesystem::path textureAddressPath = directory / "texture-address.sco";
+    const std::filesystem::path detailPath = directory / "detail.sco";
+    const std::filesystem::path invalidDetailPath = directory / "invalid-detail.sco";
+    const std::filesystem::path missingDetailPath = directory / "missing-detail.sco";
+    const std::filesystem::path externalModelPath = directory / "external.cfg";
     {
         std::ofstream output(path);
         if (!output) {
@@ -209,9 +214,28 @@ int main(int argc, char** argv) {
         std::ofstream output(textureAddressPath);
         output << "[mesh]\nmesh.x\n"
                   "[matl]\nborder.bmp\n0\n[matl_texadress_border]\n"
+                  "[texcoordtransX]\nscroll_x\n[texcoordtransY]\nscroll_y\n"
+                  "[alphascale]\nlamp_alpha\n[matl_lightmap]\nlamp_light.bmp\nlamp_light\n"
+                  "[matl_bumpmap]\nbump.bmp\n0.25\n"
+                  "[matl_envmap]\nenv.bmp\n0.5\n"
+                  "[matl_nightmap]\nnight.bmp\n"
+                  "[matl_change]\nborder.bmp\n0\nnight_selector\n"
+                  "[matl_item]\n[matl_nightmap]\nitem_night.bmp\n"
                   "[matl]\nclamp.bmp\n1\n[matl_texadress_clamp]\n"
                   "[matl]\nmirror.bmp\n2\n[matl_texadress_mirror]\n"
                   "[matl]\nonce.bmp\n3\n[matl_texadress_mirroronce]\n";
+    }
+    {
+        std::ofstream output(detailPath);
+        output << "[complexity]\n2\n[NightMapMode]\n1\n[mesh]\nmesh.x\n";
+        std::ofstream invalid(invalidDetailPath);
+        invalid << "[complexity]\n2x\n[NightMapMode]\ninvalid\n";
+        std::ofstream missing(missingDetailPath);
+        missing << "[complexity]\n[NightMapMode]\n[mesh]\nmesh.x\n";
+        std::ofstream external(externalModelPath);
+        external << "[complexity]\n2\n[NightMapMode]\n1\n[mesh]\nmesh.x\n";
+        std::ofstream mesh(directory / "mesh.x");
+        mesh << "xof 0303txt 0032\n";
     }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
@@ -228,22 +252,78 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig editorPassengers = loadSceneryObjectFile(editorPassengersPath);
     const SceneryObjectConfig missingPassengers = loadSceneryObjectFile(missingPassengersPath);
     const SceneryObjectConfig textureAddressObject = loadSceneryObjectFile(textureAddressPath);
+    const SceneryObjectConfig detail = loadSceneryObjectFile(detailPath);
+    const SceneryObjectConfig invalidDetail = loadSceneryObjectFile(invalidDetailPath);
+    const SceneryObjectConfig missingDetail = loadSceneryObjectFile(missingDetailPath);
     openbus::scripting::SceneryObject textureAddressVariables;
     const ModelConfig textureAddressModel =
         loadSceneryObjectConfig(textureAddressPath, directory, textureAddressVariables);
+    const ModelConfig detailModel =
+        loadModelConfig(detailPath, directory, ModelConfigKind::SceneryObject,
+                        textureAddressVariables);
+    const ModelConfig externalModel =
+        loadModelConfig(externalModelPath, directory, ModelConfigKind::SceneryObject,
+                        textureAddressVariables);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
+    valid &= require(detail.complexity == 2 && detail.nightMapMode == 1 &&
+                         !detail.diagnostics.hasErrors() && detailModel.parts.size() == 1 &&
+                         detailModel.diagnostics.entries.empty(),
+                     "SCO detail and night-map values are retained and not reparsed as model tags");
+    valid &= require(!configuration.complexity && !configuration.nightMapMode,
+                     "absent detail and night-map fields remain unspecified");
+    const auto detailErrors = [](const SceneryObjectConfig& config) {
+        return std::count_if(config.diagnostics.entries.begin(), config.diagnostics.entries.end(),
+                             [](const ConfigurationDiagnostic& diagnostic) {
+                                 return diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
+                                        (diagnostic.keyword == "complexity" ||
+                                         diagnostic.keyword == "nightmapmode");
+                             });
+    };
+    valid &= require(!invalidDetail.complexity && !invalidDetail.nightMapMode &&
+                         detailErrors(invalidDetail) == 2,
+                     "invalid detail and night-map values are diagnosed");
+    valid &= require(!missingDetail.complexity && !missingDetail.nightMapMode &&
+                         detailErrors(missingDetail) == 2,
+                     "missing detail values do not consume following keywords");
+    valid &= require(externalModel.diagnostics.entries.size() == 2,
+                     "external model configs still diagnose SCO-only keywords");
     const auto& addressParts = textureAddressModel.parts;
     valid &= require(
         !textureAddressObject.diagnostics.hasErrors() &&
             std::none_of(textureAddressObject.diagnostics.entries.begin(),
                          textureAddressObject.diagnostics.entries.end(),
                          [](const ConfigurationDiagnostic& diagnostic) {
-                             return diagnostic.keyword.find("matl_texadress_") == 0;
+                             return diagnostic.keyword.find("matl_texadress_") == 0 ||
+                                    diagnostic.keyword == "alphascale" ||
+                                    diagnostic.keyword == "matl_lightmap" ||
+                                    diagnostic.keyword == "matl_bumpmap" ||
+                                    diagnostic.keyword == "matl_envmap" ||
+                                    diagnostic.keyword == "matl_nightmap" ||
+                                    diagnostic.keyword == "texcoordtransx" ||
+                                    diagnostic.keyword == "texcoordtransy";
                          }) &&
             !textureAddressModel.diagnostics.hasErrors() && addressParts.size() == 1 &&
             addressParts[0].materialStatesInOrder.size() == 4 &&
+            addressParts[0].materialStatesInOrder[0].texcoordTransXVariable == "scroll_x" &&
+            addressParts[0].materialStatesInOrder[0].texcoordTransYVariable == "scroll_y" &&
+            addressParts[0].materialStatesInOrder[0].alphaScaleVariable == "lamp_alpha" &&
+            addressParts[0].materialStatesInOrder[0].lightmapTextureName == "lamp_light.bmp" &&
+            addressParts[0].materialStatesInOrder[0].lightmapStrengthVariable == "lamp_light" &&
+            addressParts[0].materialStatesInOrder[0].bumpmapTextureName == "bump.bmp" &&
+            addressParts[0].materialStatesInOrder[0].bumpmapStrength == 0.25 &&
+            addressParts[0].materialStatesInOrder[0].environmentTextureName == "env.bmp" &&
+            addressParts[0].materialStatesInOrder[0].environmentStrength == 0.5 &&
+            addressParts[0].materialStatesInOrder[0].nightmapTextureName == "night.bmp" &&
+            addressParts[0].materialStatesInOrder[0].textureChanges.size() == 1 &&
+            addressParts[0].materialStatesInOrder[0].textureChanges[0].items.size() == 1 &&
+            addressParts[0].materialStatesInOrder[0].textureChanges[0].items[0] &&
+            addressParts[0].materialStatesInOrder[0]
+                    .textureChanges[0].items[0]->nightmapTextureName == "item_night.bmp" &&
+            textureAddressVariables.has("night_selector") &&
+            textureAddressVariables.has("scroll_x") && textureAddressVariables.has("scroll_y") &&
+            textureAddressVariables.has("lamp_alpha") && textureAddressVariables.has("lamp_light") &&
             addressParts[0].materialStatesInOrder[0].textureAddressS == TextureAddressMode::Border &&
             addressParts[0].materialStatesInOrder[0].textureAddressT == TextureAddressMode::Border &&
             addressParts[0].materialStatesInOrder[1].textureAddressS == TextureAddressMode::Clamp &&

@@ -927,8 +927,8 @@ void Vehicle::drawEnvironmentMap(Batch& batch, double alpha) {
     if (batch.environmentTexture == 0 || !batch.hasNormals || alpha <= 0.0) {
         return;
     }
-    const double reflectionStrength =
-        std::clamp(alpha * batch.environmentStrength * ENVIRONMENT_MAP_OPACITY, 0.0, 1.0);
+    const double reflectionStrength = std::clamp(
+        alpha * batch.environmentStrength * openbus::rendering::ENVIRONMENT_MAP_OPACITY, 0.0, 1.0);
     if (reflectionStrength <= 0.0) {
         return;
     }

@@ -64,6 +64,12 @@ class MapSceneLoader {
         std::exception_ptr preparationError;
     };
 
+    struct PreparedSceneryAuxTexture {
+        std::string name;
+        std::filesystem::path path;
+        std::string preparationError;
+    };
+
     struct PreparedSceneryBatch {
         std::string meshKey;
         int materialIndex = 0;
@@ -73,6 +79,11 @@ class MapSceneLoader {
         std::string freeTextureName;
         std::filesystem::path texturePath;
         std::filesystem::path transmapTexturePath;
+        PreparedSceneryAuxTexture lightmap;
+        PreparedSceneryAuxTexture nightmap;
+        std::vector<PreparedSceneryAuxTexture> itemNightmaps;
+        PreparedSceneryAuxTexture bumpmap;
+        PreparedSceneryAuxTexture environment;
         std::filesystem::path freeTexturePath;
         bool hasMaterialState = false;
         int stateAlphaMode = 0;
@@ -93,6 +104,7 @@ class MapSceneLoader {
         std::vector<PreparedSceneryBatch> batches;
         std::vector<PreparedSceneryTreeBatch> treeBatches;
         std::unordered_map<std::string, std::filesystem::path> resolvedTexturePaths;
+        std::unordered_map<std::string, std::string> auxiliaryTexturePreparationErrors;
         std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
         std::size_t textureLookups = 0;
         std::size_t textureResolutions = 0;

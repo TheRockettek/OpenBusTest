@@ -89,6 +89,25 @@ motion checks in both supported rendering modes.
   A GPU material probe verifies nightmap overlays, black-texel neutrality, and
   zero-strength behavior, plus directional environment-map sampling and blend
   opacity with a generated map.
+- [~] Scenery material UV translation uses per-placement script variables for
+  both axes. Generated rendering coverage exercises independent placements;
+  representative OMSI visual parity remains unverified.
+- [~] Scenery `[matl_lightmap]` and `[alphascale]` apply per-placement
+  controllers, with generated rendering coverage for interpolation, missing
+  textures, and clamping. Dynamic material items and native visual parity
+  remain unverified.
+- [~] Scenery `[matl_bumpmap]` uses the vehicle normal-map shader, with
+  generated coverage for strength, map directions, and unavailable textures.
+  Native bump/parallax behavior and representative visual parity remain
+  unverified.
+- [~] Scenery `[matl_envmap]` applies alpha-aware spherical reflections using
+  the vehicle opacity factor. Generated coverage exercises both culling paths,
+  strength clamping, and unavailable textures; dynamic material items and
+  native visual parity remain unverified.
+- [~] Scenery `[matl_nightmap]` supports base and script-selected item maps,
+  with generated coverage for independent placements, visibility gates, and
+  missing textures. Automatic `[NightMapMode]` scheduling and non-nightmap item
+  modifiers remain unsupported; native visual parity remains unverified.
 
 Done when every supported material keyword has a documented runtime semantic,
 representative assets exercise it, and screenshots/logs or focused tests prove
@@ -430,8 +449,8 @@ for alignment is not mistaken for supporting it.
   texture `[surface]`, and `[NightMapMode]`, including wetness and
   surface-type data. Scenery `[surface]` and `[nocollision]` affect supported
   collision geometry, but do not implement texture surface/material physics;
-  `[NightMapMode]` is parsed but discarded. `[maplight]` is also consumed
-  without generating tile lightmaps.
+  SCO `[NightMapMode]` is parsed and retained but not applied. `[maplight]`
+  is consumed without generating tile lightmaps.
 - [~] Passenger-cabin `[noticketsale]`, `[ticket_sale]`,
   `[ticket_sale_money_point_2]`, and `[ticket_sale_change_point_2]` locations
   and parameters are retained with unsupported-behavior diagnostics. Ticket
@@ -461,10 +480,12 @@ for alignment is not mistaken for supporting it.
 - [~] Player sound CFG runs untriggered `[sound]` records with `[volcurve]`
   controls as ambient loops and applies their configured base gain. This
   enables authored window-dependent ambience (for example, `cabwindowopen`)
-  without window-specific mixer logic; the full OMSI sound contract remains
-  incomplete.
+  without window-specific mixer logic. Triggered sounds evaluate and multiply
+  their named variable curves during playback for player and AI vehicles;
+  special-curve semantics remain incomplete.
 - [ ] Complete sound spatialization and control semantics for `[loopsound]`
-  and `[3d]` beyond the current player sound loading/trigger path.
+  and `[3d]` beyond the current player sound loading/trigger path. Ambient
+  definitions sharing a file retain independent positions and controls.
 - [ ] Add AI/network configuration support for `[ailist]`, `[aigroup_2]`,
   `[aigroup_depot]`, `[busstop]`, `[signalroute]`, and `[StnLink]`.
 - [ ] Add environment configuration support for `[sky_textures]`,
@@ -478,7 +499,7 @@ for alignment is not mistaken for supporting it.
   defaults. `[game]`, `[ctrl]`, `[axis]`, other input contexts, and complete
   native input behavior remain unsupported or unverified.
 - [ ] Implement observed configuration records that remain unhandled in their
-  current contexts: SCO `[carpark_p]`, `[complexity]`, `[crossingproblem]`,
+  current contexts: SCO `[carpark_p]`, `[crossingproblem]`,
   `[entrypoint]`, `[joinable]`, `[mass]`,
   `[momentofintertia]`, `[newanim]`,
   `[nomaplighting]`, `[shadow]` per-mesh cast-shadow behavior,
@@ -490,7 +511,8 @@ for alignment is not mistaken for supporting it.
   SCO files and `[matl]` model materials); the missing scope is the context
   shown by the runtime warning, not the keyword globally. SCO `[approachdist]`
   is parsed for traffic signals, and SCO `[collision_mesh]` feeds supported
-  scenery collision; native parity remains unverified. `[newachse]`
+  scenery collision; native parity remains unverified. SCO `[complexity]`
+  values are retained, but detail filtering is not implemented. `[newachse]`
   descriptive text lines are labels rather than configuration tags and are
   ignored; only identifier-like unknown axle fields are reported.
   Model-animation directives such as `anim_rot` and `anim_trans` are

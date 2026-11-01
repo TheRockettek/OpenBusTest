@@ -36,6 +36,8 @@ struct StaticPrimitiveBuffer {
     }
 };
 
+inline constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
+
 struct ModelMaterial {
     GLuint texture = 0;
     GLuint detailTexture = 0;
@@ -56,12 +58,14 @@ struct ModelMaterial {
     float specularPower = 8.0F;
     bool flipTransmapY = false;
     GLuint bumpmap = 0;
+    GLuint environmentMap = 0;
     GLuint freeTexture = 0;
     GLuint textTexture = 0;
     bool useLightmap = false;
     bool useNightmap = false;
     bool useTransmap = false;
     bool useBumpmap = false;
+    bool useEnvironmentMap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
     bool useInteriorLight = false;
@@ -69,6 +73,7 @@ struct ModelMaterial {
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
+    float environmentStrength = 0.0f;
     int interiorLightCount = 0;
     // Positions are in view space, transformed from the vehicle root (not the
     // receiving mesh's per-part animation transform).

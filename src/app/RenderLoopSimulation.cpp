@@ -460,6 +460,8 @@ void RenderLoop::updateScripts() {
                 if (vehicle.get() != playerVehicle_ && !vehicle->mapTrafficRouteFinished &&
                     (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
                     vehicle->updateScripts(true);
+                    vehicle->soundBank.updateActiveSounds(soundEngine_, vehicle->variables,
+                                                          soundViewpoint_);
                 }
             }
         }

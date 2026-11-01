@@ -704,10 +704,15 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
     if ((batch.texturePath.empty() || batch.texture == 0) &&
         !batch.textureCacheEntry->decodeFailureLogged) {
         batch.textureCacheEntry->decodeFailureLogged = true;
-        textureLog.Error(
+        const std::string message =
             std::string(batch.texturePath.empty() ? "not-found: " : "decode-failed: ") +
             batch.textureName + " resolved=" + batch.texturePath.generic_string() +
-            " source=" + batch.sourceMeshPath.generic_string());
+            " source=" + batch.sourceMeshPath.generic_string();
+        if (batch.textTextureIndex >= 0) {
+            textureLog.Warning("Optional base texture for text-texture material " + message);
+        } else {
+            textureLog.Error(message);
+        }
     }
     // if (!batch.environmentLoadAttempted && !batch.environmentTextureName.empty() &&
     //     batch.environmentStrength > 0.0) {

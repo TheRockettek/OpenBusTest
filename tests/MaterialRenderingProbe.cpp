@@ -609,6 +609,78 @@ int main() {
         std::cerr << "opposite surface normal did not sample the opposite environment direction\n";
         passed = false;
     }
+    ModelMaterial reflected;
+    reflected.texture = blue;
+    reflected.textured = true;
+    reflected.emissionColor = {1, 1, 1};
+    reflected.environmentMap = environment;
+    reflected.useEnvironmentMap = true;
+    reflected.environmentStrength = 1.0F;
+    if (draw(reflected, {1, 1, 1}, 1) != std::array<std::uint8_t, 4>{0, 255, 0, 255}) {
+        std::cerr << "model environment map sampled the wrong reflection direction\n";
+        passed = false;
+    }
+    for (std::size_t index = 0; index < environmentVertices.size(); index += 13) {
+        environmentVertices[index + 6] = normalX;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(environmentVertices), environmentVertices.data(),
+                  GL_STATIC_DRAW);
+    reflected.environmentStrength = 0.0F;
+    const auto unreflected = draw(reflected, {1, 1, 1}, 1);
+    reflected.environmentStrength = 0.5F;
+    const auto partialReflection = draw(reflected, {1, 1, 1}, 1);
+    reflected.environmentStrength = 2.0F;
+    const auto fullReflection = draw(reflected, {1, 1, 1}, 1);
+    if (unreflected != std::array<std::uint8_t, 4>{65, 85, 112, 255} ||
+        !close(partialReflection[0], 160) || !close(partialReflection[1], 43) ||
+        !close(partialReflection[2], 56) ||
+        fullReflection != std::array<std::uint8_t, 4>{255, 0, 0, 255}) {
+        std::cerr << "model environment strength or clamping was incorrect\n";
+        passed = false;
+    }
+    reflected.useEnvironmentMap = false;
+    if (draw(reflected, {1, 1, 1}, 1) != unreflected) {
+        std::cerr << "environment state leaked into an unreflected model\n";
+        passed = false;
+    }
+    reflected.useEnvironmentMap = true;
+    const GLuint transparent = texture({255, 255, 255, 0});
+    reflected.texture = transparent;
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    drawModelBatch(buffer, 3, reflected, {1, 1, 1}, 1, 1);
+    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+    if (pixel != std::array<std::uint8_t, 4>{0, 0, 0, 0}) {
+        std::cerr << "environment map escaped an alpha-cutout surface\n";
+        passed = false;
+    }
+    reflected.texture = mask;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    pixel = draw(reflected, {1, 1, 1}, 1);
+    glDisable(GL_BLEND);
+    if (!close(pixel[0], 128) || pixel[1] != 0 || pixel[2] != 0 || !close(pixel[3], 64)) {
+        std::cerr << "environment map ignored surface transparency\n";
+        passed = false;
+    }
+    reflected.texture = blue;
+    GLuint reflectionIndexBuffer = 0;
+    constexpr std::array<std::uint32_t, 3> reflectionIndices = {0, 1, 2};
+    pglGenBuffers(1, &reflectionIndexBuffer);
+    pglBindBuffer(GL_ARRAY_BUFFER, reflectionIndexBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(reflectionIndices), reflectionIndices.data(),
+                  GL_STATIC_DRAW);
+    glClear(GL_COLOR_BUFFER_BIT);
+    drawIndexedModelBatch(buffer, reflectionIndexBuffer, 3, reflected, {1, 1, 1}, 1, 2);
+    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+    if (pixel != fullReflection) {
+        std::cerr << "indexed model environment binding differed from array drawing\n";
+        passed = false;
+    }
+    pglDeleteBuffers(1, &reflectionIndexBuffer);
+    glDeleteTextures(1, &transparent);
+    invalidateTextureBindings();
     pglBindBuffer(GL_ARRAY_BUFFER, buffer);
     pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
 

@@ -71,6 +71,8 @@ openbus_add_probe(OpenBusVehicleInputBindingsProbe VehicleInputBindingsProbe.cpp
 
 # Assets
 openbus_add_probe(OpenBusTextureLoaderProbe TextureLoaderProbe.cpp LIBS openbus_assets)
+target_compile_definitions(OpenBusTextureLoaderProbe PRIVATE
+    OPENBUS_HAVE_TIFF=${OPENBUS_HAVE_TIFF})
 openbus_add_probe(OpenBusPreparedMapTexturesProbe PreparedMapTexturesProbe.cpp LIBS openbus_assets)
 openbus_add_probe(OpenBusPreparedTerrainTexturePathsProbe PreparedTerrainTexturePathsProbe.cpp
     LIBS openbus_assets)
@@ -215,6 +217,27 @@ openbus_add_probe(OpenBusMapOcclusionRenderingProbe MapOcclusionRenderingProbe.c
 set_tests_properties(OpenBusMapOcclusionRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusMapTrafficLightRenderingProbe MapTrafficLightRenderingProbe.cpp
     LIBS openbus_render)
+openbus_add_probe(OpenBusMapSceneryTexcoordRenderingProbe MapSceneryTexcoordRenderingProbe.cpp
+    LIBS openbus_render NO_TEST)
+foreach(backend IN ITEMS cpu compute-indirect)
+    add_test(NAME OpenBusMapSceneryTexcoordRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe)
+    add_test(NAME OpenBusMapSceneryLightmapRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --lightmap)
+    add_test(NAME OpenBusMapSceneryBumpmapRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --bumpmap)
+    add_test(NAME OpenBusMapSceneryEnvironmentRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --envmap)
+    add_test(NAME OpenBusMapSceneryNightmapRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --nightmap)
+    set_tests_properties(OpenBusMapSceneryTexcoordRenderingProbe.${backend}
+        OpenBusMapSceneryLightmapRenderingProbe.${backend}
+        OpenBusMapSceneryBumpmapRenderingProbe.${backend}
+        OpenBusMapSceneryEnvironmentRenderingProbe.${backend}
+        OpenBusMapSceneryNightmapRenderingProbe.${backend}
+        PROPERTIES SKIP_RETURN_CODE 77
+        ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=${backend};OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
+endforeach()
 add_test(NAME OpenBusMapTrafficLightRenderingProbe.conditional
     COMMAND OpenBusMapTrafficLightRenderingProbe --conditional)
 set_tests_properties(OpenBusMapTrafficLightRenderingProbe

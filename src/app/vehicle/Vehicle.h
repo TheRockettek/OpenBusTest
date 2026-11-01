@@ -79,8 +79,6 @@ enum class VehicleRenderPass {
     Transparent,
 };
 
-inline constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
-
 // Names used unqualified throughout the vehicle and render-loop implementation.
 using openbus::rendering::applyPose;
 using AssetRequestManager = openbus::rendering::AssetRequestManager;

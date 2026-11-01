@@ -457,6 +457,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             // SCO object directives are parsed and diagnosed by loadSceneryObjectFile.
             static const std::unordered_set<std::string> sceneryObjectDirectives = {
+                "complexity",
+                "nightmapmode",
                 "surface",
                 "trafficlight",
                 "traffic_lights_group",
@@ -491,11 +493,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             continue;
         }
         if (keyword == "friendlyname" || keyword == "groups") {
-            // Scenery metadata is not a model directive. [friendlyname] is commonly a single
-            // optional line, so avoid fixed-width reads here.
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(),
-                "metadata is recognized but not used by the renderer");
+            // Scenery metadata is not a model directive. [friendlyname] is a variable-length
+            // payload, so leave it to the line-oriented parser to ignore.
             continue;
         }
 
@@ -1080,7 +1079,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [matl_bumpmap]: texture plus mode; [matl_nightmap]: one texture.
+        // [matl_bumpmap]: texture plus strength; [matl_nightmap]: one texture.
         if (keyword == "matl_bumpmap" || keyword == "matl_nightmap") {
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {

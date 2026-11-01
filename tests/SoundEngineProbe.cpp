@@ -561,6 +561,180 @@ bool checkOpenWindowSound(const std::filesystem::path& root) {
     return result;
 }
 
+bool checkIndependentSpatialAmbientLoops(const std::filesystem::path& root) {
+    const auto path = root / "spatial_ambient.cfg";
+    {
+        std::ofstream config(path);
+        config << "[sound]\npaired_loop.wav\n1\n[3d]\n1\n2\n3\n10\n"
+                  "[volcurve]\nfirst_level\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[sound]\npaired_loop.wav\n0.8\n[3d]\n-1\n-2\n4\n20\n"
+                  "[volcurve]\nsecond_level\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[sound]\npaired_end.wav\n1\n[trigger]\nev_paired_end\n";
+    }
+    VehicleSoundBank bank;
+    bank.load(path);
+    Variables variables;
+    variables.set("first_level", 0.5F);
+    variables.set("second_level", 1.0F);
+    FakePlayback playback;
+    bank.updateAmbient(playback, variables, exterior);
+    if (!expect(playback.started.size() == 2, "same-file spatial ambient loops must both start")) {
+        return false;
+    }
+    const auto first = std::find_if(playback.started.begin(), playback.started.end(),
+                                    [](const RecordedPlayback& sound) {
+                                        return sound.parameters.position ==
+                                               std::array<double, 3>{2, -1, 3};
+                                    });
+    const auto second = std::find_if(playback.started.begin(), playback.started.end(),
+                                     [](const RecordedPlayback& sound) {
+                                         return sound.parameters.position ==
+                                                std::array<double, 3>{-2, 1, 4};
+                                     });
+    if (!expect(first != playback.started.end() && second != playback.started.end() &&
+                    first->looped && second->looped && first->path == second->path &&
+                    close(first->parameters.gain, 0.5F) && close(second->parameters.gain, 0.8F) &&
+                    first->parameters.maxDistance == 10 && second->parameters.maxDistance == 20,
+                "same-file ambient loops must retain individual positions, distances and gains")) {
+        return false;
+    }
+    const SoundPlaybackHandle firstHandle = first->handle;
+    const SoundPlaybackHandle secondHandle = second->handle;
+    const std::size_t firstIndex = static_cast<std::size_t>(first - playback.started.begin());
+    variables.set("first_level", 0.75F);
+    variables.set("second_level", 0.0F);
+    bank.updateAmbient(playback, variables, exterior);
+    if (!expect(playback.started.size() == 2 && playback.active.contains(firstHandle) &&
+                    !playback.active.contains(secondHandle) &&
+                    close(playback.started[firstIndex].parameters.gain, 0.75F),
+                "ambient controls must update or stop each definition independently")) {
+        return false;
+    }
+    variables.set("second_level", 1.0F);
+    bank.updateAmbient(playback, variables, exterior);
+    if (!expect(playback.started.size() == 3 && playback.active.contains(firstHandle) &&
+                    playback.active.contains(playback.started.back().handle),
+                "reactivating one same-file loop must not restart the other")) {
+        return false;
+    }
+    const SoundPlaybackHandle restartedSecond = playback.started.back().handle;
+    bank.trigger(playback, "ev_paired_end", {}, 0.0F, variables, exterior);
+    const bool stoppedFamily = !playback.active.contains(firstHandle) &&
+                               !playback.active.contains(restartedSecond) &&
+                               playback.started.size() == 4;
+    bank.stopAll(playback);
+    return expect(stoppedFamily && playback.active.empty(),
+                  "end-family triggers and stopAll must cancel every owned spatial loop");
+}
+
+bool checkTriggeredVariableVolumeCurves(const std::filesystem::path& root) {
+    const auto path = root / "triggered_volume_curves.cfg";
+    {
+        std::ofstream config(path);
+        config << "[sound]\nshift.wav\n0.8\n"
+                  "[volcurve]\nThrottle\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[volcurve]\nWeather\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[trigger]\nev_shift\n";
+    }
+    VehicleSoundBank bank;
+    bank.load(path);
+    Variables variables;
+    variables.set("throttle", 0.5F);
+    variables.set("weather", 0.25F);
+    FakePlayback playback;
+    bank.trigger(playback, "ev_shift", {}, 0.9F, variables, exterior);
+    if (!expect(playback.started.size() == 1 && close(playback.started[0].parameters.gain, 0.1F),
+                "triggered named volume curves must use and multiply their own variables")) {
+        return false;
+    }
+    const SoundPlaybackHandle handle = playback.started[0].handle;
+    variables.set("throttle", 0.75F);
+    variables.set("weather", 0.5F);
+    bank.updateActiveSounds(playback, variables, exterior);
+    if (!expect(playback.started.size() == 1 && playback.active.contains(handle) &&
+                    close(playback.started[0].parameters.gain, 0.3F),
+                "active one-shot gain must follow named curve variables without retriggering")) {
+        return false;
+    }
+    const std::size_t updates = playback.updated.size();
+    bank.updateActiveSounds(playback, variables, exterior);
+    if (!expect(playback.updated.size() == updates,
+                "unchanged active curve gain must not issue redundant updates")) {
+        return false;
+    }
+    variables.set("throttle", 0.5F);
+    bank.trigger(playback, "ev_shift", {}, 0.0F, variables, exterior);
+    if (!expect(playback.started.size() == 1 && playback.active.contains(handle) &&
+                    close(playback.started[0].parameters.gain, 0.2F),
+                "retriggering must update the same voice from current curve variables")) {
+        return false;
+    }
+    variables.set("weather", 0.0F);
+    bank.trigger(playback, "ev_shift", {}, 1.0F, variables, exterior);
+    const bool silent = playback.started.size() == 1 && playback.active.contains(handle) &&
+                        close(playback.started[0].parameters.gain, 0.0F);
+    playback.complete(handle);
+    const std::size_t updatesBeforeCompletion = playback.updated.size();
+    bank.updateActiveSounds(playback, variables, exterior);
+    const std::size_t queriesAfterCompletion = playback.queried.size();
+    variables.set("weather", 1.0F);
+    bank.updateActiveSounds(playback, variables, exterior);
+    const bool pruned = playback.updated.size() == updatesBeforeCompletion &&
+                        playback.queried.size() == queriesAfterCompletion;
+    bank.stopAll(playback);
+    return expect(silent && pruned && playback.active.empty(),
+                  "silent voices and completed dynamic one-shots must be handled correctly");
+}
+
+bool checkActiveTriggeredLoopCurves(const std::filesystem::path& root) {
+    const auto path = root / "triggered_loop_curves.cfg";
+    {
+        std::ofstream config(path);
+        config << "[sound]\nengine_loop.wav\n0.8\n[viewpoint]\n1\n"
+                  "[volcurve]\nthrottle\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[volcurve]\n-1\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[trigger]\nev_engine\n";
+    }
+    VehicleSoundBank bank;
+    bank.load(path);
+    Variables variables;
+    variables.set("throttle", 0.5F);
+    FakePlayback playback;
+    bank.trigger(playback, "ev_engine", {}, 0.5F, variables, exterior);
+    if (!expect(playback.started.size() == 1 && playback.started[0].looped &&
+                    close(playback.started[0].parameters.gain, 0.2F),
+                "triggered loop must initially apply named and legacy curves")) {
+        return false;
+    }
+    const SoundPlaybackHandle handle = playback.started[0].handle;
+    variables.set("throttle", 0.8F);
+    bank.updateActiveSounds(playback, variables, exterior);
+    bool passed = expect(playback.started.size() == 1 && playback.active.contains(handle) &&
+                             close(playback.started[0].parameters.gain, 0.32F),
+                         "active loop must update without losing its trigger control value");
+    bank.trigger(playback, "ev_engine", {}, 0.25F, variables, exterior);
+    variables.set("throttle", 0.4F);
+    bank.updateActiveSounds(playback, variables, exterior);
+    passed &= expect(playback.started.size() == 1 && close(playback.started[0].parameters.gain, 0.08F),
+                     "loop updates must retain the latest retrigger control value");
+    bank.updateActiveSounds(playback, variables, interior);
+    passed &= expect(playback.active.contains(handle) &&
+                         close(playback.started[0].parameters.gain, 0.0F),
+                     "active loop must respect viewpoint changes without being restarted");
+    bank.updateActiveSounds(playback, variables, exterior);
+    passed &= expect(playback.active.contains(handle) &&
+                         close(playback.started[0].parameters.gain, 0.08F),
+                     "returning to the matching viewpoint must restore loop gain");
+    bank.trigger(playback, "ev_engine", {}, 0.0F, variables, exterior);
+    variables.set("throttle", 0.8F);
+    bank.updateActiveSounds(playback, variables, exterior);
+    passed &= expect(playback.active.contains(handle) &&
+                         close(playback.started[0].parameters.gain, 0.0F),
+                     "zero retrigger control must silence the live loop and remain applied");
+    bank.stopAll(playback);
+    return passed && expect(playback.active.empty(), "active curve loop cleanup must stop playback");
+}
+
 int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_sound_probe");
@@ -591,7 +765,7 @@ int main() {
                   "[sound]\nConfigured.wav\n0.8\n[trigger]\nev_configured\n"
                   "[trigger]\nev_configured_alias\n[viewpoint]\n2\n[3d]\n1\n2\n3\n40\n"
                   "[conditionSingle]\nenabled\n1\n1\n"
-                  "[volcurve]\ncontrol\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[volcurve]\n-1\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
                   "[loopsound]\nExplicitLoop.wav\n1\ncontrol\n1\n1\n"
                   "[trigger]\nev_explicit_loop\n"
                   "[sound]\nShared_loop.wav\n0.3\n[trigger]\nev_loop_a\n"
@@ -695,6 +869,9 @@ int main() {
 
     bool extendedChecksPassed = checkOneShotLifecycle(configPath);
     extendedChecksPassed &= checkOpenWindowSound(root);
+    extendedChecksPassed &= checkIndependentSpatialAmbientLoops(root);
+    extendedChecksPassed &= checkTriggeredVariableVolumeCurves(root);
+    extendedChecksPassed &= checkActiveTriggeredLoopCurves(root);
     extendedChecksPassed &= checkDefinitionOwnership(ownershipConfigPath);
     extendedChecksPassed &= checkFileOverrides(ownershipConfigPath);
     extendedChecksPassed &= checkTriggeredLoops(ownershipConfigPath);
