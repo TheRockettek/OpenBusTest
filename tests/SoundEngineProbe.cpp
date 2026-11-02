@@ -735,6 +735,76 @@ bool checkActiveTriggeredLoopCurves(const std::filesystem::path& root) {
     return passed && expect(playback.active.empty(), "active curve loop cleanup must stop playback");
 }
 
+bool checkMovingVehicleSources(const std::filesystem::path& root) {
+    const auto path = root / "moving_vehicle.cfg";
+    {
+        std::ofstream config(path);
+        config << "[sound]\nhorn.wav\n1\n[3d]\n1\n2\n3\n80\n"
+                  "[viewpoint]\n4\n[trigger]\nev_horn\n"
+                  "[sound]\nengine_loop.wav\n1\n[3d]\n1\n2\n3\n80\n"
+                  "[viewpoint]\n4\n[trigger]\nev_engine\n"
+                  "[loopsound]\nambient.wav\n1\nrpm\n1000\n"
+                  "[3d]\n1\n2\n3\n80\n[viewpoint]\n4\n";
+    }
+    VehicleSoundBank first;
+    VehicleSoundBank second;
+    first.load(path);
+    second.load(path);
+    BodyPose firstPose{{10.0, 20.0, 30.0}, {0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}};
+    BodyPose secondPose{{100.0, 200.0, 300.0}, {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
+    first.setPose(firstPose);
+    second.setPose(secondPose);
+    Variables variables;
+    variables.set("rpm", 1000.0F);
+    FakePlayback playback;
+    constexpr auto nonPlayer = openbus::rendering::ViewpointContext::NonPlayer;
+    first.trigger(playback, "ev_horn", {}, 0.0F, variables, nonPlayer);
+    first.trigger(playback, "ev_engine", {}, 0.0F, variables, nonPlayer);
+    first.updateAmbient(playback, variables, nonPlayer);
+    second.trigger(playback, "ev_horn", {}, 0.0F, variables, nonPlayer);
+    if (!expect(playback.started.size() == 4,
+                "non-player one-shots, triggered loops, and ambient loops must start")) {
+        return false;
+    }
+    bool passed = true;
+    for (std::size_t index = 0; index < 3; ++index) {
+        passed &= expect(playback.started[index].parameters.position ==
+                             std::array<double, 3>{11.0, 22.0, 33.0} &&
+                             playback.started[index].parameters.maxDistance == 80.0,
+                         "vehicle sources rotate and translate their configured local positions");
+    }
+    passed &= expect(playback.started[3].parameters.position ==
+                         std::array<double, 3>{102.0, 199.0, 303.0},
+                     "two vehicles using the same sounds retain distinct world positions");
+    firstPose.position[0] += 50.0;
+    first.setPose(firstPose);
+    first.updateAmbient(playback, variables, nonPlayer);
+    for (std::size_t index = 0; index < 3; ++index) {
+        passed &= expect(playback.started[index].parameters.position ==
+                             std::array<double, 3>{61.0, 22.0, 33.0},
+                         "moving a vehicle updates all live sounds even without volume curves");
+    }
+    passed &= expect(playback.started.size() == 4,
+                     "moving sources must not restart their playback");
+    passed &= expect(playback.started[3].parameters.position ==
+                         std::array<double, 3>{102.0, 199.0, 303.0},
+                     "moving one bus must not move another bus's sources");
+    first.updateActiveSounds(playback, variables, interior);
+    passed &= expect(close(playback.started[0].parameters.gain, 0.0F) &&
+                         close(playback.started[1].parameters.gain, 0.0F),
+                     "fixed-gain triggered sounds still respond to viewpoint changes");
+    first.updateActiveSounds(playback, variables, nonPlayer);
+    passed &= expect(close(playback.started[0].parameters.gain, 1.0F) &&
+                         close(playback.started[1].parameters.gain, 1.0F),
+                     "returning to the non-player context restores live triggered voices");
+    first.stopAll(playback);
+    passed &= expect(playback.active.size() == 1 &&
+                         playback.active.contains(playback.started[3].handle),
+                     "despawning a vehicle stops its voices without stopping another bus");
+    second.stopAll(playback);
+    return passed;
+}
+
 int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_sound_probe");
@@ -872,6 +942,7 @@ int main() {
     extendedChecksPassed &= checkIndependentSpatialAmbientLoops(root);
     extendedChecksPassed &= checkTriggeredVariableVolumeCurves(root);
     extendedChecksPassed &= checkActiveTriggeredLoopCurves(root);
+    extendedChecksPassed &= checkMovingVehicleSources(root);
     extendedChecksPassed &= checkDefinitionOwnership(ownershipConfigPath);
     extendedChecksPassed &= checkFileOverrides(ownershipConfigPath);
     extendedChecksPassed &= checkTriggeredLoops(ownershipConfigPath);

@@ -422,6 +422,7 @@ struct Vehicle {
     SoundEngine* soundPlayback = nullptr;
     VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
+    RenderViewContext soundViewContext = RenderViewContext::NonPlayer;
     std::vector<Part> pendingParts;
     std::vector<std::shared_ptr<ObjRequest>> deferredObjRequests;
     std::size_t nextDeferredPartIndex = 0;
@@ -450,6 +451,7 @@ struct Vehicle {
     double trafficWheelHalfWidthMeters = 0.0;
     double textureScale = 1;
     double odometerMetres = 0.0;
+    double odometerInitialKilometres = 0.0;
     std::array<double, 2> odometerPosition = {};
     bool odometerPositionInitialized = false;
     bool frustumCulling = true;
@@ -695,14 +697,15 @@ struct Vehicle {
             variables.setString("hof_name", setupOptions.depotName);
             variables.setString("yard", setupOptions.depotName);
         }
-        odometerMetres = setupOptions.initialOdometerMetres.value_or(
-            vehicleConfiguration.hasOdometerInitial
-                ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0
-                : 0.0);
+        odometerMetres = setupOptions.initialOdometerMetres.value_or(0.0);
+        odometerInitialKilometres = vehicleConfiguration.hasOdometerInitial
+                                        ? vehicleConfiguration.odometerInitialKilometres
+                                        : 0.0;
         odometerMetres = std::max(0.0, odometerMetres);
         {
             TraceScope soundTrace("startup", "Vehicle::Vehicle.loadSoundBank");
             soundBank.load(soundConfigPathForVehicle(vehicleConfiguration, isAiVehicle));
+            soundViewContext = isAiVehicle ? RenderViewContext::NonPlayer : soundViewpoint;
         }
         aiDeltaHeight = isAiVehicle && vehicleConfiguration.hasAiDeltaHeight
                             ? vehicleConfiguration.aiDeltaHeight
@@ -711,9 +714,10 @@ struct Vehicle {
             TraceScope scriptsTrace("startup", "Vehicle::Vehicle.createScriptRuntime");
             scripts = std::make_unique<ScriptRuntime>(
                 vehicleConfiguration, variables, simulationState,
-                [this, &soundEngine, &soundViewpoint](
+                [this, &soundEngine](
                     const std::string& name, const std::string& file, double controlValue) {
-                    if (!soundEventsEnabled) {
+                    if (!soundEventsEnabled || mapTrafficRouteFinished ||
+                        (followsMapTrafficRoute && !mapTrafficTileActive)) {
                         return;
                     }
                     if (file.empty() && !soundBank.hasTrigger(name) && name.size() > 4 &&
@@ -721,7 +725,7 @@ struct Vehicle {
                         soundBank.stop(soundEngine, name.substr(0, name.size() - 4));
                     } else {
                         soundBank.trigger(soundEngine, name, file, static_cast<float>(controlValue),
-                                          variables, soundViewpoint);
+                                          variables, soundViewContext);
                     }
                 },
                 [this](float x, float y, float z) -> std::optional<float> {

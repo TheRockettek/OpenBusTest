@@ -45,6 +45,11 @@ struct ScheduledBusState {
     double lastScheduledProgressDiagnosticDistanceMeters = -1.0;
 };
 
+inline bool scheduledBusWaitingForPassengers(const ScheduledBusState& bus) {
+    // Arrival remains latched through boarding, dwell, and the script's door-close handshake.
+    return bus.scheduledTripActive && bus.passengerStopArrived;
+}
+
 inline openbus::map::MapPassengerStopService
 scheduledBusStopService(const ScheduledBusState& bus,
                         const openbus::map::MapPassengerServiceRuntime& service) {

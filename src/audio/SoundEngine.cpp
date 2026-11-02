@@ -197,6 +197,15 @@ struct SoundEngine::Backend {
             }
             clip->samples[sample] = static_cast<std::int16_t>(std::clamp(integer, -32768, 32767));
         }
+        // OpenAL stereo buffers bypass positional attenuation and panning.
+        if (channels == 2) {
+            for (std::size_t frame = 0; frame < frameCount; ++frame) {
+                clip->samples[frame] = openbus::audio::detail::stereoPcm16ToMono(
+                    clip->samples[frame * 2], clip->samples[frame * 2 + 1]);
+            }
+            clip->samples.resize(frameCount);
+            clip->format = AL_FORMAT_MONO16;
+        }
         return clip;
     }
 

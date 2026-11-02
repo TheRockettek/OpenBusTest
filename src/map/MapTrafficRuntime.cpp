@@ -440,12 +440,18 @@ std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, doubl
 }
 
 MapTrafficPose mapTrafficPassengerQueuePose(const MapTrafficPose& stopPose, bool leftHandTraffic,
-                                            std::size_t queueSlot) {
+                                            std::size_t queueSlot,
+                                            std::optional<std::array<double, 3>> stopAnchor) {
     const double row = static_cast<double>(queueSlot / 3);
-    const double column = static_cast<double>(queueSlot % 3) - 1.0;
+    const double column = stopAnchor ? (queueSlot % 3 == 0 ? 0.0 : queueSlot % 3 == 1 ? 1.0 : -1.0)
+                                     : static_cast<double>(queueSlot % 3) - 1.0;
     const auto offset = mapTrafficPassengerWorldOffset(leftHandTraffic, stopPose.headingRadians,
-                                                       2.0 + 0.65 * column, -0.8 * row);
+                                                       (stopAnchor ? 0.0 : 2.0) + 0.65 * column,
+                                                       -0.8 * row);
     MapTrafficPose pose = stopPose;
+    if (stopAnchor) {
+        pose.position = *stopAnchor;
+    }
     pose.position[0] += offset[0];
     pose.position[1] += offset[1];
     return pose;

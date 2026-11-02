@@ -543,6 +543,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 return true;
             }
             if (mapTrafficActorWaitingAtSignal(actor, currentSignalClockSeconds) ||
+                (current->bus &&
+                 openbus::app::scheduledBusWaitingForPassengers(*current->bus)) ||
                 (actor.blockingObstacleIndex.has_value() &&
                  actor.blockingObstacleIndex == playerObstacleIndex)) {
                 return true;
@@ -1664,6 +1666,13 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     " m/s, junction wait=" +
                     std::to_string(trafficVehicle.actor.junctionWaitSeconds) + " s, blocked by=" +
                     openbus::map::mapTrafficBlockReasonName(trafficVehicle.actor.blockReason) +
+                    ", scheduled stop=" +
+                    (trafficVehicle.actor.scheduledStopDistanceMeters
+                         ? std::to_string(*trafficVehicle.actor.scheduledStopDistanceMeters)
+                         : "none") +
+                    ", passenger stop arrived=" +
+                    (trafficVehicle.bus && trafficVehicle.bus->passengerStopArrived ? "yes"
+                                                                                    : "no") +
                     ", position=(" + std::to_string(pose->position[0]) + ", " +
                     std::to_string(pose->position[1]) + "), heading=" +
                     std::to_string(pose->headingRadians) + " rad, blocker=" + blocker + ".");

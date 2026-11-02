@@ -50,7 +50,7 @@ and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Unsupported | Explicit diagnostics; coupling and articulated multi-vehicle behavior are absent. |
 | `[control_cable_front]`, `[control_cable_back]` | Unsupported | Explicit diagnostics; cross-vehicle control/electrical variable transfer is absent. |
 | `[contact_shoe]`, `[rail_body_osc]` | Unsupported | Explicit diagnostics; rail/trolley-specific behavior is absent. |
-| `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Startup selection/number seeding and odometer initialization exist; persistence and the full selection UI do not. |
+| `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Registration selection/number seeding exist. `OPENBUS_ODOMETER_MODE` supports a global shared counter (default), raw distance per `.bus` model, or per-model distance plus `[kmcounter_init]`. Global and model counters persist separately without fleet/registration identities. Full selection UI parity remains incomplete. |
 
 The complete configurable input map and vehicle-family-specific view systems
 also remain incomplete. See [BUS status](IMPLEMENTATION_STATUS_BUS.md).

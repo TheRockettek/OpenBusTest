@@ -83,6 +83,10 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
       assetRequestManager_(std::make_unique<AssetRequestManager>()),
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
+    const char* odometerMode = openbus::getEnvironment("OPENBUS_ODOMETER_MODE");
+    vehicleOdometerMode_ =
+        odometerMode ? openbus::app::parseVehicleOdometerMode(odometerMode)
+                     : openbus::app::parseVehicleOdometerMode();
     try {
         vehicleRegistrationPreferences_ =
             openbus::app::loadVehicleRegistrationPreferences(vehicleRegistrationPreferencesPath_);
@@ -327,11 +331,11 @@ void RenderLoop::persistPlayerOdometer(bool force) {
     lastOdometerPreferenceSave_ = now;
 
     try {
-        const auto key = openbus::app::vehicleOdometerPreferenceKey(
+        openbus::app::setVehicleOdometerReading(
+            vehicleOdometerPreferences_, vehicleOdometerMode_,
             playerVehicle_->setupOptions.vehicleConfigurationPath,
-            playerVehicle_->setupOptions.vehicleNumber.value_or(""),
-            playerVehicle_->setupOptions.registration.value_or(""));
-        vehicleOdometerPreferences_[key] = playerVehicle_->odometerMetres;
+            playerVehicle_->odometerInitialKilometres,
+            playerVehicle_->odometerMetres);
         openbus::app::saveVehicleOdometerPreferences(vehicleOdometerPreferencesPath_,
                                                      vehicleOdometerPreferences_);
         vehicleOdometerPreferencesError_.clear();
@@ -964,6 +968,18 @@ void RenderLoop::SetSunAltitude(double altitudeDegrees) {
 }
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
+    if (model != playerVehicle_) {
+        persistPlayerOdometer(true);
+        if (model != nullptr) {
+            if (!model->setupOptions.vehicleConfigurationPath.empty()) {
+                model->odometerMetres = openbus::app::vehicleOdometerReading(
+                    vehicleOdometerPreferences_, vehicleOdometerMode_,
+                    model->setupOptions.vehicleConfigurationPath,
+                    model->odometerInitialKilometres);
+            }
+            model->odometerPositionInitialized = false;
+        }
+    }
     playerTimetableCatalog_.invalidate();
     playerVehicle_ = model;
     if (playerVehicle_ != nullptr) {
@@ -994,6 +1010,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (!mapRenderer_) {
         TraceScope rendererTrace("map", "RenderLoop::SetMap.createMapRenderer");
         authoredPassengerPositions_.clear();
+        passengerStopAnchors_.clear();
         authoredPassengerQueueCounts_.clear();
         authoredPassengerObjectCount_ = 0;
         reportedPassengerFallbackStops_.clear();

@@ -121,6 +121,22 @@ SoundPlaybackParameters triggeredParameters(const SoundTriggerDefinition& defini
 
 } // namespace
 
+void VehicleSoundBank::setPose(const BodyPose& pose) {
+    pose_ = pose;
+}
+
+SoundPlaybackParameters
+VehicleSoundBank::worldParameters(SoundPlaybackParameters parameters) const {
+    const auto local = parameters.position;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        parameters.position[axis] =
+            pose_.position[axis] + pose_.rotation[axis * 3] * local[0] +
+            pose_.rotation[axis * 3 + 1] * local[1] +
+            pose_.rotation[axis * 3 + 2] * local[2];
+    }
+    return parameters;
+}
+
 void VehicleSoundBank::load(const std::filesystem::path& configPath) {
     if (configPath.empty()) {
         return;
@@ -495,7 +511,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
     for (const SoundTriggerDefinition& definition : definitions) {
         const std::filesystem::path file = resolvedFile(definition);
         const SoundPlaybackParameters parameters =
-            triggeredParameters(definition, controlValue, variables, viewpoint);
+            worldParameters(triggeredParameters(definition, controlValue, variables, viewpoint));
         const float gain = parameters.gain;
         auto& ownedSources = definition.loop ? activeTriggeredLoops_ : activeOneShots_;
         const auto active = ownedSources.find(definition.id);
@@ -518,7 +534,8 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                     playback.update(active->second.handle, parameters);
                 }
                 active->second.controlValue = controlValue;
-                active->second.gain = gain;
+                active->second.definition = definition;
+                active->second.parameters = parameters;
                 continue;
             } else {
                 if (definition.loop) {
@@ -539,17 +556,8 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                        " loop=" + (definition.loop ? "true" : "false"));
         const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);
         if (handle != 0) {
-            const bool hasNamedCurve =
-                std::any_of(definition.volumeCurves.begin(), definition.volumeCurves.end(),
-                            [](const SoundVolumeCurve& curve) {
-                                return !curve.variable.empty() && curve.variable != "-1";
-                            });
             ownedSources.emplace(definition.id,
-                                 ActiveSound{file, handle,
-                                             hasNamedCurve
-                                                 ? std::optional<SoundTriggerDefinition>(definition)
-                                                 : std::nullopt,
-                                             controlValue, gain});
+                                 ActiveSound{file, handle, definition, controlValue, parameters});
         }
     }
 }
@@ -576,12 +584,11 @@ void VehicleSoundBank::stop(SoundPlayback& playback, const std::string& name) {
 void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variables& variables,
                                           openbus::rendering::ViewpointContext viewpoint) {
     const auto update = [&](ActiveSound& sound, bool loop) {
-        if (!sound.dynamicDefinition) {
-            return;
-        }
         const SoundPlaybackParameters parameters =
-            triggeredParameters(*sound.dynamicDefinition, sound.controlValue, variables, viewpoint);
-        if (parameters.gain == sound.gain) {
+            worldParameters(triggeredParameters(sound.definition, sound.controlValue, variables,
+                                                 viewpoint));
+        if (parameters.gain == sound.parameters.gain &&
+            parameters.position == sound.parameters.position) {
             return;
         }
         if (loop) {
@@ -589,7 +596,7 @@ void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variabl
         } else {
             playback.update(sound.handle, parameters);
         }
-        sound.gain = parameters.gain;
+        sound.parameters = parameters;
     };
     for (auto active = activeOneShots_.begin(); active != activeOneShots_.end();) {
         if (!playback.isPlaying(active->second.handle)) {
@@ -644,8 +651,10 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
         }
         desired.emplace(definition.id,
                         DesiredLoop{file,
-                                    {static_cast<float>(gain), static_cast<float>(pitch),
-                                     definition.position, definition.maxDistance}});
+                                    worldParameters({static_cast<float>(gain),
+                                                     static_cast<float>(pitch),
+                                                     definition.position,
+                                                     definition.maxDistance})});
     }
 
     for (auto active = activeAmbientLoops_.begin(); active != activeAmbientLoops_.end();) {

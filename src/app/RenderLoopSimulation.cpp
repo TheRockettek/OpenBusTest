@@ -145,6 +145,40 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         mapRenderer_->updateTrafficActors(std::clamp(frameTimeStep_, 0.0, 0.25));
     }
     updateTrafficDriving(simulation, std::clamp(frameTimeStep_, 0.0, 0.25));
+    for (const auto& vehicle : vehicles_) {
+        vehicle->soundViewContext =
+            vehicle.get() == playerVehicle_ ? soundViewpoint_ : RenderViewContext::NonPlayer;
+        if (vehicle->mapTrafficRouteFinished ||
+            (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive)) {
+            vehicle->soundBank.stopAll(soundEngine_);
+            continue;
+        }
+        BodyPose pose;
+        if (vehicle.get() == playerVehicle_) {
+            pose = simulation.chassisPose();
+            pose.position = transformLocalPoint(pose, {0.0, 0.0, vehicle->modelOffsetZ});
+        } else {
+            VehiclePlacement placement = vehicle->placement;
+            if (mapRenderer_ != nullptr && !vehicle->followsMapTrafficRoute) {
+                placement.position[2] =
+                    mapRenderer_->terrainHeightAt(placement.position[0], placement.position[1])
+                        .value_or(placement.position[2]);
+            }
+            const auto rotation = multiplyMatrix4(
+                rotationMatrix(placement.yawDegrees, 0.0, 0.0, 1.0),
+                multiplyMatrix4(rotationMatrix(-placement.pitchDegrees, 0.0, 1.0, 0.0),
+                                rotationMatrix(placement.rollDegrees, 1.0, 0.0, 0.0)));
+            pose.position =
+                makeModelRootPlacement(placement, vehicle->modelOffsetZ).position;
+            pose.rotation = {rotation[0], rotation[4], rotation[8],
+                             rotation[1], rotation[5], rotation[9],
+                             rotation[2], rotation[6], rotation[10]};
+            pose.position = transformLocalPoint(pose, {0.0, 0.0, vehicle->modelOffsetZ});
+        }
+        vehicle->soundBank.setPose(pose);
+        vehicle->soundBank.updateActiveSounds(soundEngine_, vehicle->variables,
+                                              vehicle->soundViewContext);
+    }
     {
         const double passengerServiceTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
         std::unordered_map<Vehicle*, int> sharedQueueStops;
@@ -428,8 +462,8 @@ void RenderLoop::updateScripts() {
                 if (vehicle.get() != playerVehicle_ && !vehicle->mapTrafficRouteFinished &&
                     (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
                     vehicle->updateScripts(true);
-                    vehicle->soundBank.updateActiveSounds(soundEngine_, vehicle->variables,
-                                                          soundViewpoint_);
+                    vehicle->soundBank.updateAmbient(soundEngine_, vehicle->variables,
+                                                      vehicle->soundViewContext);
                 }
             }
         }

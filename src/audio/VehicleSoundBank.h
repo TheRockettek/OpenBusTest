@@ -1,12 +1,12 @@
 #pragma once
 
 #include "audio/SoundPlayback.h"
+#include "core/BusTypes.h"
 #include "core/Viewpoint.h"
 
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -56,6 +56,7 @@ class VehicleSoundBank {
     // Reload resets ownership without a playback reference. Call stopAll(playback) first
     // when existing sources must be cancelled; no playback pointer is retained here.
     void load(const std::filesystem::path& configPath);
+    void setPose(const BodyPose& pose);
     bool hasTrigger(const std::string& name) const;
     void trigger(SoundPlayback& playback, const std::string& name,
                  const std::filesystem::path& overrideFile, float controlValue,
@@ -73,14 +74,15 @@ class VehicleSoundBank {
     struct ActiveSound {
         std::filesystem::path file;
         SoundPlaybackHandle handle = 0;
-        std::optional<SoundTriggerDefinition> dynamicDefinition;
+        SoundTriggerDefinition definition;
         float controlValue = 0.0F;
-        float gain = 0.0F;
+        SoundPlaybackParameters parameters;
     };
 
     static bool conditionsAllow(const SoundTriggerDefinition& definition,
                                 const Variables& variables);
     std::filesystem::path resolvedFile(const SoundTriggerDefinition& definition) const;
+    SoundPlaybackParameters worldParameters(SoundPlaybackParameters parameters) const;
     void stopTriggeredLoop(SoundPlayback& playback, SoundDefinitionId id);
     void stopOneShot(SoundPlayback& playback, SoundDefinitionId id);
     void stopAmbientLoop(SoundPlayback& playback, SoundDefinitionId id);
@@ -92,4 +94,5 @@ class VehicleSoundBank {
     std::unordered_map<SoundDefinitionId, ActiveSound> activeTriggeredLoops_;
     std::unordered_map<SoundDefinitionId, SoundPlaybackHandle> activeAmbientLoops_;
     std::unordered_map<SoundDefinitionId, ActiveSound> activeOneShots_;
+    BodyPose pose_{{}, {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
 };

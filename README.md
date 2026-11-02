@@ -784,6 +784,25 @@ $env:OPENBUS_MODEL_CONFIG = "Vehicles/Caetano Levante/Model/model_caetano.cfg"
 ./build-ode/Release/OpenBus.exe
 ```
 
+Set `OPENBUS_ODOMETER_MODE` before launching to choose the player odometer:
+
+| Value | Behavior |
+| --- | --- |
+| `global` (default when unset) | One shared counter across all bus models, starting at zero. |
+| `vehicle` | A raw-distance counter per normalized `.bus` configuration path, starting at zero. |
+| `vehicle-default` | The same per-model raw distance plus the bus's `[kmcounter_init]` kilometres (zero if absent). |
+
+Fleet numbers and registrations do not affect these counters. The global and
+per-model counters are saved separately in `OpenBus_odometer_preferences.txt`;
+only the selected counter advances. The two per-model modes share raw mileage,
+so changing modes never adds the configured starting mileage twice. Existing
+version-2 model distances are retained, with the new global counter starting at
+zero. Invalid mode values produce a startup error.
+
+```powershell
+$env:OPENBUS_ODOMETER_MODE = "vehicle-default"
+```
+
 Every rendered vehicle must provide a `VehiclePlacement` containing its world
 `x/y/z` position and yaw in degrees. The renderer can load multiple vehicles in
 one process by calling `RenderLoop::AddVehicle` once per `.bus`/`.cfg` pair. The

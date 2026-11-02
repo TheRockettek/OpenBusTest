@@ -226,6 +226,23 @@ void verifyPassengerSideOffsets() {
                 requireNear(pose.position[2], stopPose.position[2],
                             "queue markers retain stop elevation");
                 requireNear(pose.headingRadians, heading, "queue markers retain stop heading");
+                const std::array<double, 3> editorAnchor = {42.0, -30.0, 7.0};
+                const auto anchored =
+                    mapTrafficPassengerQueuePose(stopPose, leftHandTraffic, slot, editorAnchor);
+                if (slot == 0) {
+                    require(anchored.position == editorAnchor,
+                            "fallback queue starts exactly at the editor bus-stop position");
+                }
+                const double anchoredColumn = slot % 3 == 0 ? 0.0 : slot % 3 == 1 ? 1.0 : -1.0;
+                const auto anchoredOffset = mapTrafficPassengerWorldOffset(
+                    leftHandTraffic, heading, 0.65 * anchoredColumn,
+                    -0.8 * static_cast<double>(slot / 3));
+                requireNear(anchored.position[0], editorAnchor[0] + anchoredOffset[0],
+                            "fallback queue spacing is relative to the editor stop, not the road");
+                requireNear(anchored.position[1], editorAnchor[1] + anchoredOffset[1],
+                            "fallback queue does not add a roadside offset to the editor stop");
+                requireNear(anchored.position[2], editorAnchor[2],
+                            "fallback passengers retain the editor stop elevation");
             }
         }
     }
@@ -391,6 +408,35 @@ void verifyPassengerServiceRetirement() {
 }
 
 void verifyPassengerStopDepartureHandshake() {
+    {
+        openbus::app::ScheduledBusState bus;
+        bus.scheduledTripActive = true;
+        require(!openbus::app::scheduledBusWaitingForPassengers(bus),
+                "a bus stopped between passenger calls is still eligible for stuck cleanup");
+        bus.passengerStopArrived = true;
+        require(openbus::app::scheduledBusWaitingForPassengers(bus),
+                "passenger service must not count toward the deadlock timeout");
+        openbus::map::MapPassengerServiceRuntime service(1);
+        require(service.arrive({.stopId = 10, .dwellSeconds = 20.0}),
+                "long-dwell fixture arrives at a passenger stop");
+        for (int second = 0; second < 20; ++second) {
+            require(service.dwelling() &&
+                        openbus::app::scheduledBusWaitingForPassengers(bus),
+                    "a valid dwell longer than the 15-second stuck timeout stays exempt");
+            service.advance(1.0);
+        }
+        require(!service.dwelling(), "long passenger dwell eventually completes");
+        bus.passengerStopDepartureRequested = true;
+        require(openbus::app::scheduledBusWaitingForPassengers(bus),
+                "waiting for the door-close handshake remains a legitimate stop");
+        openbus::app::beginScheduledBusRetirementRun(bus);
+        require(!openbus::app::scheduledBusWaitingForPassengers(bus),
+                "a retirement run no longer inherits the passenger-wait exemption");
+        bus.passengerStopArrived = true;
+        openbus::app::finishScheduledBusTrip(bus, 0.0);
+        require(!openbus::app::scheduledBusWaitingForPassengers(bus),
+                "an inactive trip cannot suppress stuck detection");
+    }
     using namespace openbus::map;
     require(mapTrafficPassengerStopDepartureAction(false, false, false, 1.0) ==
                     MapTrafficPassengerStopDepartureAction::None &&

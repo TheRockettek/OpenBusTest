@@ -387,13 +387,6 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
         mapRegistrationInput_.data());
     request.setupOptions.vehicleNumber = registration.vehicleNumber;
     request.setupOptions.registration = registration.registration;
-    const auto odometerKey = openbus::app::vehicleOdometerPreferenceKey(
-        request.configurationPath, request.setupOptions.vehicleNumber.value_or(""),
-        request.setupOptions.registration.value_or(""));
-    if (const auto saved = vehicleOdometerPreferences_.find(odometerKey);
-        saved != vehicleOdometerPreferences_.end()) {
-        request.setupOptions.initialOdometerMetres = saved->second;
-    }
     return request;
 }
 

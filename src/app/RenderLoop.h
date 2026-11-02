@@ -295,6 +295,8 @@ class RenderLoop {
     bool vehicleRegistrationPreferencesLoaded_ = true;
     std::string vehicleRegistrationPreferencesError_;
     openbus::app::VehicleOdometerPreferences vehicleOdometerPreferences_;
+    openbus::app::VehicleOdometerMode vehicleOdometerMode_ =
+        openbus::app::VehicleOdometerMode::Global;
     std::filesystem::path vehicleOdometerPreferencesPath_ = "OpenBus_odometer_preferences.txt";
     bool vehicleOdometerPreferencesLoaded_ = true;
     std::string vehicleOdometerPreferencesError_;
@@ -459,6 +461,7 @@ class RenderLoop {
     openbus::app::PlayerTimetableController playerTimetable_;
     bool playerPassengerServiceEnabled_ = true;
     std::map<int, std::vector<openbus::map::MapTrafficPose>> authoredPassengerPositions_;
+    std::map<int, std::array<double, 3>> passengerStopAnchors_;
     std::map<int, std::size_t> authoredPassengerQueueCounts_;
     std::size_t authoredPassengerObjectCount_ = 0;
     std::unordered_set<int> reportedPassengerFallbackStops_;

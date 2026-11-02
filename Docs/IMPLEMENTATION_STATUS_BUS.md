@@ -18,7 +18,7 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | `[control_cable_front]`, `[control_cable_back]` | Unsupported | Recognized with explicit diagnostics; no cross-vehicle control/electrical transfer. |
 | `[contact_shoe]`, `[rail_body_osc]` | Unsupported | Recognized with explicit diagnostics; rail/trolley-specific behavior is absent. |
 | `[sound_ai]` | Partial | AI vehicle initialization selects the authored AI sound bank and falls back to `[sound]` when absent. AI ambient/spatial playback parity remains unverified. See [audio status](IMPLEMENTATION_STATUS_AUDIO.md). |
-| `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Startup selection/number seeding and odometer initialization exist; persistence and the full OMSI selection UI do not. |
+| `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Registration selection/number seeding exist. `OPENBUS_ODOMETER_MODE` selects `global` (default, shared across all models), `vehicle` (raw distance per `.bus` path), or `vehicle-default` (per-model raw distance plus `[kmcounter_init]`). Raw counters start at zero; fleet numbers and registrations do not affect them. Version-3 persistence keeps global and model counters separately; version-2 mileage is retained, while version-1 identity-based counters reset on migration. Full OMSI selection UI parity remains incomplete. |
 
 Other BUS gaps include the complete configurable input map and vehicle-family-specific view systems. The player runtime currently dispatches physical W/A/S/D transitions to scripts rather than implementing every OMSI input-context record.
 

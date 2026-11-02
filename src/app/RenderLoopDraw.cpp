@@ -1176,17 +1176,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     chassis.rotation[1] * x + chassis.rotation[4] * y + chassis.rotation[7] * z,
                     chassis.rotation[2] * x + chassis.rotation[5] * y + chassis.rotation[8] * z};
             };
-            const auto toLocalDirection = [&chassis](const std::array<double, 3>& world) {
-                return std::array<double, 3>{
-                    chassis.rotation[0] * world[0] + chassis.rotation[3] * world[1] +
-                        chassis.rotation[6] * world[2],
-                    chassis.rotation[1] * world[0] + chassis.rotation[4] * world[1] +
-                        chassis.rotation[7] * world[2],
-                    chassis.rotation[2] * world[0] + chassis.rotation[5] * world[1] +
-                        chassis.rotation[8] * world[2]};
-            };
-            soundEngine_.setListenerPose(toLocalPoint(eyeWorld), toLocalDirection(forwardWorld),
-                                         toLocalDirection(upWorld));
+            soundEngine_.setListenerPose(eyeWorld, forwardWorld, upWorld);
             reflectionViewerEyeLocal_ = toLocalPoint(eyeWorld);
             reflectionViewerEyeLocalValid_ = true;
         }
@@ -1407,9 +1397,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             requestedPassengerCounts != authoredPassengerQueueCounts_) {
             std::vector<openbus::map::MapPassengerStopAnchor> stops;
             std::vector<openbus::map::MapPassengerWaitingArea> areas;
+            passengerStopAnchors_.clear();
             for (const auto& object : objects) {
                 if (object.busStop && object.objectId.has_value()) {
                     stops.push_back({*object.objectId, object.position});
+                    passengerStopAnchors_.emplace(*object.objectId, object.position);
                 }
                 if (object.passengerCabin && !object.passengerPositions.empty()) {
                     areas.push_back({object.objectId.value_or(0), object.position,
@@ -1428,8 +1420,12 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         if (authored != authoredPassengerPositions_.end() && !authored->second.empty()) {
             return authored->second[queueSlot % authored->second.size()];
         }
-        return openbus::map::mapTrafficPassengerQueuePose(stopPose, mapRenderer_->leftHandTraffic(),
-                                                          queueSlot);
+        const auto anchor = passengerStopAnchors_.find(stopId);
+        return openbus::map::mapTrafficPassengerQueuePose(
+            stopPose, mapRenderer_->leftHandTraffic(), queueSlot,
+            anchor != passengerStopAnchors_.end()
+                ? std::optional<std::array<double, 3>>(anchor->second)
+                : std::nullopt);
     };
     struct ScheduledStopRenderCandidate {
         openbus::map::MapTrafficPose pose;
@@ -1531,7 +1527,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     if (!hasAuthored && reportedPassengerFallbackStops_.insert(stopId).second) {
                         gameLog.Warning("No authored passenger waiting area matched stop " +
                                         std::to_string(stopId) +
-                                        "; using the generated roadside queue");
+                                        (passengerStopAnchors_.contains(stopId)
+                                             ? "; using a queue at the editor bus-stop position"
+                                             : "; editor bus-stop position unavailable; using "
+                                               "the generated roadside queue"));
                     }
                     for (std::size_t passenger = 0; passenger < queue->second; ++passenger) {
                         const std::size_t queueSlot =
