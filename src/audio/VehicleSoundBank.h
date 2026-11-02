@@ -57,6 +57,7 @@ class VehicleSoundBank {
     // when existing sources must be cancelled; no playback pointer is retained here.
     void load(const std::filesystem::path& configPath);
     void setPose(const BodyPose& pose);
+    void setListenerOutsideGain(float gain);
     bool hasTrigger(const std::string& name) const;
     void trigger(SoundPlayback& playback, const std::string& name,
                  const std::filesystem::path& overrideFile, float controlValue,
@@ -94,5 +95,6 @@ class VehicleSoundBank {
     std::unordered_map<SoundDefinitionId, ActiveSound> activeTriggeredLoops_;
     std::unordered_map<SoundDefinitionId, SoundPlaybackHandle> activeAmbientLoops_;
     std::unordered_map<SoundDefinitionId, ActiveSound> activeOneShots_;
+    float listenerOutsideGain_ = 1.0F;
     BodyPose pose_{{}, {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
 };

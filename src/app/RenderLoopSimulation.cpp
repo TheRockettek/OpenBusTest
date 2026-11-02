@@ -144,6 +144,7 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
+    updateNonPlayerSoundListenerGain();
     if (mapRenderer_ != nullptr) {
         TraceScope trafficActorTrace("traffic", "MapRenderer::updateTrafficActors");
         mapRenderer_->updateTrafficActors(std::clamp(frameTimeStep_, 0.0, 0.25));
@@ -273,6 +274,19 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         if (lastDrivetrainDiagnosticTime_ < 0.0 || now - lastDrivetrainDiagnosticTime_ >= 1.0) {
             lastDrivetrainDiagnosticTime_ = now;
             logDrivetrainDiagnosticVariables();
+        }
+    }
+}
+
+void RenderLoop::updateNonPlayerSoundListenerGain() {
+    const float outsideGain =
+        playerVehicle_ != nullptr &&
+                soundViewpoint_ == openbus::rendering::ViewpointContext::PlayerInterior
+            ? std::clamp(playerVehicle_->variables.get("snd_outsidevol"), 0.0F, 1.0F)
+            : 1.0F;
+    for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+        if (vehicle.get() != playerVehicle_) {
+            vehicle->soundBank.setListenerOutsideGain(outsideGain);
         }
     }
 }
@@ -452,6 +466,8 @@ void RenderLoop::updateScripts() {
             droppedScriptTimeSinceDiagnostic_ = 0.0;
         }
     }
+
+    updateNonPlayerSoundListenerGain();
 
     const double aiScriptTimeStep = 1.0 / AI_VEHICLE_SCRIPT_RATE_HZ;
     const ScriptTickSchedule aiSchedule =

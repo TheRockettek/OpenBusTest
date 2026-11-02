@@ -563,6 +563,55 @@ bool checkOpenWindowSound(const std::filesystem::path& root) {
     return result;
 }
 
+bool checkNonPlayerSoundsRespectListenerWindow(const std::filesystem::path& root) {
+    const auto path = root / "non_player_window_mix.cfg";
+    {
+        std::ofstream config(path);
+        config << "[sound]\ntraffic_engine.wav\n0.8\n[viewpoint]\n4\n[loop]\n"
+                  "[trigger]\nev_traffic_engine\n"
+                  "[sound]\ntraffic_horn.wav\n0.6\n[viewpoint]\n4\n"
+                  "[trigger]\nev_traffic_horn\n"
+                  "[loopsound]\ntraffic_ambient.wav\n0.4\nrpm\n1000\n[viewpoint]\n4\n";
+    }
+    VehicleSoundBank bank;
+    bank.load(path);
+    Variables variables;
+    variables.set("rpm", 1000.0F);
+    FakePlayback playback;
+    constexpr auto nonPlayer = openbus::rendering::ViewpointContext::NonPlayer;
+
+    bank.setListenerOutsideGain(0.0F);
+    bank.trigger(playback, "ev_traffic_engine", {}, 1.0F, variables, nonPlayer);
+    bank.trigger(playback, "ev_traffic_horn", {}, 1.0F, variables, nonPlayer);
+    bank.updateAmbient(playback, variables, nonPlayer);
+    if (!expect(playback.started.size() == 1 && playback.started[0].looped &&
+                    playback.started[0].parameters.gain == 0.0F,
+                "closed player windows must mute non-player sounds without losing triggered loops")) {
+        return false;
+    }
+
+    bank.setListenerOutsideGain(0.25F);
+    bank.updateAmbient(playback, variables, nonPlayer);
+    bank.trigger(playback, "ev_traffic_horn", {}, 1.0F, variables, nonPlayer);
+    if (!expect(playback.started.size() == 3 &&
+                    close(playback.started[0].parameters.gain, 0.2F) &&
+                    close(playback.started[1].parameters.gain, 0.25F) &&
+                    close(playback.started[2].parameters.gain, 0.15F),
+                "opening the player window must restore and scale traffic loops and one-shots")) {
+        return false;
+    }
+
+    bank.setListenerOutsideGain(0.75F);
+    bank.updateAmbient(playback, variables, nonPlayer);
+    const bool result =
+        expect(close(playback.started[0].parameters.gain, 0.6F) &&
+                   close(playback.started[1].parameters.gain, 0.75F) &&
+                   close(playback.started[2].parameters.gain, 0.45F),
+               "changing the player window mix must update active traffic sounds in place");
+    bank.stopAll(playback);
+    return result;
+}
+
 bool checkIndependentSpatialAmbientLoops(const std::filesystem::path& root) {
     const auto path = root / "spatial_ambient.cfg";
     {
@@ -957,6 +1006,7 @@ int main() {
 
     bool extendedChecksPassed = checkOneShotLifecycle(configPath);
     extendedChecksPassed &= checkOpenWindowSound(root);
+    extendedChecksPassed &= checkNonPlayerSoundsRespectListenerWindow(root);
     extendedChecksPassed &= checkIndependentSpatialAmbientLoops(root);
     extendedChecksPassed &= checkTriggeredVariableVolumeCurves(root);
     extendedChecksPassed &= checkActiveTriggeredLoopCurves(root);

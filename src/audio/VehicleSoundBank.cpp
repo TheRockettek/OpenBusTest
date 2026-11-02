@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
@@ -129,6 +130,13 @@ SoundPlaybackParameters triggeredParameters(const SoundTriggerDefinition& defini
 
 void VehicleSoundBank::setPose(const BodyPose& pose) {
     pose_ = pose;
+}
+
+void VehicleSoundBank::setListenerOutsideGain(float gain) {
+    if (!std::isfinite(gain)) {
+        throw std::invalid_argument("Listener outside sound gain must be finite");
+    }
+    listenerOutsideGain_ = std::clamp(gain, 0.0F, 1.0F);
 }
 
 SoundPlaybackParameters
@@ -516,13 +524,22 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
     }
     for (const SoundTriggerDefinition& definition : definitions) {
         const std::filesystem::path file = resolvedFile(definition);
-        const SoundPlaybackParameters parameters =
+        SoundPlaybackParameters parameters =
             worldParameters(triggeredParameters(definition, controlValue, variables, viewpoint));
+        const float sourceGain = parameters.gain;
+        const float listenerGain =
+            viewpoint == openbus::rendering::ViewpointContext::NonPlayer
+                ? listenerOutsideGain_
+                : 1.0F;
+        parameters.gain *= listenerGain;
         const float gain = parameters.gain;
+        const bool startMutedLoop =
+            definition.loop && listenerGain == 0.0F && sourceGain > 0.0F;
         auto& ownedSources = definition.loop ? activeTriggeredLoops_ : activeOneShots_;
         const auto active = ownedSources.find(definition.id);
         if (gain <= 0.0 && definition.loop &&
-            (active == ownedSources.end() || pathKey(active->second.file) != pathKey(file))) {
+            (active == ownedSources.end() || pathKey(active->second.file) != pathKey(file)) &&
+            !startMutedLoop) {
             continue;
         }
         if (active != ownedSources.end()) {
@@ -550,7 +567,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                 ownedSources.erase(active);
             }
         }
-        if (gain <= 0.0) {
+        if (gain <= 0.0 && !startMutedLoop) {
             continue;
         }
         const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);
@@ -583,9 +600,12 @@ void VehicleSoundBank::stop(SoundPlayback& playback, const std::string& name) {
 void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variables& variables,
                                           openbus::rendering::ViewpointContext viewpoint) {
     const auto update = [&](ActiveSound& sound, bool loop) {
-        const SoundPlaybackParameters parameters =
+        SoundPlaybackParameters parameters =
             worldParameters(triggeredParameters(sound.definition, sound.controlValue, variables,
                                                  viewpoint));
+        if (viewpoint == openbus::rendering::ViewpointContext::NonPlayer) {
+            parameters.gain *= listenerOutsideGain_;
+        }
         if (parameters.gain == sound.parameters.gain &&
             parameters.pitch == sound.parameters.pitch &&
             parameters.position == sound.parameters.position &&
@@ -625,7 +645,11 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
     std::unordered_map<SoundDefinitionId, DesiredLoop> desired;
     desired.reserve(untriggeredLoopSounds_.size());
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
-        const double viewGain = viewpointGain(definition, variables, viewpoint);
+        const double listenerGain =
+            viewpoint == openbus::rendering::ViewpointContext::NonPlayer
+                ? listenerOutsideGain_
+                : 1.0;
+        const double viewGain = viewpointGain(definition, variables, viewpoint) * listenerGain;
         if (viewGain <= 0.0 || !conditionsAllow(definition, variables)) {
             continue;
         }

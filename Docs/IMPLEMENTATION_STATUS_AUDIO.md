@@ -8,7 +8,7 @@ Scope: player/AI sound references in `.bus` files, sound CFG records, playback/t
 | --- | --- | --- |
 | `[sound]`, `[trigger]` | Active subset | Files, base gain, trigger aliases, and one-shot/loop playback are supported. An unknown trigger is logged and does not play. This does not mean every trigger name used by OMSI scripts exists in the loaded bank. |
 | `[loop]`, `[looped]`, `[noloop]` | Active subset | These markers change the configured sound's loop state. Full native trigger/channel ownership parity is not established. |
-| `[viewpoint]` | Active subset | Sound playback uses the exterior/interior/non-player mask. Exterior sounds can also reach the player interior at the script's `Snd_OutsideVol` gain; zero keeps them excluded. |
+| `[viewpoint]` | Active subset | Sound playback uses the exterior/interior/non-player mask. Player-vehicle exterior sounds use the script's `Snd_OutsideVol` gain inside the bus; non-player vehicle sounds heard inside use the player's same listener-side gain. Zero keeps exterior sources excluded. |
 | `[3d]` | Partial | Local source positions are transformed by each vehicle's world pose and updated as it moves, against a world-space listener. Exterior and non-player sounds use inverse-distance rolloff with a 4 m reference distance and at least a 60 m max distance; larger authored `[3d]` ranges are preserved. This gives approximately 20% gain at 20 m and 10% at 40 m, before configured sound gain. Player-vehicle sounds disable distance rolloff in the interior mix and keep listener orientation aligned with the bus, so looking around does not pan cabin sources away. Ambient definitions using the same file retain independent positions and controls. Full OMSI spatialization, attenuation, orientation, and per-record field semantics are not verified. |
 | `[volcurve]`, `[pnt]` | Partial | Triggered sounds and ambient loops multiply the outputs of named curves evaluated against their script variables. Active player and AI triggered voices with named curves update as variables change; an unnamed or `-1` trigger curve retains the existing stack-value fallback. Complete curve/control semantics and OMSI parity remain unverified. |
 | `[conditionSingle]` | Active subset | A single variable comparison can gate a sound; comparison codes 0–5 are supported. More complex condition/group logic is not provided. |
@@ -21,8 +21,10 @@ Unknown authored triggers remain a content gap rather than a missing CFG keyword
 The DL05's sound-volume script derives `Snd_OutsideVol` from its doors and driver
 window. Ambient exterior loops update their gain as those openings move and stop
 when it returns to zero; newly triggered exterior sounds use the same multiplier.
-Interior sounds and the exterior camera retain their configured gain. This is a
-volume mix, not acoustic occlusion or low-pass filtering.
+Non-player vehicle sounds heard from the player interior use that same listener
+mix, so passing traffic is attenuated by the player's closed windows and becomes
+more audible as they open. Interior sounds and the exterior camera retain their
+configured gain. This is a volume mix, not acoustic occlusion or low-pass filtering.
 
 ## BUS audio references
 

@@ -249,6 +249,7 @@ class RenderLoop {
   private:
     static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset);
     bool isExteriorView() const;
+    void updateNonPlayerSoundListenerGain();
     const VehicleCamera* currentVehicleCamera() const;
     void selectVehicleCamera(int direction);
     bool selectDriverCameraView(int driverViewIndex);
