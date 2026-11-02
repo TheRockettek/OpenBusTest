@@ -11,6 +11,8 @@ struct SoundPlaybackParameters {
     float pitch = 1.0F;
     std::array<double, 3> position = {};
     double maxDistance = 0.0;
+    float rolloffFactor = 1.0F;
+    float referenceDistance = 1.0F;
 };
 
 class SoundPlayback {

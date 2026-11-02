@@ -1176,7 +1176,15 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     chassis.rotation[1] * x + chassis.rotation[4] * y + chassis.rotation[7] * z,
                     chassis.rotation[2] * x + chassis.rotation[5] * y + chassis.rotation[8] * z};
             };
-            soundEngine_.setListenerPose(eyeWorld, forwardWorld, upWorld);
+            std::array<double, 3> soundForwardWorld = forwardWorld;
+            std::array<double, 3> soundUpWorld = upWorld;
+            if (!isExteriorView() && playerVehicle_ != nullptr) {
+                soundForwardWorld = {chassis.rotation[0], chassis.rotation[3],
+                                     chassis.rotation[6]};
+                soundUpWorld = {chassis.rotation[2], chassis.rotation[5],
+                                chassis.rotation[8]};
+            }
+            soundEngine_.setListenerPose(eyeWorld, soundForwardWorld, soundUpWorld);
             reflectionViewerEyeLocal_ = toLocalPoint(eyeWorld);
             reflectionViewerEyeLocalValid_ = true;
         }

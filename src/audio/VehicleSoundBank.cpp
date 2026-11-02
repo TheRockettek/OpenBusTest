@@ -15,6 +15,9 @@
 
 namespace {
 
+constexpr double EXTERIOR_SOUND_REFERENCE_DISTANCE = 4.0;
+constexpr double EXTERIOR_SOUND_MIN_MAX_DISTANCE = 60.0;
+
 Logger soundLog = Logger("Sound");
 
 std::string lower(std::string value) {
@@ -115,8 +118,11 @@ SoundPlaybackParameters triggeredParameters(const SoundTriggerDefinition& defini
                                 : variables.get(curve.variable);
         gain *= evaluateCurve(curve.points, input);
     }
+    const float rolloff =
+        viewpoint == openbus::rendering::ViewpointContext::PlayerInterior ? 0.0F : 1.0F;
     return {static_cast<float>(std::clamp(gain, 0.0, 1.0)), 1.0F, definition.position,
-            definition.maxDistance};
+            (std::max)(definition.maxDistance, EXTERIOR_SOUND_MIN_MAX_DISTANCE), rolloff,
+            static_cast<float>(EXTERIOR_SOUND_REFERENCE_DISTANCE)};
 }
 
 } // namespace
@@ -517,8 +523,6 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         const auto active = ownedSources.find(definition.id);
         if (gain <= 0.0 && definition.loop &&
             (active == ownedSources.end() || pathKey(active->second.file) != pathKey(file))) {
-            soundLog.Debug("Skipping silent sound: trigger=" + name +
-                           " gain=" + std::to_string(gain));
             continue;
         }
         if (active != ownedSources.end()) {
@@ -547,13 +551,8 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
             }
         }
         if (gain <= 0.0) {
-            soundLog.Debug("Skipping silent sound: trigger=" + name +
-                           " gain=" + std::to_string(gain));
             continue;
         }
-        soundLog.Debug("Sound playback requested: trigger=" + name + " file=" + file.string() +
-                       " gain=" + std::to_string(gain) +
-                       " loop=" + (definition.loop ? "true" : "false"));
         const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);
         if (handle != 0) {
             ownedSources.emplace(definition.id,
@@ -588,7 +587,10 @@ void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variabl
             worldParameters(triggeredParameters(sound.definition, sound.controlValue, variables,
                                                  viewpoint));
         if (parameters.gain == sound.parameters.gain &&
-            parameters.position == sound.parameters.position) {
+            parameters.pitch == sound.parameters.pitch &&
+            parameters.position == sound.parameters.position &&
+            parameters.maxDistance == sound.parameters.maxDistance &&
+            parameters.rolloffFactor == sound.parameters.rolloffFactor) {
             return;
         }
         if (loop) {
@@ -654,7 +656,14 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
                                     worldParameters({static_cast<float>(gain),
                                                      static_cast<float>(pitch),
                                                      definition.position,
-                                                     definition.maxDistance})});
+                                                     (std::max)(definition.maxDistance,
+                                                                EXTERIOR_SOUND_MIN_MAX_DISTANCE),
+                                                     viewpoint == openbus::rendering::ViewpointContext::
+                                                                      PlayerInterior
+                                                         ? 0.0F
+                                                         : 1.0F,
+                                                     static_cast<float>(
+                                                         EXTERIOR_SOUND_REFERENCE_DISTANCE)})});
     }
 
     for (auto active = activeAmbientLoops_.begin(); active != activeAmbientLoops_.end();) {

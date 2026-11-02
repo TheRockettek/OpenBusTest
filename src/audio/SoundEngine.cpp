@@ -17,10 +17,12 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -71,6 +73,22 @@ std::array<float, 3> velocityBetween(const std::array<double, 3>& current,
             static_cast<float>(velocity[2])};
 }
 
+std::string formatWorldPosition(const std::array<double, 3>& position) {
+    std::ostringstream result;
+    result << std::fixed << std::setprecision(2) << '(' << position[0] << ", " << position[1]
+           << ", " << position[2] << ')';
+    return result.str();
+}
+
+double distanceBetween(const std::array<double, 3>& first,
+                       const std::array<double, 3>& second) {
+    return std::hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
+}
+
+bool withinLoggingRange(double distance, double maxDistance) {
+    return maxDistance <= 0.0 || distance <= maxDistance;
+}
+
 } // namespace
 
 struct SoundEngine::Backend {
@@ -84,8 +102,10 @@ struct SoundEngine::Backend {
     struct ActiveSource {
         SoundPlaybackHandle handle = 0;
         ALuint source = 0;
+        std::filesystem::path path;
         bool loop = false;
         std::array<double, 3> lastPosition = {};
+        std::array<double, 3> lastLoggedPosition = {};
         std::chrono::steady_clock::time_point lastPositionUpdate = {};
     };
 
@@ -97,6 +117,7 @@ struct SoundEngine::Backend {
     SoundPlaybackHandle nextHandle = 1;
     bool dopplerEnabled = false;
     bool hasListenerPosition = false;
+    bool loggedUnavailableContext = false;
     std::array<double, 3> lastListenerPosition = {};
     std::chrono::steady_clock::time_point lastListenerPositionUpdate = {};
 
@@ -343,8 +364,8 @@ struct SoundEngine::Backend {
         alSource3f(source, AL_POSITION, static_cast<float>(parameters.position[0]),
                    static_cast<float>(parameters.position[1]),
                    static_cast<float>(parameters.position[2]));
-        alSourcef(source, AL_REFERENCE_DISTANCE, 1.0f);
-        alSourcef(source, AL_ROLLOFF_FACTOR, 1.0f);
+        alSourcef(source, AL_REFERENCE_DISTANCE, parameters.referenceDistance);
+        alSourcef(source, AL_ROLLOFF_FACTOR, parameters.rolloffFactor);
         if (parameters.maxDistance > 0.0) {
             alSourcef(source, AL_MAX_DISTANCE, static_cast<float>(parameters.maxDistance));
         }
@@ -359,7 +380,23 @@ struct SoundEngine::Backend {
             handle = nextHandle++;
         }
         active.push_back(
-            {handle, source, looped, parameters.position, std::chrono::steady_clock::now()});
+            {handle, source, path, looped, parameters.position, parameters.position,
+             std::chrono::steady_clock::now()});
+        if (hasListenerPosition) {
+            const double distance = distanceBetween(parameters.position, lastListenerPosition);
+            if (withinLoggingRange(distance, parameters.maxDistance)) {
+                std::ostringstream message;
+                message << "OpenAL source started: handle=" << handle << " file=" << path.string()
+                        << " loop=" << (looped ? "true" : "false") << " source_world="
+                        << formatWorldPosition(parameters.position) << " gain=" << std::fixed
+                        << std::setprecision(3) << parameters.gain << " max_distance="
+                        << parameters.maxDistance << " reference_distance="
+                        << parameters.referenceDistance << " rolloff=" << parameters.rolloffFactor
+                        << " listener_world=" << formatWorldPosition(lastListenerPosition)
+                        << " listener_distance=" << std::setprecision(2) << distance << 'm';
+                soundLog.Debug(message.str());
+            }
+        }
         // soundLog.Log("OpenAL playback started: file=" + path.string() + " loop=" +
         //              (looped ? "true" : "false") + " gain=" + std::to_string(parameters.gain) +
         //              " pitch=" + std::to_string(parameters.pitch));
@@ -370,6 +407,13 @@ struct SoundEngine::Backend {
                              const SoundPlaybackParameters& parameters) {
         openbus::rendering::TraceScope trace("sound", "Backend::play");
         if (context == nullptr) {
+            if (!loggedUnavailableContext) {
+                soundLog.Warning(
+                    "Skipping sound playback because the OpenAL context is unavailable: file=" +
+                    path.string() + " source_world=" +
+                    formatWorldPosition(parameters.position));
+                loggedUnavailableContext = true;
+            }
             return 0;
         }
         std::lock_guard<std::mutex> lock(mutex);
@@ -416,6 +460,8 @@ struct SoundEngine::Backend {
         }
         alSourcef(found->source, AL_GAIN, parameters.gain);
         alSourcef(found->source, AL_PITCH, parameters.pitch);
+        alSourcef(found->source, AL_REFERENCE_DISTANCE, parameters.referenceDistance);
+        alSourcef(found->source, AL_ROLLOFF_FACTOR, parameters.rolloffFactor);
         alSource3f(found->source, AL_POSITION, static_cast<float>(parameters.position[0]),
                    static_cast<float>(parameters.position[1]),
                    static_cast<float>(parameters.position[2]));
@@ -432,6 +478,23 @@ struct SoundEngine::Backend {
         alSource3f(found->source, AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
         found->lastPosition = parameters.position;
         found->lastPositionUpdate = now;
+        if (hasListenerPosition &&
+            distanceBetween(parameters.position, found->lastLoggedPosition) >= 5.0) {
+            const double distance = distanceBetween(parameters.position, lastListenerPosition);
+            if (withinLoggingRange(distance, parameters.maxDistance)) {
+                found->lastLoggedPosition = parameters.position;
+                std::ostringstream message;
+                message << "OpenAL source moved: handle=" << handle << " file="
+                        << found->path.string() << " source_world="
+                        << formatWorldPosition(parameters.position) << " gain=" << std::fixed
+                        << std::setprecision(3) << parameters.gain << " rolloff="
+                        << parameters.rolloffFactor << " reference_distance="
+                        << parameters.referenceDistance << " listener_world="
+                        << formatWorldPosition(lastListenerPosition)
+                        << " listener_distance=" << std::setprecision(2) << distance << 'm';
+                soundLog.Debug(message.str());
+            }
+        }
     }
 
     void stop(SoundPlaybackHandle handle, bool loopsOnly = false) {

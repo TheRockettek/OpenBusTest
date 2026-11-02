@@ -188,7 +188,8 @@ bool checkDefinitionOwnership(const std::filesystem::path& configPath) {
                     close(playback.started[3].parameters.gain, 0.7F) &&
                     playback.started[2].parameters.position == std::array<double, 3>{} &&
                     playback.started[3].parameters.position == std::array<double, 3>{2, -1, 3} &&
-                    playback.started[3].parameters.maxDistance == 25,
+                    playback.started[3].parameters.maxDistance == 60 &&
+                    close(playback.started[3].parameters.referenceDistance, 4.0F),
                 "multiple same-file blocks on one trigger must retain distinct metadata and IDs")) {
         return false;
     }
@@ -257,7 +258,8 @@ bool checkFileOverrides(const std::filesystem::path& configPath) {
                     !playback.started[1].looped &&
                     close(playback.started[1].parameters.gain, 0.2F) &&
                     playback.started[1].parameters.position == std::array<double, 3>{2, -1, 3} &&
-                    playback.started[1].parameters.maxDistance == 40,
+                    playback.started[1].parameters.maxDistance == 60 &&
+                    close(playback.started[1].parameters.referenceDistance, 4.0F),
                 "T.F must replace its owned voice and retain gain, curve, 3d and one-shot mode")) {
         return false;
     }
@@ -306,7 +308,7 @@ bool checkFileOverrides(const std::filesystem::path& configPath) {
     const RecordedPlayback& second = playback.started[startsBeforeMultiple + 1];
     passed &= expect(!first.looped && !second.looped && first.path == second.path &&
                          close(first.parameters.gain, 0.2F) && close(second.parameters.gain, 0.7F) &&
-                         second.parameters.maxDistance == 25,
+                         second.parameters.maxDistance == 60,
                      "same override file must not merge definitions or infer a loop from its name");
     bank.trigger(playback, "ev_multiple", "multi_override_loop.wav", 0.0F, variables, exterior);
     passed &= expect(playback.started.size() == startsBeforeMultiple + 2 &&
@@ -594,7 +596,8 @@ bool checkIndependentSpatialAmbientLoops(const std::filesystem::path& root) {
     if (!expect(first != playback.started.end() && second != playback.started.end() &&
                     first->looped && second->looped && first->path == second->path &&
                     close(first->parameters.gain, 0.5F) && close(second->parameters.gain, 0.8F) &&
-                    first->parameters.maxDistance == 10 && second->parameters.maxDistance == 20,
+                    first->parameters.maxDistance == 60 &&
+                    second->parameters.maxDistance == 60,
                 "same-file ambient loops must retain individual positions, distances and gains")) {
         return false;
     }
@@ -739,10 +742,12 @@ bool checkMovingVehicleSources(const std::filesystem::path& root) {
     const auto path = root / "moving_vehicle.cfg";
     {
         std::ofstream config(path);
-        config << "[sound]\nhorn.wav\n1\n[3d]\n1\n2\n3\n80\n"
+        config << "[sound]\nhorn.wav\n1\n[3d]\n1\n2\n3\n4.5\n"
                   "[viewpoint]\n4\n[trigger]\nev_horn\n"
                   "[sound]\nengine_loop.wav\n1\n[3d]\n1\n2\n3\n80\n"
                   "[viewpoint]\n4\n[trigger]\nev_engine\n"
+                  "[sound]\nengine_cabin.wav\n1\n[3d]\n1\n2\n3\n4.5\n"
+                  "[trigger]\nev_engine_cabin\n"
                   "[loopsound]\nambient.wav\n1\nrpm\n1000\n"
                   "[3d]\n1\n2\n3\n80\n[viewpoint]\n4\n";
     }
@@ -760,46 +765,59 @@ bool checkMovingVehicleSources(const std::filesystem::path& root) {
     constexpr auto nonPlayer = openbus::rendering::ViewpointContext::NonPlayer;
     first.trigger(playback, "ev_horn", {}, 0.0F, variables, nonPlayer);
     first.trigger(playback, "ev_engine", {}, 0.0F, variables, nonPlayer);
+    first.trigger(playback, "ev_engine_cabin", {}, 0.0F, variables, nonPlayer);
     first.updateAmbient(playback, variables, nonPlayer);
     second.trigger(playback, "ev_horn", {}, 0.0F, variables, nonPlayer);
-    if (!expect(playback.started.size() == 4,
+    if (!expect(playback.started.size() == 5,
                 "non-player one-shots, triggered loops, and ambient loops must start")) {
         return false;
     }
     bool passed = true;
-    for (std::size_t index = 0; index < 3; ++index) {
+    for (std::size_t index = 0; index < 4; ++index) {
         passed &= expect(playback.started[index].parameters.position ==
                              std::array<double, 3>{11.0, 22.0, 33.0} &&
-                             playback.started[index].parameters.maxDistance == 80.0,
+                             close(playback.started[index].parameters.referenceDistance, 4.0F),
                          "vehicle sources rotate and translate their configured local positions");
     }
-    passed &= expect(playback.started[3].parameters.position ==
+    passed &= expect(playback.started[0].parameters.maxDistance == 60.0 &&
+                         playback.started[1].parameters.maxDistance == 80.0 &&
+                         playback.started[2].parameters.maxDistance == 60.0,
+                     "exterior distance profile expands short ranges but preserves longer authored ranges");
+    passed &= expect(playback.started[4].parameters.position ==
                          std::array<double, 3>{102.0, 199.0, 303.0},
                      "two vehicles using the same sounds retain distinct world positions");
     firstPose.position[0] += 50.0;
     first.setPose(firstPose);
     first.updateAmbient(playback, variables, nonPlayer);
-    for (std::size_t index = 0; index < 3; ++index) {
+    for (std::size_t index = 0; index < 4; ++index) {
         passed &= expect(playback.started[index].parameters.position ==
                              std::array<double, 3>{61.0, 22.0, 33.0},
                          "moving a vehicle updates all live sounds even without volume curves");
     }
-    passed &= expect(playback.started.size() == 4,
+    passed &= expect(playback.started.size() == 5,
                      "moving sources must not restart their playback");
-    passed &= expect(playback.started[3].parameters.position ==
+    passed &= expect(playback.started[4].parameters.position ==
                          std::array<double, 3>{102.0, 199.0, 303.0},
                      "moving one bus must not move another bus's sources");
     first.updateActiveSounds(playback, variables, interior);
     passed &= expect(close(playback.started[0].parameters.gain, 0.0F) &&
-                         close(playback.started[1].parameters.gain, 0.0F),
-                     "fixed-gain triggered sounds still respond to viewpoint changes");
+                         close(playback.started[1].parameters.gain, 0.0F) &&
+                         close(playback.started[0].parameters.rolloffFactor, 0.0F) &&
+    close(playback.started[0].parameters.referenceDistance, 4.0F) &&
+    close(playback.started[2].parameters.gain, 1.0F) &&
+                         close(playback.started[2].parameters.rolloffFactor, 0.0F) &&
+                         playback.started[0].parameters.position ==
+                             std::array<double, 3>{61.0, 22.0, 33.0},
+                     "interior mixing preserves source positions and updates rolloff without gain changes");
     first.updateActiveSounds(playback, variables, nonPlayer);
     passed &= expect(close(playback.started[0].parameters.gain, 1.0F) &&
-                         close(playback.started[1].parameters.gain, 1.0F),
-                     "returning to the non-player context restores live triggered voices");
+                         close(playback.started[1].parameters.gain, 1.0F) &&
+                         close(playback.started[0].parameters.rolloffFactor, 1.0F) &&
+                         close(playback.started[2].parameters.rolloffFactor, 1.0F),
+                     "non-player playback restores configured spatial distance rolloff");
     first.stopAll(playback);
     passed &= expect(playback.active.size() == 1 &&
-                         playback.active.contains(playback.started[3].handle),
+                         playback.active.contains(playback.started[4].handle),
                      "despawning a vehicle stops its voices without stopping another bus");
     second.stopAll(playback);
     return passed;
