@@ -1010,10 +1010,9 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (!mapRenderer_) {
         TraceScope rendererTrace("map", "RenderLoop::SetMap.createMapRenderer");
         authoredPassengerPositions_.clear();
-        passengerStopAnchors_.clear();
         authoredPassengerQueueCounts_.clear();
         authoredPassengerObjectCount_ = 0;
-        reportedPassengerFallbackStops_.clear();
+        reportedPassengerAreaStops_.clear();
         mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
             map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
             map.entryPoints[spawnEntryPointIndex].placement.position[0],

@@ -294,16 +294,36 @@ int main() {
     World brakeForceWorld(0.0, {}, {}, false);
     BusSimulation brakeForceSimulation(brakeForceWorld, testConfiguration(),
                                        VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    openbus::scripting::Vehicle brakeForceVariables;
+    brakeForceVariables.set("axle_brakeforce_0_l", 1000.0F);
+    brakeForceVariables.set("axle_brakeforce_0_r", 2000.0F);
+    brakeForceVariables.set("axle_brakeforce_1_l", 3000.0F);
+    brakeForceVariables.set("axle_brakeforce_1_r", 4000.0F);
+    brakeForceVariables.set("m_wheel", 25000.0F);
+    for (int frame = 0; frame < 4; ++frame) {
+        brakeForceSimulation.updateVariables(brakeForceVariables, 0.0, 0.0, 1.0);
+    }
+    if (brakeForceVariables.get("axle_brakeforce_0_l") != 1000.0F ||
+        brakeForceVariables.get("axle_brakeforce_0_r") != 2000.0F ||
+        brakeForceVariables.get("axle_brakeforce_1_l") != 3000.0F ||
+        brakeForceVariables.get("axle_brakeforce_1_r") != 4000.0F ||
+        brakeForceVariables.get("m_wheel") != 25000.0F) {
+        std::cerr << "physics telemetry overwrote script drivetrain commands between steps\n";
+        return 1;
+    }
     brakeForceSimulation.stepWithWheelTorqueAndBrakeForces(0.0, 0.0,
                                                            {1000.0, 2000.0, 3000.0, 4000.0});
-    openbus::scripting::Vehicle brakeForceVariables;
-    brakeForceSimulation.updateVariables(brakeForceVariables, 0.0, 0.0, 0.0);
+    brakeForceSimulation.updateVariables(brakeForceVariables, 0.0, 0.0, 1.0);
     if (brakeForceVariables.get("brakeforce") != 10000.0F ||
         brakeForceVariables.get("axle_brakeforce_0_l") != 1000.0F ||
         brakeForceVariables.get("axle_brakeforce_0_r") != 2000.0F ||
         brakeForceVariables.get("axle_brakeforce_1_l") != 3000.0F ||
-        brakeForceVariables.get("axle_brakeforce_1_r") != 4000.0F) {
-        std::cerr << "predefined local brake forces did not reflect the live wheel inputs\n";
+        brakeForceVariables.get("axle_brakeforce_1_r") != 4000.0F ||
+        brakeForceVariables.get("axle_brakeforce_actual_0_l") != 1000.0F ||
+        brakeForceVariables.get("axle_brakeforce_actual_0_r") != 2000.0F ||
+        brakeForceVariables.get("axle_brakeforce_actual_1_l") != 3000.0F ||
+        brakeForceVariables.get("axle_brakeforce_actual_1_r") != 4000.0F) {
+        std::cerr << "script brake commands and applied per-wheel force feedback were not separated\n";
         return 1;
     }
 

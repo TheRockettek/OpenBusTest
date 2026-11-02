@@ -1405,11 +1405,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             requestedPassengerCounts != authoredPassengerQueueCounts_) {
             std::vector<openbus::map::MapPassengerStopAnchor> stops;
             std::vector<openbus::map::MapPassengerWaitingArea> areas;
-            passengerStopAnchors_.clear();
             for (const auto& object : objects) {
                 if (object.busStop && object.objectId.has_value()) {
                     stops.push_back({*object.objectId, object.position});
-                    passengerStopAnchors_.emplace(*object.objectId, object.position);
                 }
                 if (object.passengerCabin && !object.passengerPositions.empty()) {
                     areas.push_back({object.objectId.value_or(0), object.position,
@@ -1422,21 +1420,15 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             authoredPassengerObjectCount_ = objects.size();
         }
     }
-    const auto queuePose = [&](int stopId, const openbus::map::MapTrafficPose& stopPose,
-                               std::size_t queueSlot) {
+    const auto queuePose = [&](int stopId, std::size_t queueSlot)
+        -> std::optional<openbus::map::MapTrafficPose> {
         const auto authored = authoredPassengerPositions_.find(stopId);
-        if (authored != authoredPassengerPositions_.end() && !authored->second.empty()) {
-            return authored->second[queueSlot % authored->second.size()];
+        if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
+            return std::nullopt;
         }
-        const auto anchor = passengerStopAnchors_.find(stopId);
-        return openbus::map::mapTrafficPassengerQueuePose(
-            stopPose, mapRenderer_->leftHandTraffic(), queueSlot,
-            anchor != passengerStopAnchors_.end()
-                ? std::optional<std::array<double, 3>>(anchor->second)
-                : std::nullopt);
+        return authored->second[queueSlot % authored->second.size()];
     };
     struct ScheduledStopRenderCandidate {
-        openbus::map::MapTrafficPose pose;
         const openbus::map::MapTrafficPassengerStop* stop = nullptr;
         double cameraDistance = std::numeric_limits<double>::infinity();
         bool activelyServed = false;
@@ -1487,7 +1479,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                       candidate->second.cameraDistance <= cameraDistance))) {
                     continue;
                 }
-                stopCandidates[stop.stopId] = {*stopPose, &stop, cameraDistance, activelyServed};
+                stopCandidates[stop.stopId] = {&stop, cameraDistance, activelyServed};
             }
         }
     }
@@ -1523,32 +1515,32 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     if (queue == passengerNetwork_.queues.end() || queue->second == 0) {
                         continue;
                     }
-                    const openbus::map::MapTrafficPose& stopPose = candidate.pose;
                     const auto initialQueue = passengerNetwork_.initialQueues.find(stopId);
                     const std::size_t initialCount =
                         initialQueue == passengerNetwork_.initialQueues.end()
                             ? queue->second
                             : std::max(initialQueue->second, queue->second);
-                    const auto authored = authoredPassengerPositions_.find(stopId);
-                    const bool hasAuthored =
-                        authored != authoredPassengerPositions_.end() && !authored->second.empty();
-                    if (!hasAuthored && reportedPassengerFallbackStops_.insert(stopId).second) {
-                        gameLog.Warning("No authored passenger waiting area matched stop " +
-                                        std::to_string(stopId) +
-                                        (passengerStopAnchors_.contains(stopId)
-                                             ? "; using a queue at the editor bus-stop position"
-                                             : "; editor bus-stop position unavailable; using "
-                                               "the generated roadside queue"));
+                    const auto authoredPose = queuePose(stopId, 0);
+                    if (!authoredPose) {
+                        if (reportedPassengerAreaStops_.insert(stopId).second) {
+                            gameLog.Warning("No authored passenger waiting area matched stop " +
+                                            std::to_string(stopId) +
+                                            "; fallback passenger spawning is disabled");
+                        }
+                        continue;
                     }
                     for (std::size_t passenger = 0; passenger < queue->second; ++passenger) {
                         const std::size_t queueSlot =
                             openbus::map::mapScheduledPassengerQueueSlot(initialCount, passenger);
-                        const auto passengerPose = queuePose(stopId, stopPose, queueSlot);
+                        const auto passengerPose = queuePose(stopId, queueSlot);
+                        if (!passengerPose) {
+                            continue;
+                        }
                         const std::size_t modelIndex =
                             openbus::map::mapScheduledPassengerModelIdentity(stopId, passenger) %
                             scheduledPassengerHumanModels_.size();
                         mapRenderer_->drawHumanTrafficActor(
-                            scheduledPassengerHumanModels_[modelIndex], passengerPose,
+                            scheduledPassengerHumanModels_[modelIndex], *passengerPose,
                             simulation.simulationTime() *
                                     waitingPassengerIdleCycleRadiansPerSecond +
                                 static_cast<double>(passenger) * 1.7,
@@ -1703,6 +1695,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId) {
                     return;
                 }
+                const auto authoredQueue = authoredPassengerPositions_.find(boardingStop->stopId);
+                if (authoredQueue == authoredPassengerPositions_.end() ||
+                    authoredQueue->second.empty()) {
+                    return;
+                }
                 const auto stopPose =
                     routeActor ? openbus::map::sampleMapTrafficRoute(
                                      routeActor->route, boardingStop->routeDistanceMeters, 0.0)
@@ -1745,12 +1742,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             : std::max(initialQueue->second, waiting + 1);
                     const std::size_t queueSlot =
                         openbus::map::mapScheduledPassengerQueueSlot(initialCount, waiting);
-                    openbus::map::MapTrafficPose pose =
-                        queuePose(boardingStop->stopId, *stopPose, queueSlot);
-                    if (!authoredPassengerPositions_.contains(boardingStop->stopId)) {
-                        pose.headingRadians -= passengerSide * std::numbers::pi * 0.5;
-                    }
-                    return pose;
+                    return authoredQueue->second[queueSlot % authoredQueue->second.size()];
                 };
                 const auto drawPassengerBetweenPoses = [&](const PassengerCabinTravelPathData& path,
                                                            double progress, double startHeading,
@@ -2190,6 +2182,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
         }
         for (const auto& [stopId, candidate] : stopCandidates) {
+            const auto authored = authoredPassengerPositions_.find(stopId);
+            if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
+                continue;
+            }
             const std::size_t waiting = passengerNetwork_.queues.at(stopId);
             const auto initialQueue = passengerNetwork_.initialQueues.find(stopId);
             const std::size_t initialCount = initialQueue == passengerNetwork_.initialQueues.end()
@@ -2201,8 +2197,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     waiting == 0
                         ? 0
                         : openbus::map::mapScheduledPassengerQueueSlot(initialCount, passenger);
-                const auto pose = queuePose(stopId, candidate.pose, queueSlot);
-                appendTrafficBehaviorBox(behaviorVertices, pose, 0.4, 0.4, 1.8,
+                const auto pose = queuePose(stopId, queueSlot);
+                if (!pose) {
+                    continue;
+                }
+                appendTrafficBehaviorBox(behaviorVertices, *pose, 0.4, 0.4, 1.8,
                                          {0.25F, 1.0F, 0.45F}, trafficDebugOrigin);
             }
         }
@@ -3087,6 +3086,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 drawWorldLabel(labelPosition, label, phaseColor, IM_COL32(20, 24, 28, 230));
             }
             for (const auto& [stopId, candidate] : stopCandidates) {
+                const auto authored = authoredPassengerPositions_.find(stopId);
+                if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
+                    continue;
+                }
                 const std::size_t waiting = passengerNetwork_.queues.at(stopId);
                 const auto initialQueue = passengerNetwork_.initialQueues.find(stopId);
                 const std::size_t initialCount =
@@ -3094,18 +3097,20 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         ? waiting
                         : std::max(initialQueue->second, waiting);
                 const auto pose = queuePose(
-                    stopId, candidate.pose,
+                    stopId,
                     waiting == 0
                         ? 0
                         : openbus::map::mapScheduledPassengerQueueSlot(initialCount, waiting - 1));
-                std::array<double, 3> labelPosition = pose.position;
+                if (!pose) {
+                    continue;
+                }
+                std::array<double, 3> labelPosition = pose->position;
                 labelPosition[2] += 2.1;
                 const std::string name = candidate.stop->name.empty() ? std::string("Unnamed stop")
                                                                       : candidate.stop->name;
                 const std::string label =
                     name + " [stop " + std::to_string(stopId) +
-                    "] waiting: " + std::to_string(waiting) +
-                    (authoredPassengerPositions_.contains(stopId) ? "" : " [fallback]");
+                    "] waiting: " + std::to_string(waiting);
                 drawWorldLabel(labelPosition, label, IM_COL32(255, 255, 255, 255),
                                IM_COL32(22, 100, 45, 230));
             }

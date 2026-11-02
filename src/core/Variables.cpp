@@ -339,6 +339,7 @@ void configureVehicle(Variables& variables) {
                 {"axle_steering_" + std::to_string(index) + "_" + side, 0.0},
                 {"axle_springfactor_" + std::to_string(index) + "_" + side, 1.0},
                 {"axle_brakeforce_" + std::to_string(index) + "_" + side, 0.0},
+                {"axle_brakeforce_actual_" + std::to_string(index) + "_" + side, 0.0},
                 {"axle_surfaceid_" + std::to_string(index) + "_" + side, 0.0},
             });
         }

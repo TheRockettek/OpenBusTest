@@ -120,7 +120,11 @@ void RenderLoop::logDrivetrainDiagnosticVariables() const {
                                                     "axle_brakeforce_0_l",
                                                     "axle_brakeforce_0_r",
                                                     "axle_brakeforce_1_l",
-                                                    "axle_brakeforce_1_r"};
+                                                    "axle_brakeforce_1_r",
+                                                    "axle_brakeforce_actual_0_l",
+                                                    "axle_brakeforce_actual_0_r",
+                                                    "axle_brakeforce_actual_1_l",
+                                                    "axle_brakeforce_actual_1_r"};
     std::ostringstream line;
     line << "Native drivetrain variables" << std::setprecision(7);
     for (const char* name : variableNames) {

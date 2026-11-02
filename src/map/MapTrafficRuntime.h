@@ -271,9 +271,6 @@ std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount, std::size_t
 std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
                                                      double lateralOffsetMeters,
                                                      double longitudinalOffsetMeters);
-MapTrafficPose mapTrafficPassengerQueuePose(const MapTrafficPose& stopPose, bool leftHandTraffic,
-                                            std::size_t queueSlot,
-                                            std::optional<std::array<double, 3>> stopAnchor = {});
 std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& serviceStopIds,
                                                         std::size_t rotation);
 

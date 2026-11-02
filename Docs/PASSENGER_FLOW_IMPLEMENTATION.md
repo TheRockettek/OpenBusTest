@@ -129,11 +129,11 @@ mapped stops are rendered within 75 meters of the main camera,
 independent of the ambient AI pedestrian population cap. The waiting count is
 a fixed nominal demand per mapped stop multiplied by the scheduled-human
 scale; it is not a shared map-wide demand model.
-Authored passenger waiting areas take priority. When a stop has no matching
-waiting area, the fallback queue starts at its editor bus-stop object's world
-position (including elevation), with additional people spaced around that anchor.
-Only stops without a loaded editor anchor retain the roadside fallback, with a
-warning. Boarding paths and queue debug markers use the same positions.
+Passengers are rendered only at authored passenger waiting-area positions
+matched to their stop. Stops without a matching area do not generate fallback
+waiting, boarding, or alighting actors or queue debug markers; a warning is
+logged once when a visible queue has no authored area. Timetable passenger
+demand and service counts remain active at those stops.
 Passenger service and the script's departure/door-close handshake are legitimate
 waits, including for following traffic, and do not trigger stuck-bus removal.
 

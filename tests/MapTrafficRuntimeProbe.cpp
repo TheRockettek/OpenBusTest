@@ -200,52 +200,10 @@ void verifyPassengerSideOffsets() {
                 "eastbound passenger curb offset does not shift along the road");
     requireNear(eastboundRight[1], -1.0,
                 "eastbound passenger curb offset points south on map coordinates");
-    const auto northboundQueue = mapTrafficPassengerWorldOffset(false, 0.0, 2.0, -1.0);
-    requireNear(northboundQueue[0], 2.0, "northbound waiting queue is placed east of the stop");
-    requireNear(northboundQueue[1], -1.0, "northbound waiting queue extends back along the road");
-    const auto leftHandEastboundQueue =
-        mapTrafficPassengerWorldOffset(true, std::numbers::pi / 2.0, 2.0, -1.0);
-    requireNear(leftHandEastboundQueue[0], -1.0,
-                "left-hand eastbound queue extends back toward the west");
-    requireNear(leftHandEastboundQueue[1], 2.0,
-                "left-hand eastbound queue is placed north of the road");
-    MapTrafficPose stopPose;
-    stopPose.position = {10.0, 20.0, 3.0};
-    for (const bool leftHandTraffic : {false, true}) {
-        for (const double heading : {0.0, std::numbers::pi / 2.0}) {
-            stopPose.headingRadians = heading;
-            for (std::size_t slot = 0; slot < 7; ++slot) {
-                const auto pose = mapTrafficPassengerQueuePose(stopPose, leftHandTraffic, slot);
-                const auto expected = mapTrafficPassengerWorldOffset(
-                    leftHandTraffic, heading, 2.0 + 0.65 * (static_cast<double>(slot % 3) - 1.0),
-                    -0.8 * static_cast<double>(slot / 3));
-                requireNear(pose.position[0], stopPose.position[0] + expected[0],
-                            "queue marker and passenger share the lateral position");
-                requireNear(pose.position[1], stopPose.position[1] + expected[1],
-                            "queue marker and passenger share the longitudinal position");
-                requireNear(pose.position[2], stopPose.position[2],
-                            "queue markers retain stop elevation");
-                requireNear(pose.headingRadians, heading, "queue markers retain stop heading");
-                const std::array<double, 3> editorAnchor = {42.0, -30.0, 7.0};
-                const auto anchored =
-                    mapTrafficPassengerQueuePose(stopPose, leftHandTraffic, slot, editorAnchor);
-                if (slot == 0) {
-                    require(anchored.position == editorAnchor,
-                            "fallback queue starts exactly at the editor bus-stop position");
-                }
-                const double anchoredColumn = slot % 3 == 0 ? 0.0 : slot % 3 == 1 ? 1.0 : -1.0;
-                const auto anchoredOffset = mapTrafficPassengerWorldOffset(
-                    leftHandTraffic, heading, 0.65 * anchoredColumn,
-                    -0.8 * static_cast<double>(slot / 3));
-                requireNear(anchored.position[0], editorAnchor[0] + anchoredOffset[0],
-                            "fallback queue spacing is relative to the editor stop, not the road");
-                requireNear(anchored.position[1], editorAnchor[1] + anchoredOffset[1],
-                            "fallback queue does not add a roadside offset to the editor stop");
-                requireNear(anchored.position[2], editorAnchor[2],
-                            "fallback passengers retain the editor stop elevation");
-            }
-        }
-    }
+    const auto eastboundCurbOffset =
+        mapTrafficPassengerWorldOffset(false, std::numbers::pi / 2.0, 1.0, 0.0);
+    requireNear(eastboundCurbOffset[0], 0.0, "eastbound curb offset does not shift along the road");
+    requireNear(eastboundCurbOffset[1], -1.0, "eastbound right-side curb offset points south");
     {
         MapSceneryPose scenery;
         scenery.x = 100.0;
@@ -290,6 +248,8 @@ void verifyPassengerSideOffsets() {
                     assigned.at(8318798)[0].position == secondPosition.position &&
                     assigned.at(8318801)[0].position == thirdPosition.position,
                 "BRT waiting areas belong to the nearest nearby stop on the same level");
+        require(mapTrafficAssignPassengerPositions({{42, {0.0, 0.0, 0.0}}}, {}).empty(),
+                "a stop without an authored waiting area has no generated passenger positions");
         const auto ordered = mapTrafficAssignPassengerPositions(
             {{20, {0.0, 0.0, 0.0}}, {10, {2.0, 0.0, 0.0}}},
             {{4, {1.0, 0.0, 0.0}, {secondPosition}},

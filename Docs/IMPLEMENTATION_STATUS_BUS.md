@@ -24,6 +24,11 @@ Other BUS gaps include the complete configurable input map and vehicle-family-sp
 
 Both script backends preserve the float-stack condition across `{if}` / `{else}` branches and macro calls. This is required by the DL05 front-door interlock: the door macro combines the caller's retained condition with the ramp interlock. The `bus_20h-switch` control enables the stop brake, not the separate parking brake; normal electrical, speed, and ramp interlocks still apply.
 
+Script-written `axle_brakeforce_<axle>_<side>` values are preserved as physics
+commands; measured per-wheel force is published separately as
+`axle_brakeforce_actual_<axle>_<side>` so render/physics update timing cannot
+overwrite a command before it is consumed.
+
 ## Bus model CFG
 
 DirectX `.x` meshes (including the DL05 Atron AFR4) provide vehicle-axis bounds for

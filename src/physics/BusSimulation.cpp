@@ -959,7 +959,7 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
         variables.set("axle_suspension" + prefix, impl_->corners[index].animationSuspension);
         variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
-        variables.set("axle_brakeforce" + prefix, impl_->corners[index].brakeForce);
+        variables.set("axle_brakeforce_actual" + prefix, impl_->corners[index].brakeForce);
         totalBrakeForce += impl_->corners[index].brakeForce;
         if (impl_->configuration.axles[axleIndex].driven) {
             drivenWheelSpeed += wheelSpeedRpm;

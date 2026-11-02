@@ -461,10 +461,9 @@ class RenderLoop {
     openbus::app::PlayerTimetableController playerTimetable_;
     bool playerPassengerServiceEnabled_ = true;
     std::map<int, std::vector<openbus::map::MapTrafficPose>> authoredPassengerPositions_;
-    std::map<int, std::array<double, 3>> passengerStopAnchors_;
     std::map<int, std::size_t> authoredPassengerQueueCounts_;
     std::size_t authoredPassengerObjectCount_ = 0;
-    std::unordered_set<int> reportedPassengerFallbackStops_;
+    std::unordered_set<int> reportedPassengerAreaStops_;
     std::optional<int> playerPassengerStopLatch_;
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
     std::optional<std::size_t> playerPassengerStopLatchIndex_;
