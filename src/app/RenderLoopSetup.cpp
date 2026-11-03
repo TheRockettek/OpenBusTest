@@ -511,11 +511,24 @@ void RenderLoop::drawOnFootUi() {
     if (!imguiEnabled_ || playerVehicle_ != nullptr || renderingReflection_ || captureMode_) {
         return;
     }
-    ImGui::SetNextWindowPos(ImVec2(20.0F, 20.0F), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.82F);
-    ImGui::Begin("On foot", nullptr,
-                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoNav);
+    if (openSpawnPopup_) {
+        ImGui::OpenPopup("Spawn a bus");
+        openSpawnPopup_ = false;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float popupWidth = std::min(640.0F, std::max(1.0F, viewport->WorkSize.x - 32.0F));
+    const float popupHeight = std::min(560.0F, std::max(1.0F, viewport->WorkSize.y - 32.0F));
+    const float overrideInputWidth = std::min(360.0F, std::max(1.0F, popupWidth - 40.0F));
+    ImGui::SetNextWindowSize(ImVec2(popupWidth, popupHeight), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5F,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5F),
+                            ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
+    ImGui::SetNextWindowBgAlpha(0.9F);
+    if (!ImGui::BeginPopupModal("Spawn a bus", nullptr,
+                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNav |
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
     ImGui::TextUnformatted("You are not in a bus.");
     if (vehicleCatalog_.empty()) {
         ImGui::TextUnformatted("No bus configurations are available.");
@@ -645,12 +658,12 @@ void RenderLoop::drawOnFootUi() {
                 }
             }
             if (mapVehicleConfig_->registrationFree) {
-                ImGui::SetNextItemWidth(-1.0F);
+                ImGui::SetNextItemWidth(overrideInputWidth);
                 if (ImGui::InputText("Vehicle number override", mapVehicleNumberInput_.data(),
                                      mapVehicleNumberInput_.size())) {
                     persistMapVehiclePreference();
                 }
-                ImGui::SetNextItemWidth(-1.0F);
+                ImGui::SetNextItemWidth(overrideInputWidth);
                 if (ImGui::InputText(registrationCount > 0 ? "Registration override"
                                                            : "Registration",
                                      mapRegistrationInput_.data(), mapRegistrationInput_.size())) {
@@ -684,19 +697,19 @@ void RenderLoop::drawOnFootUi() {
     if (!spawnBusError_.empty()) {
         ImGui::TextWrapped("Unable to spawn bus: %s", spawnBusError_.c_str());
     }
-    ImGui::TextUnformatted("Select a scheduled trip in the timetable panel after spawning.");
+    ImGui::TextUnformatted(
+        "Use the trip panel at the top of the screen to start a scheduled trip.");
     ImGui::TextUnformatted("WASD: walk | Space: jump | F4: toggle mouse look");
     ImGui::TextUnformatted("Press F4 to release the cursor and use this panel.");
-    ImGui::End();
+    if (ImGui::Button("Close")) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void RenderLoop::drawPlayerTimetableSelectionUi() {
     selectedPlayerTimetableSelection_.reset();
-    if (ImGui::Checkbox("Drive a scheduled trip", &selectedPlayerUseTimetable_) &&
-        !selectedPlayerUseTimetable_) {
-        selectedPlayerTimetableSelection_.reset();
-    }
-    if (selectedPlayerUseTimetable_) {
+    {
         const auto& hof = playerVehicle_->scripts->hofData();
         if (playerTimetableCatalog_.update(passengerNetwork_.routes, passengerTimetableCourses_,
                                            hof)) {
@@ -831,7 +844,8 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                                         stopIndex == selectedPlayerFirstStopIndex_;
                                     const bool unavailable = !selectedRoute.stopPoses.empty() &&
                                                              !selectedRoute.stopPoses[stopIndex];
-                                    const std::string label = selectedRoute.stops[stopIndex].name +
+                                    const std::string label =
+                                        selectedRoute.stops[stopIndex].name +
                                         (unavailable ? " (location unavailable)" : "");
                                     if (ImGui::Selectable(label.c_str(), selected)) {
                                         selectedPlayerFirstStopIndex_ = stopIndex;
@@ -844,11 +858,10 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                             }
                             ImGui::Checkbox("Drive as an additional bus",
                                             &selectedPlayerDriveAsAdditionalBus_);
-                            selectedPlayerTimetableSelection_ =
-                                SpawnBusRequest::TimetableSelection{
-                                    selectedTrip->routeIndex, selectedPlayerCourseIndex_,
-                                    selectedPlayerCourseTripIndex_, selectedPlayerFirstStopIndex_,
-                                    selectedPlayerDriveAsAdditionalBus_};
+                            selectedPlayerTimetableSelection_ = SpawnBusRequest::TimetableSelection{
+                                selectedTrip->routeIndex, selectedPlayerCourseIndex_,
+                                selectedPlayerCourseTripIndex_, selectedPlayerFirstStopIndex_,
+                                selectedPlayerDriveAsAdditionalBus_};
                         }
                     }
                 } else {
@@ -877,19 +890,36 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
         ImGui::BeginDisabled(!selectedPlayerTimetableSelection_);
         if (ImGui::Button("Start selected trip")) {
             SetPlayerTimetableSelection(selectedPlayerTimetableSelection_);
-            selectedPlayerUseTimetable_ = false;
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel selection")) {
-            selectedPlayerUseTimetable_ = false;
             selectedPlayerTimetableSelection_.reset();
+            ImGui::CloseCurrentPopup();
         }
     }
 }
 
 void RenderLoop::drawPlayerTimetableUi() {
     if (!imguiEnabled_ || playerVehicle_ == nullptr || renderingReflection_ || captureMode_) {
+        return;
+    }
+    const auto drawTripSelectionPopup = [this] {
+        if (openPlayerTimetablePopup_) {
+            ImGui::OpenPopup("Drive a scheduled trip");
+            openPlayerTimetablePopup_ = false;
+        }
+        if (ImGui::BeginPopupModal("Drive a scheduled trip", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoCollapse)) {
+            drawPlayerTimetableSelectionUi();
+            ImGui::EndPopup();
+        }
+    };
+    if (!playerTimetable_.state && vehicleScheduleViews_.empty() &&
+        vehicleTicketSellingViews_.empty()) {
+        drawTripSelectionPopup();
         return;
     }
     ImGui::SetNextWindowPos(ImVec2(20.0F, 20.0F), ImGuiCond_Always);
@@ -944,7 +974,7 @@ void RenderLoop::drawPlayerTimetableUi() {
     drawConfiguredViewSelector("Schedule view", vehicleScheduleViews_);
     drawConfiguredViewSelector("Ticket-selling view", vehicleTicketSellingViews_);
     if (!playerTimetable_.state) {
-        drawPlayerTimetableSelectionUi();
+        drawTripSelectionPopup();
         ImGui::End();
         return;
     }
@@ -966,7 +996,6 @@ void RenderLoop::drawPlayerTimetableUi() {
     }
     if (ImGui::Button("Cancel trip now")) {
         SetPlayerTimetableSelection(std::nullopt);
-        selectedPlayerUseTimetable_ = false;
         selectedPlayerTimetableSelection_.reset();
     }
     ImGui::End();

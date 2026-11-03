@@ -181,7 +181,8 @@ double vehicleOdometerReading(const VehicleOdometerPreferences& preferences,
         validateOdometerMetres(preferences.globalMetres);
         return preferences.globalMetres;
     }
-    const auto saved = preferences.modelMetres.find(vehicleOdometerPreferenceKey(configurationPath));
+    const auto saved =
+        preferences.modelMetres.find(vehicleOdometerPreferenceKey(configurationPath));
     const double raw = saved == preferences.modelMetres.end() ? 0.0 : saved->second;
     validateOdometerMetres(raw);
     const double reading = base + raw;
@@ -255,12 +256,13 @@ VehicleOdometerPreferences loadVehicleOdometerPreferences(const std::filesystem:
             std::string registration;
             record >> std::quoted(vehicleNumber) >> std::quoted(registration);
         }
-        if (!(record >> metres) || (record >> extra) || key.empty() ||
-            !std::isfinite(metres) || metres < 0.0) {
+        if (!(record >> metres) || (record >> extra) || key.empty() || !std::isfinite(metres) ||
+            metres < 0.0) {
             throw std::runtime_error("Invalid vehicle odometer at " + path.string() + ":" +
                                      std::to_string(lineNumber));
         }
-        // Per-vehicle mileage included authored initial values; shared model counters start at zero.
+        // Per-vehicle mileage included authored initial values; shared model counters start at
+        // zero.
         preferences.modelMetres[std::move(key)] = legacyFormat ? 0.0 : metres;
     }
     if (input.bad()) {
@@ -280,8 +282,8 @@ void saveVehicleOdometerPreferences(const std::filesystem::path& path,
     }
 
     writeAtomically(path, [&](std::ostream& output) {
-        output << ODOMETER_FILE_HEADER << '\n' << std::setprecision(17)
-               << "global " << preferences.globalMetres << '\n';
+        output << ODOMETER_FILE_HEADER << '\n'
+               << std::setprecision(17) << "global " << preferences.globalMetres << '\n';
         for (const auto& [key, metres] : preferences.modelMetres) {
             output << std::quoted(key) << ' ' << metres << '\n';
         }

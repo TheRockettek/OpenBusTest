@@ -77,4 +77,79 @@ double scheduledBusDelaySeconds(const ScheduledBusState& bus,
     return elapsedSinceDeparture - expected;
 }
 
+std::optional<double> playerTimetableDelaySeconds(
+    const PassengerStopRouteState& route, const openbus::map::MapAiTimetableProfile& profile,
+    double departureMinutes, double currentTimeOfDaySeconds, std::size_t firstStopIndex,
+    std::size_t nextStopIndex, const std::array<double, 3>& vehiclePosition,
+    std::optional<std::size_t> dwellingStopIndex) {
+    if (!std::isfinite(departureMinutes) || !std::isfinite(currentTimeOfDaySeconds) ||
+        route.stops.empty()) {
+        return std::nullopt;
+    }
+
+    const auto targetStopIndex = nextLocatedPassengerStop(route, nextStopIndex);
+    if (!targetStopIndex) {
+        return std::nullopt;
+    }
+    const auto offset = [&](std::size_t stopIndex,
+                            const std::vector<double>& offsets) -> std::optional<double> {
+        const std::size_t stationIndex = route.stops[stopIndex].timetableStationIndex;
+        if (stationIndex >= offsets.size() || !std::isfinite(offsets[stationIndex])) {
+            return std::nullopt;
+        }
+        return offsets[stationIndex];
+    };
+    const auto arrivalOffset = offset(*targetStopIndex, profile.arrivalOffsetSeconds);
+    const auto departureOffset = offset(*targetStopIndex, profile.departureOffsetSeconds);
+    if (!arrivalOffset || !departureOffset || *departureOffset < *arrivalOffset) {
+        return std::nullopt;
+    }
+
+    double elapsedSinceDeparture =
+        currentTimeOfDaySeconds - std::fmod(departureMinutes * 60.0, 86400.0);
+    if (elapsedSinceDeparture < -43200.0) {
+        elapsedSinceDeparture += 86400.0;
+    } else if (elapsedSinceDeparture > 43200.0) {
+        elapsedSinceDeparture -= 86400.0;
+    }
+
+    double expected = *arrivalOffset;
+    if (dwellingStopIndex == targetStopIndex) {
+        expected = std::clamp(elapsedSinceDeparture, *arrivalOffset, *departureOffset);
+    } else {
+        std::optional<std::size_t> previousStopIndex;
+        for (std::size_t index = *targetStopIndex; index > firstStopIndex; --index) {
+            const std::size_t candidateIndex = index - 1;
+            if (route.stopPose(candidateIndex)) {
+                previousStopIndex = candidateIndex;
+                break;
+            }
+        }
+        if (previousStopIndex) {
+            const auto previousDeparture =
+                offset(*previousStopIndex, profile.departureOffsetSeconds);
+            const auto previousPose = route.stopPose(*previousStopIndex);
+            const auto targetPose = route.stopPose(*targetStopIndex);
+            if (!previousDeparture || !previousPose || !targetPose) {
+                return std::nullopt;
+            }
+            const double distanceFromPrevious =
+                std::hypot(vehiclePosition[0] - previousPose->position[0],
+                           vehiclePosition[1] - previousPose->position[1]);
+            const double distanceToTarget =
+                std::hypot(targetPose->position[0] - vehiclePosition[0],
+                           targetPose->position[1] - vehiclePosition[1]);
+            const double totalDistance = distanceFromPrevious + distanceToTarget;
+            const double progress = totalDistance > 1.0e-6
+                                        ? std::clamp(distanceFromPrevious / totalDistance, 0.0, 1.0)
+                                        : 0.0;
+            if (*arrivalOffset < *previousDeparture) {
+                return std::nullopt;
+            }
+            expected = *previousDeparture + (*arrivalOffset - *previousDeparture) * progress;
+        }
+    }
+    return elapsedSinceDeparture - expected;
+}
+
 } // namespace openbus::app

@@ -67,7 +67,8 @@ PassengerStopRouteState makePlayerTimetableRoute(const openbus::map::MapAiTimeta
             route.lineName,
             route.destinationName,
             route.tripName,
-            std::move(poses)};
+            std::move(poses),
+            route.profiles};
 }
 
 PassengerRouteRegistrationReport
@@ -126,10 +127,10 @@ PassengerNetwork::registerTimetables(const openbus::map::MapAiTrafficData& traff
         bool missingDefinition = false;
         for (std::size_t index = 0; index < calls.size(); ++index) {
             const auto& call = calls[index];
-            const auto* authored = !timetable.stationRecords.empty() &&
-                                           timetable.stationRecords[index]
-                                       ? &*timetable.stationRecords[index]
-                                       : nullptr;
+            const auto* authored =
+                !timetable.stationRecords.empty() && timetable.stationRecords[index]
+                    ? &*timetable.stationRecords[index]
+                    : nullptr;
             if (!authored && !call.busStopIndex) {
                 missingDefinition = true;
                 if (report.missingStopDefinitionExamples.size() < 500) {
@@ -154,15 +155,15 @@ PassengerNetwork::registerTimetables(const openbus::map::MapAiTrafficData& traff
                     entry = &link.entries.front();
             }
             if (!entry && index > 0 && calls[index - 1].outgoingStationLinkIndex) {
-                const auto& link =
-                    traffic.stationLinks[*calls[index - 1].outgoingStationLinkIndex];
+                const auto& link = traffic.stationLinks[*calls[index - 1].outgoingStationLinkIndex];
                 if (!link.entries.empty()) {
                     entry = &link.entries.back();
                     useIncoming = true;
                 }
             }
             if (entry && entry->splineId != 0 && entry->pathIndex >= 0 &&
-                (!useIncoming || (std::isfinite(entry->lengthMeters) && entry->lengthMeters >= 0))) {
+                (!useIncoming ||
+                 (std::isfinite(entry->lengthMeters) && entry->lengthMeters >= 0))) {
                 stop.splineId = entry->splineId;
                 stop.pathIndex = static_cast<std::size_t>(entry->pathIndex);
                 if (useIncoming)
@@ -178,14 +179,18 @@ PassengerNetwork::registerTimetables(const openbus::map::MapAiTrafficData& traff
         }
         for (std::size_t index = poses.size(); index > 0; --index) {
             if (poses[index - 1]) {
-                stops[index - 1].passengersAlighting =
-                    (std::numeric_limits<std::size_t>::max)();
+                stops[index - 1].passengersAlighting = (std::numeric_limits<std::size_t>::max)();
                 break;
             }
         }
-        registerRoute({{}, PassengerStops(std::move(stops)), timetable.timetableKey,
-                       timetable.lineName, timetable.destinationName, timetable.tripName,
-                       std::move(poses)});
+        registerRoute({{},
+                       PassengerStops(std::move(stops)),
+                       timetable.timetableKey,
+                       timetable.lineName,
+                       timetable.destinationName,
+                       timetable.tripName,
+                       std::move(poses),
+                       timetable.profiles});
     }
     return report;
 }

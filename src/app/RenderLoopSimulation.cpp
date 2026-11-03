@@ -173,11 +173,9 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 rotationMatrix(placement.yawDegrees, 0.0, 0.0, 1.0),
                 multiplyMatrix4(rotationMatrix(-placement.pitchDegrees, 0.0, 1.0, 0.0),
                                 rotationMatrix(placement.rollDegrees, 1.0, 0.0, 0.0)));
-            pose.position =
-                makeModelRootPlacement(placement, vehicle->modelOffsetZ).position;
-            pose.rotation = {rotation[0], rotation[4], rotation[8],
-                             rotation[1], rotation[5], rotation[9],
-                             rotation[2], rotation[6], rotation[10]};
+            pose.position = makeModelRootPlacement(placement, vehicle->modelOffsetZ).position;
+            pose.rotation = {rotation[0], rotation[4], rotation[8], rotation[1], rotation[5],
+                             rotation[9], rotation[2], rotation[6], rotation[10]};
             pose.position = transformLocalPoint(pose, {0.0, 0.0, vehicle->modelOffsetZ});
         }
         vehicle->soundBank.setPose(pose);
@@ -483,7 +481,7 @@ void RenderLoop::updateScripts() {
                     (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
                     vehicle->updateScripts(true);
                     vehicle->soundBank.updateAmbient(soundEngine_, vehicle->variables,
-                                                      vehicle->soundViewContext);
+                                                     vehicle->soundViewContext);
                 }
             }
         }

@@ -80,8 +80,7 @@ std::string formatWorldPosition(const std::array<double, 3>& position) {
     return result.str();
 }
 
-double distanceBetween(const std::array<double, 3>& first,
-                       const std::array<double, 3>& second) {
+double distanceBetween(const std::array<double, 3>& first, const std::array<double, 3>& second) {
     return std::hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
 }
 
@@ -379,19 +378,19 @@ struct SoundEngine::Backend {
         if (handle == 0) {
             handle = nextHandle++;
         }
-        active.push_back(
-            {handle, source, path, looped, parameters.position, parameters.position,
-             std::chrono::steady_clock::now()});
+        active.push_back({handle, source, path, looped, parameters.position, parameters.position,
+                          std::chrono::steady_clock::now()});
         if (hasListenerPosition) {
             const double distance = distanceBetween(parameters.position, lastListenerPosition);
             if (withinLoggingRange(distance, parameters.maxDistance)) {
                 std::ostringstream message;
                 message << "OpenAL source started: handle=" << handle << " file=" << path.string()
-                        << " loop=" << (looped ? "true" : "false") << " source_world="
-                        << formatWorldPosition(parameters.position) << " gain=" << std::fixed
-                        << std::setprecision(3) << parameters.gain << " max_distance="
-                        << parameters.maxDistance << " reference_distance="
-                        << parameters.referenceDistance << " rolloff=" << parameters.rolloffFactor
+                        << " loop=" << (looped ? "true" : "false")
+                        << " source_world=" << formatWorldPosition(parameters.position)
+                        << " gain=" << std::fixed << std::setprecision(3) << parameters.gain
+                        << " max_distance=" << parameters.maxDistance
+                        << " reference_distance=" << parameters.referenceDistance
+                        << " rolloff=" << parameters.rolloffFactor
                         << " listener_world=" << formatWorldPosition(lastListenerPosition)
                         << " listener_distance=" << std::setprecision(2) << distance << 'm';
                 soundLog.Debug(message.str());
@@ -410,8 +409,7 @@ struct SoundEngine::Backend {
             if (!loggedUnavailableContext) {
                 soundLog.Warning(
                     "Skipping sound playback because the OpenAL context is unavailable: file=" +
-                    path.string() + " source_world=" +
-                    formatWorldPosition(parameters.position));
+                    path.string() + " source_world=" + formatWorldPosition(parameters.position));
                 loggedUnavailableContext = true;
             }
             return 0;
@@ -484,13 +482,13 @@ struct SoundEngine::Backend {
             if (withinLoggingRange(distance, parameters.maxDistance)) {
                 found->lastLoggedPosition = parameters.position;
                 std::ostringstream message;
-                message << "OpenAL source moved: handle=" << handle << " file="
-                        << found->path.string() << " source_world="
-                        << formatWorldPosition(parameters.position) << " gain=" << std::fixed
-                        << std::setprecision(3) << parameters.gain << " rolloff="
-                        << parameters.rolloffFactor << " reference_distance="
-                        << parameters.referenceDistance << " listener_world="
-                        << formatWorldPosition(lastListenerPosition)
+                message << "OpenAL source moved: handle=" << handle
+                        << " file=" << found->path.string()
+                        << " source_world=" << formatWorldPosition(parameters.position)
+                        << " gain=" << std::fixed << std::setprecision(3) << parameters.gain
+                        << " rolloff=" << parameters.rolloffFactor
+                        << " reference_distance=" << parameters.referenceDistance
+                        << " listener_world=" << formatWorldPosition(lastListenerPosition)
                         << " listener_distance=" << std::setprecision(2) << distance << 'm';
                 soundLog.Debug(message.str());
             }

@@ -84,9 +84,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
     const char* odometerMode = openbus::getEnvironment("OPENBUS_ODOMETER_MODE");
-    vehicleOdometerMode_ =
-        odometerMode ? openbus::app::parseVehicleOdometerMode(odometerMode)
-                     : openbus::app::parseVehicleOdometerMode();
+    vehicleOdometerMode_ = odometerMode ? openbus::app::parseVehicleOdometerMode(odometerMode)
+                                        : openbus::app::parseVehicleOdometerMode();
     try {
         vehicleRegistrationPreferences_ =
             openbus::app::loadVehicleRegistrationPreferences(vehicleRegistrationPreferencesPath_);
@@ -334,8 +333,7 @@ void RenderLoop::persistPlayerOdometer(bool force) {
         openbus::app::setVehicleOdometerReading(
             vehicleOdometerPreferences_, vehicleOdometerMode_,
             playerVehicle_->setupOptions.vehicleConfigurationPath,
-            playerVehicle_->odometerInitialKilometres,
-            playerVehicle_->odometerMetres);
+            playerVehicle_->odometerInitialKilometres, playerVehicle_->odometerMetres);
         openbus::app::saveVehicleOdometerPreferences(vehicleOdometerPreferencesPath_,
                                                      vehicleOdometerPreferences_);
         vehicleOdometerPreferencesError_.clear();
@@ -436,8 +434,8 @@ void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficD
         });
     playerTimetableCatalog_.invalidate();
     gameLog.Log("Player timetable routes registered from map schedules: " +
-                std::to_string(passengerNetwork_.routes.size()) + "; courses: " +
-                std::to_string(passengerTimetableCourses_.size()));
+                std::to_string(passengerNetwork_.routes.size()) +
+                "; courses: " + std::to_string(passengerTimetableCourses_.size()));
     if (report.missingStops != 0) {
         gameLog.Warning(
             "Player timetable cannot locate " + std::to_string(report.missingStops) + " stops on " +
@@ -450,11 +448,10 @@ void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficD
                  : ". Routes with no located stops: " + report.routesWithoutStopExamples));
     }
     if (report.routesMissingStopDefinitions != 0) {
-        gameLog.Warning(
-            "Player timetable cannot register " +
-            std::to_string(report.routesMissingStopDefinitions) +
-            " routes with missing or ambiguous stop definitions. Examples: " +
-            report.missingStopDefinitionExamples);
+        gameLog.Warning("Player timetable cannot register " +
+                        std::to_string(report.routesMissingStopDefinitions) +
+                        " routes with missing or ambiguous stop definitions. Examples: " +
+                        report.missingStopDefinitionExamples);
     }
 }
 
@@ -696,10 +693,14 @@ bool RenderLoop::AddTrafficVehicle(
                     "scheduled vehicle departures");
             }
             const std::size_t routeIndex = passengerNetwork_.routes.size();
-            passengerNetwork_.routes.push_back(
-                {trafficState.workerActorTemplate, trafficState.bus->passengerStops,
-                 trafficState.bus->timetableKey, trafficState.bus->timetableLineName,
-                 trafficState.bus->timetableDestinationName, std::move(timetableTripName)});
+            passengerNetwork_.routes.push_back({trafficState.workerActorTemplate,
+                                                trafficState.bus->passengerStops,
+                                                trafficState.bus->timetableKey,
+                                                trafficState.bus->timetableLineName,
+                                                trafficState.bus->timetableDestinationName,
+                                                std::move(timetableTripName),
+                                                {},
+                                                {}});
             playerTimetableCatalog_.invalidate();
             if (registeredPassengerRouteIndex != nullptr) {
                 *registeredPassengerRouteIndex = routeIndex;
@@ -713,10 +714,14 @@ bool RenderLoop::AddTrafficVehicle(
                 trafficState.bus->passengerRouteIndex = passengerRouteIndex;
             } else {
                 trafficState.bus->passengerRouteIndex = passengerNetwork_.routes.size();
-                passengerNetwork_.routes.push_back(
-                    {trafficState.workerActorTemplate, trafficState.bus->passengerStops,
-                     trafficState.bus->timetableKey, trafficState.bus->timetableLineName,
-                     trafficState.bus->timetableDestinationName, std::move(timetableTripName)});
+                passengerNetwork_.routes.push_back({trafficState.workerActorTemplate,
+                                                    trafficState.bus->passengerStops,
+                                                    trafficState.bus->timetableKey,
+                                                    trafficState.bus->timetableLineName,
+                                                    trafficState.bus->timetableDestinationName,
+                                                    std::move(timetableTripName),
+                                                    {},
+                                                    {}});
                 playerTimetableCatalog_.invalidate();
             }
         }
@@ -974,8 +979,7 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
             if (!model->setupOptions.vehicleConfigurationPath.empty()) {
                 model->odometerMetres = openbus::app::vehicleOdometerReading(
                     vehicleOdometerPreferences_, vehicleOdometerMode_,
-                    model->setupOptions.vehicleConfigurationPath,
-                    model->odometerInitialKilometres);
+                    model->setupOptions.vehicleConfigurationPath, model->odometerInitialKilometres);
             }
             model->odometerPositionInitialized = false;
         }

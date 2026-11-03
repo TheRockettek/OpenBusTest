@@ -714,8 +714,8 @@ struct Vehicle {
             TraceScope scriptsTrace("startup", "Vehicle::Vehicle.createScriptRuntime");
             scripts = std::make_unique<ScriptRuntime>(
                 vehicleConfiguration, variables, simulationState,
-                [this, &soundEngine](
-                    const std::string& name, const std::string& file, double controlValue) {
+                [this, &soundEngine](const std::string& name, const std::string& file,
+                                     double controlValue) {
                     if (!soundEventsEnabled || mapTrafficRouteFinished ||
                         (followsMapTrafficRoute && !mapTrafficTileActive)) {
                         return;

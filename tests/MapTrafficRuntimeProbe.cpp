@@ -649,6 +649,26 @@ void verifyScheduledBusTiming() {
     bus.activeTimetableDepartureIndex = 1;
     requireNear(openbus::app::scheduledBusDelaySeconds(bus, actor, 340.0), 0.0,
                 "missing departure profiles preserve the existing zero delay");
+
+    openbus::app::PassengerStopRouteState playerRoute;
+    openbus::map::MapTrafficPassengerStop playerFirst;
+    playerFirst.timetableStationIndex = 0;
+    openbus::map::MapTrafficPassengerStop playerSecond;
+    playerSecond.timetableStationIndex = 1;
+    playerRoute.stops = openbus::app::PassengerStops({playerFirst, playerSecond});
+    playerRoute.stopPoses = {
+        openbus::map::MapTrafficPose{.position = {0.0, 0.0, 0.0}},
+        openbus::map::MapTrafficPose{.position = {100.0, 0.0, 0.0}},
+    };
+    const std::array<double, 3> halfwayPosition = {50.0, 0.0, 0.0};
+    const auto playerDelay = openbus::app::playerTimetableDelaySeconds(
+        playerRoute, profile, 480.0, 480.0 * 60.0 + 170.0, 0, 1, halfwayPosition, std::nullopt);
+    require(playerDelay.has_value(), "player timetable delay requires a valid next stop");
+    requireNear(*playerDelay, -10.0, "player trip delay interpolates between stop schedules");
+    const auto dwellingDelay = openbus::app::playerTimetableDelaySeconds(
+        playerRoute, profile, 480.0, 480.0 * 60.0 + 340.0, 0, 1, halfwayPosition, 1);
+    require(dwellingDelay.has_value(), "player timetable dwell delay is available");
+    requireNear(*dwellingDelay, 20.0, "player trip delay uses scheduled dwell time");
 }
 
 void verifyPlayerTimetableController() {

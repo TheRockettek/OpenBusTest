@@ -543,8 +543,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 return true;
             }
             if (mapTrafficActorWaitingAtSignal(actor, currentSignalClockSeconds) ||
-                (current->bus &&
-                 openbus::app::scheduledBusWaitingForPassengers(*current->bus)) ||
+                (current->bus && openbus::app::scheduledBusWaitingForPassengers(*current->bus)) ||
                 (actor.blockingObstacleIndex.has_value() &&
                  actor.blockingObstacleIndex == playerObstacleIndex)) {
                 return true;

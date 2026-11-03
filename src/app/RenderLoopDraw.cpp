@@ -3,6 +3,7 @@
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
 #include "app/TrafficDebugDirection.h"
+#include "app/traffic/ScheduledBusTiming.h"
 
 #include <imgui.h>
 #include "app/vehicle/VehiclePartLoading.h"
@@ -1179,10 +1180,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             std::array<double, 3> soundForwardWorld = forwardWorld;
             std::array<double, 3> soundUpWorld = upWorld;
             if (!isExteriorView() && playerVehicle_ != nullptr) {
-                soundForwardWorld = {chassis.rotation[0], chassis.rotation[3],
-                                     chassis.rotation[6]};
-                soundUpWorld = {chassis.rotation[2], chassis.rotation[5],
-                                chassis.rotation[8]};
+                soundForwardWorld = {chassis.rotation[0], chassis.rotation[3], chassis.rotation[6]};
+                soundUpWorld = {chassis.rotation[2], chassis.rotation[5], chassis.rotation[8]};
             }
             soundEngine_.setListenerPose(eyeWorld, soundForwardWorld, soundUpWorld);
             reflectionViewerEyeLocal_ = toLocalPoint(eyeWorld);
@@ -1420,8 +1419,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             authoredPassengerObjectCount_ = objects.size();
         }
     }
-    const auto queuePose = [&](int stopId, std::size_t queueSlot)
-        -> std::optional<openbus::map::MapTrafficPose> {
+    const auto queuePose =
+        [&](int stopId, std::size_t queueSlot) -> std::optional<openbus::map::MapTrafficPose> {
         const auto authored = authoredPassengerPositions_.find(stopId);
         if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
             return std::nullopt;
@@ -2852,14 +2851,15 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 }
             }
             const std::string currentStatus = statusText.str();
-            ImGui::SetNextWindowPos(ImVec2(12.0F, 12.0F), ImGuiCond_Always);
-            ImGui::SetNextWindowBgAlpha(0.72F);
-            constexpr ImGuiWindowFlags statusWindowFlags =
-                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
-            ImGui::Begin("OpenBus status", nullptr, statusWindowFlags);
-            ImGui::TextUnformatted(currentStatus.c_str());
             if (trafficSplineDebugOverlay_) {
+                ImGui::SetNextWindowPos(ImVec2(12.0F, 12.0F), ImGuiCond_Always);
+                ImGui::SetNextWindowBgAlpha(0.72F);
+                constexpr ImGuiWindowFlags statusWindowFlags =
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_AlwaysAutoResize;
+                ImGui::Begin("OpenBus status", nullptr, statusWindowFlags);
+                ImGui::TextUnformatted(currentStatus.c_str());
                 const std::size_t roadSplineCount = static_cast<std::size_t>(std::count_if(
                     trafficSplineDebugLabels_.begin(), trafficSplineDebugLabels_.end(),
                     [](const TrafficSplineDebugLabel& label) {
@@ -2908,8 +2908,209 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 ImGui::TextUnformatted("Path arrows = travel direction; white arrows = AI facing");
                 ImGui::TextUnformatted("Green boxes = passenger queue slots (within 75 m)");
                 ImGui::TextUnformatted("Amber = editor bus stop; cyan = editor passenger area");
+                ImGui::End();
             }
-            ImGui::End();
+            if (playerVehicle_ != nullptr) {
+                const ImGuiIO& hudIo = ImGui::GetIO();
+                const int displayHour = secondsSinceMidnight / 3600;
+                const int displayMinute = (secondsSinceMidnight / 60) % 60;
+                std::ostringstream timeValue;
+                timeValue << std::setfill('0') << std::setw(2) << displayHour << ':' << std::setw(2)
+                          << displayMinute;
+                std::ostringstream speedValue;
+                const double speedKmh = simulation.speed() * 3.6;
+                if (std::isfinite(speedKmh)) {
+                    speedValue << std::fixed << std::setprecision(0) << speedKmh << " km/h";
+                } else {
+                    speedValue << "--";
+                }
+                const auto temperatureValue = [](double temperatureCelsius) {
+                    if (!std::isfinite(temperatureCelsius)) {
+                        return std::string("--");
+                    }
+                    std::ostringstream value;
+                    value << std::fixed << std::setprecision(1) << temperatureCelsius << " C";
+                    return value.str();
+                };
+                const std::string cabinTemperature =
+                    temperatureValue(playerVehicle_->variables.get("cabinair_temp"));
+                const std::string outsideTemperature =
+                    temperatureValue(systemVariables.get("weather_temperature"));
+                std::size_t passengersOnboard = 0;
+                std::size_t passengerCapacity = 0;
+                if (playerVehicle_->passengers) {
+                    passengersOnboard = playerVehicle_->passengers->service.onboardPassengerCount();
+                    passengerCapacity = playerVehicle_->passengers->service.seatCount();
+                }
+                const std::string passengerCount =
+                    std::to_string(passengersOnboard) + " / " + std::to_string(passengerCapacity);
+
+                ImGui::SetNextWindowPos(ImVec2(hudIo.DisplaySize.x * 0.5F, 12.0F), ImGuiCond_Always,
+                                        ImVec2(0.5F, 0.0F));
+                ImGui::SetNextWindowBgAlpha(0.78F);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0F, 7.0F));
+                ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0F, 3.0F));
+                constexpr ImGuiWindowFlags hudWindowFlags =
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_AlwaysAutoResize;
+                ImGui::Begin("OpenBus driving HUD", nullptr, hudWindowFlags);
+                if (ImGui::BeginTable("Driving HUD metrics", 5,
+                                      ImGuiTableFlags_SizingFixedFit |
+                                          ImGuiTableFlags_BordersInnerV)) {
+                    const auto metric = [](const char* label, const std::string& value) {
+                        ImGui::TableNextColumn();
+                        ImGui::TextDisabled("%s", label);
+                        ImGui::TextColored(ImVec4(0.95F, 0.97F, 1.0F, 1.0F), "%s", value.c_str());
+                    };
+                    metric("TIME", timeValue.str());
+                    metric("SPEED", speedValue.str());
+                    metric("CABIN", cabinTemperature);
+                    metric("OUTSIDE", outsideTemperature);
+                    metric("PAX IN / SEATS", passengerCount);
+                    ImGui::EndTable();
+                }
+                const float hudBottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
+                ImGui::End();
+                ImGui::PopStyleVar(2);
+
+                constexpr ImGuiWindowFlags tripHudWindowFlags =
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+                ImGui::SetNextWindowPos(ImVec2(hudIo.DisplaySize.x * 0.5F, hudBottom + 6.0F),
+                                        ImGuiCond_Always, ImVec2(0.5F, 0.0F));
+                ImGui::SetNextWindowBgAlpha(0.78F);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0F, 7.0F));
+                ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0F, 3.0F));
+                ImGui::Begin("OpenBus trip HUD", nullptr, tripHudWindowFlags);
+                if (!playerTimetable_.state) {
+                    if (ImGui::Button("Select a route to see trip information")) {
+                        openPlayerTimetablePopup_ = true;
+                    }
+                } else {
+                    const PlayerTimetableState& timetableState = *playerTimetable_.state;
+                    if (timetableState.selection.passengerRouteIndex >=
+                            passengerNetwork_.routes.size() ||
+                        timetableState.selection.courseIndex >= passengerTimetableCourses_.size() ||
+                        timetableState.selection.courseTripIndex >=
+                            passengerTimetableCourses_[timetableState.selection.courseIndex]
+                                .trips.size()) {
+                        throw std::logic_error(
+                            "Active player timetable selection is outside its catalog");
+                    }
+                    const PassengerStopRouteState& route =
+                        passengerNetwork_.routes[timetableState.selection.passengerRouteIndex];
+                    const auto& trip =
+                        passengerTimetableCourses_[timetableState.selection.courseIndex]
+                            .trips[timetableState.selection.courseTripIndex];
+                    const std::string routeValue =
+                        timetableState.lineName.empty() ? route.lineName : timetableState.lineName;
+                    std::ostringstream tripValue;
+                    const std::string& tripName =
+                        route.tripName.empty()
+                            ? passengerTimetableCourses_[timetableState.selection.courseIndex].name
+                            : route.tripName;
+                    const int departureMinute = static_cast<int>(std::floor(trip.departureMinutes));
+                    tripValue << tripName;
+                    if (!route.destinationName.empty()) {
+                        tripValue << " - " << route.destinationName;
+                    }
+                    tripValue << " (" << std::setfill('0') << std::setw(2)
+                              << (departureMinute / 60) % 24 << ':' << std::setw(2)
+                              << departureMinute % 60 << std::setfill(' ') << ')';
+
+                    const auto nextStopIndex =
+                        openbus::app::nextLocatedPassengerStop(route, timetableState.nextStopIndex);
+                    std::string stopValue = "N/A";
+                    std::string distanceValue = "N/A";
+                    std::string delayValue = "N/A";
+                    if (nextStopIndex) {
+                        stopValue = route.stops[*nextStopIndex].name;
+                        const auto stopPose = route.stopPose(*nextStopIndex);
+                        if (stopPose) {
+                            const bool dwellingAtNextStop =
+                                activePlayerPassengerStopRouteIndex_ ==
+                                    timetableState.selection.passengerRouteIndex &&
+                                activePlayerPassengerStopIndex_ == nextStopIndex;
+                            const double distanceMeters =
+                                dwellingAtNextStop
+                                    ? 0.0
+                                    : std::hypot(stopPose->position[0] - playerPosition[0],
+                                                 stopPose->position[1] - playerPosition[1]);
+                            std::ostringstream distanceText;
+                            if (distanceMeters >= 1000.0) {
+                                distanceText << std::fixed << std::setprecision(1)
+                                             << distanceMeters / 1000.0 << " km";
+                            } else {
+                                distanceText << std::fixed << std::setprecision(0) << distanceMeters
+                                             << " m";
+                            }
+                            distanceValue = distanceText.str();
+                            if (trip.profileIndex >= 0 &&
+                                static_cast<std::size_t>(trip.profileIndex) <
+                                    route.timetableProfiles.size()) {
+                                const std::optional<std::size_t> dwellingStopIndex =
+                                    dwellingAtNextStop ? nextStopIndex : std::nullopt;
+                                const auto delaySeconds = openbus::app::playerTimetableDelaySeconds(
+                                    route,
+                                    route.timetableProfiles[static_cast<std::size_t>(
+                                        trip.profileIndex)],
+                                    trip.departureMinutes, systemVariables.get("time"),
+                                    timetableState.selection.firstStopIndex,
+                                    timetableState.nextStopIndex, playerPosition,
+                                    dwellingStopIndex);
+                                if (delaySeconds) {
+                                    if (std::abs(*delaySeconds) < 30.0) {
+                                        delayValue = "On time";
+                                    } else {
+                                        std::ostringstream delayText;
+                                        delayText
+                                            << static_cast<int>(
+                                                   std::lround(std::abs(*delaySeconds) / 60.0))
+                                            << " min " << (*delaySeconds < 0.0 ? "early" : "late");
+                                        delayValue = delayText.str();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (ImGui::BeginTable("Trip HUD metrics", 5,
+                                          ImGuiTableFlags_SizingFixedFit |
+                                              ImGuiTableFlags_BordersInnerV)) {
+                        const auto metric = [](const char* label, const std::string& value) {
+                            ImGui::TableNextColumn();
+                            ImGui::TextDisabled("%s", label);
+                            ImGui::TextColored(ImVec4(0.95F, 0.97F, 1.0F, 1.0F), "%s",
+                                               value.c_str());
+                        };
+                        metric("ROUTE", routeValue);
+                        metric("TRIP", tripValue.str());
+                        metric("NEXT STOP", stopValue);
+                        metric("DISTANCE (DIRECT)", distanceValue);
+                        metric("DELAY", delayValue);
+                        ImGui::EndTable();
+                    }
+                }
+                ImGui::End();
+                ImGui::PopStyleVar(2);
+            } else {
+                ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5F, 12.0F),
+                                        ImGuiCond_Always, ImVec2(0.5F, 0.0F));
+                ImGui::SetNextWindowBgAlpha(0.78F);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0F, 7.0F));
+                constexpr ImGuiWindowFlags onFootHudWindowFlags =
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+                ImGui::Begin("OpenBus on-foot HUD", nullptr, onFootHudWindowFlags);
+                ImGui::TextDisabled("You are not in a bus.");
+                ImGui::SameLine();
+                if (ImGui::Button("Spawn a bus...")) {
+                    openSpawnPopup_ = true;
+                }
+                ImGui::End();
+                ImGui::PopStyleVar();
+            }
         }
 
         if (trafficSplineDebugOverlay_ && mapRenderer_ != nullptr) {
@@ -3096,11 +3297,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     initialQueue == passengerNetwork_.initialQueues.end()
                         ? waiting
                         : std::max(initialQueue->second, waiting);
-                const auto pose = queuePose(
-                    stopId,
-                    waiting == 0
-                        ? 0
-                        : openbus::map::mapScheduledPassengerQueueSlot(initialCount, waiting - 1));
+                const auto pose =
+                    queuePose(stopId, waiting == 0 ? 0
+                                                   : openbus::map::mapScheduledPassengerQueueSlot(
+                                                         initialCount, waiting - 1));
                 if (!pose) {
                     continue;
                 }
@@ -3108,9 +3308,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 labelPosition[2] += 2.1;
                 const std::string name = candidate.stop->name.empty() ? std::string("Unnamed stop")
                                                                       : candidate.stop->name;
-                const std::string label =
-                    name + " [stop " + std::to_string(stopId) +
-                    "] waiting: " + std::to_string(waiting);
+                const std::string label = name + " [stop " + std::to_string(stopId) +
+                                          "] waiting: " + std::to_string(waiting);
                 drawWorldLabel(labelPosition, label, IM_COL32(255, 255, 255, 255),
                                IM_COL32(22, 100, 45, 230));
             }

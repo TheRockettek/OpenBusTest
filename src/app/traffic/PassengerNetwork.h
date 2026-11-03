@@ -28,6 +28,7 @@ struct PassengerStopRouteState {
     std::string destinationName;
     std::string tripName;
     std::vector<std::optional<openbus::map::MapTrafficPose>> stopPoses = {};
+    std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles;
 
     [[nodiscard]] std::optional<openbus::map::MapTrafficPose> stopPose(std::size_t index) const {
         if (!stopPoses.empty()) {

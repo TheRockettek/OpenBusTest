@@ -277,6 +277,8 @@ class RenderLoop {
     std::unique_ptr<ImGuiLayer> imguiLayer_;
     bool imguiEnabled_ = false;
     bool spawnBusRequestPending_ = false;
+    bool openSpawnPopup_ = false;
+    bool openPlayerTimetablePopup_ = false;
     std::string spawnBusError_;
     std::vector<openbus::config::VehicleCatalogEntry> vehicleCatalog_;
     std::filesystem::path vehiclesDirectory_;
@@ -455,7 +457,6 @@ class RenderLoop {
     std::size_t selectedPlayerCourseIndex_ = 0;
     std::size_t selectedPlayerCourseTripIndex_ = 0;
     std::size_t selectedPlayerFirstStopIndex_ = 0;
-    bool selectedPlayerUseTimetable_ = false;
     bool selectedPlayerDriveAsAdditionalBus_ = false;
     std::optional<SpawnBusRequest::TimetableSelection> selectedPlayerTimetableSelection_;
     using PlayerTimetableState = openbus::app::PlayerTimetableState;

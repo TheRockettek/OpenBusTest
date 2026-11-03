@@ -121,8 +121,11 @@ SoundPlaybackParameters triggeredParameters(const SoundTriggerDefinition& defini
     }
     const float rolloff =
         viewpoint == openbus::rendering::ViewpointContext::PlayerInterior ? 0.0F : 1.0F;
-    return {static_cast<float>(std::clamp(gain, 0.0, 1.0)), 1.0F, definition.position,
-            (std::max)(definition.maxDistance, EXTERIOR_SOUND_MIN_MAX_DISTANCE), rolloff,
+    return {static_cast<float>(std::clamp(gain, 0.0, 1.0)),
+            1.0F,
+            definition.position,
+            (std::max)(definition.maxDistance, EXTERIOR_SOUND_MIN_MAX_DISTANCE),
+            rolloff,
             static_cast<float>(EXTERIOR_SOUND_REFERENCE_DISTANCE)};
 }
 
@@ -143,10 +146,9 @@ SoundPlaybackParameters
 VehicleSoundBank::worldParameters(SoundPlaybackParameters parameters) const {
     const auto local = parameters.position;
     for (std::size_t axis = 0; axis < 3; ++axis) {
-        parameters.position[axis] =
-            pose_.position[axis] + pose_.rotation[axis * 3] * local[0] +
-            pose_.rotation[axis * 3 + 1] * local[1] +
-            pose_.rotation[axis * 3 + 2] * local[2];
+        parameters.position[axis] = pose_.position[axis] + pose_.rotation[axis * 3] * local[0] +
+                                    pose_.rotation[axis * 3 + 1] * local[1] +
+                                    pose_.rotation[axis * 3 + 2] * local[2];
     }
     return parameters;
 }
@@ -527,14 +529,12 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         SoundPlaybackParameters parameters =
             worldParameters(triggeredParameters(definition, controlValue, variables, viewpoint));
         const float sourceGain = parameters.gain;
-        const float listenerGain =
-            viewpoint == openbus::rendering::ViewpointContext::NonPlayer
-                ? listenerOutsideGain_
-                : 1.0F;
+        const float listenerGain = viewpoint == openbus::rendering::ViewpointContext::NonPlayer
+                                       ? listenerOutsideGain_
+                                       : 1.0F;
         parameters.gain *= listenerGain;
         const float gain = parameters.gain;
-        const bool startMutedLoop =
-            definition.loop && listenerGain == 0.0F && sourceGain > 0.0F;
+        const bool startMutedLoop = definition.loop && listenerGain == 0.0F && sourceGain > 0.0F;
         auto& ownedSources = definition.loop ? activeTriggeredLoops_ : activeOneShots_;
         const auto active = ownedSources.find(definition.id);
         if (gain <= 0.0 && definition.loop &&
@@ -600,9 +600,8 @@ void VehicleSoundBank::stop(SoundPlayback& playback, const std::string& name) {
 void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variables& variables,
                                           openbus::rendering::ViewpointContext viewpoint) {
     const auto update = [&](ActiveSound& sound, bool loop) {
-        SoundPlaybackParameters parameters =
-            worldParameters(triggeredParameters(sound.definition, sound.controlValue, variables,
-                                                 viewpoint));
+        SoundPlaybackParameters parameters = worldParameters(
+            triggeredParameters(sound.definition, sound.controlValue, variables, viewpoint));
         if (viewpoint == openbus::rendering::ViewpointContext::NonPlayer) {
             parameters.gain *= listenerOutsideGain_;
         }
@@ -645,10 +644,9 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
     std::unordered_map<SoundDefinitionId, DesiredLoop> desired;
     desired.reserve(untriggeredLoopSounds_.size());
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
-        const double listenerGain =
-            viewpoint == openbus::rendering::ViewpointContext::NonPlayer
-                ? listenerOutsideGain_
-                : 1.0;
+        const double listenerGain = viewpoint == openbus::rendering::ViewpointContext::NonPlayer
+                                        ? listenerOutsideGain_
+                                        : 1.0;
         const double viewGain = viewpointGain(definition, variables, viewpoint) * listenerGain;
         if (viewGain <= 0.0 || !conditionsAllow(definition, variables)) {
             continue;
@@ -675,19 +673,15 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
             pitch = std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
                                0.5F, 2.0F);
         }
-        desired.emplace(definition.id,
-                        DesiredLoop{file,
-                                    worldParameters({static_cast<float>(gain),
-                                                     static_cast<float>(pitch),
-                                                     definition.position,
-                                                     (std::max)(definition.maxDistance,
-                                                                EXTERIOR_SOUND_MIN_MAX_DISTANCE),
-                                                     viewpoint == openbus::rendering::ViewpointContext::
-                                                                      PlayerInterior
-                                                         ? 0.0F
-                                                         : 1.0F,
-                                                     static_cast<float>(
-                                                         EXTERIOR_SOUND_REFERENCE_DISTANCE)})});
+        desired.emplace(
+            definition.id,
+            DesiredLoop{
+                file, worldParameters(
+                          {static_cast<float>(gain), static_cast<float>(pitch), definition.position,
+                           (std::max)(definition.maxDistance, EXTERIOR_SOUND_MIN_MAX_DISTANCE),
+                           viewpoint == openbus::rendering::ViewpointContext::PlayerInterior ? 0.0F
+                                                                                             : 1.0F,
+                           static_cast<float>(EXTERIOR_SOUND_REFERENCE_DISTANCE)})});
     }
 
     for (auto active = activeAmbientLoops_.begin(); active != activeAmbientLoops_.end();) {

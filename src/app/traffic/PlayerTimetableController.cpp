@@ -345,12 +345,10 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
                        (adjacent.size() >= 8 && relaxedMapStops[mapIndex].starts_with(adjacent));
             };
             const bool startsAtHofStop =
-                matchesStop(0, 0) ||
-                (isTerminalVariant(0, 1) && matchesStop(1, 0));
-            const bool endsAtHofStop =
-                matchesStop(lastMapStop, lastHofStop) ||
-                (isTerminalVariant(lastMapStop, lastMapStop - 1) &&
-                 matchesStop(lastMapStop - 1, lastHofStop));
+                matchesStop(0, 0) || (isTerminalVariant(0, 1) && matchesStop(1, 0));
+            const bool endsAtHofStop = matchesStop(lastMapStop, lastHofStop) ||
+                                       (isTerminalVariant(lastMapStop, lastMapStop - 1) &&
+                                        matchesStop(lastMapStop - 1, lastHofStop));
             if (!startsAtHofStop || !endsAtHofStop)
                 continue;
             std::vector<std::size_t> previous(candidate.stops.size() + 1);
