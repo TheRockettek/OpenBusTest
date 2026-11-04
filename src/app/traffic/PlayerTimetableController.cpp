@@ -436,6 +436,11 @@ bool PlayerTimetableCatalog::update(const std::vector<PassengerStopRouteState>& 
                 if (route != routeByKey.end())
                     course.trips.push_back({tripIndex, route->second});
             }
+            std::ranges::stable_sort(course.trips, [&](const PlayerTimetableCatalogTrip& first,
+                                                       const PlayerTimetableCatalogTrip& second) {
+                return courses[courseIndex].trips[first.tripIndex].departureMinutes <
+                       courses[courseIndex].trips[second.tripIndex].departureMinutes;
+            });
             if (!course.trips.empty()) {
                 line.courses.push_back(std::move(course));
             }

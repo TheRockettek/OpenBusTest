@@ -87,5 +87,9 @@ struct PassengerNetwork {
 
 std::optional<std::size_t> nextLocatedPassengerStop(const PassengerStopRouteState& route,
                                                     std::size_t firstStopIndex);
+std::optional<std::size_t> nextPassengerStopWithPosition(
+    const PassengerStopRouteState& route, std::size_t firstStopIndex,
+    const std::function<std::optional<std::array<double, 3>>(
+        const openbus::map::MapTrafficPassengerStop&)>& resolveEditorPosition);
 
 } // namespace openbus::app

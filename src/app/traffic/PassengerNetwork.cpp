@@ -302,4 +302,17 @@ std::optional<std::size_t> nextLocatedPassengerStop(const PassengerStopRouteStat
     return std::nullopt;
 }
 
+std::optional<std::size_t> nextPassengerStopWithPosition(
+    const PassengerStopRouteState& route, std::size_t firstStopIndex,
+    const std::function<std::optional<std::array<double, 3>>(
+        const openbus::map::MapTrafficPassengerStop&)>& resolveEditorPosition) {
+    for (std::size_t index = firstStopIndex; index < route.stops.size(); ++index) {
+        if (route.stopPose(index) ||
+            (resolveEditorPosition && resolveEditorPosition(route.stops[index]))) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace openbus::app

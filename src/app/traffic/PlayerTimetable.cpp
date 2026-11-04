@@ -26,12 +26,12 @@ void RenderLoop::SetPlayerTimetableSelection(
         throw std::invalid_argument("Player timetable route does not match the spawned bus's HOF");
     }
     clearPlayerTripAiPolicy();
+    playerTimetableStopVisitLatchPosition_.reset();
     if (playerVehicle_ && playerVehicle_->passengers && activePlayerPassengerStop_) {
         playerVehicle_->passengers->service.endServiceAtCurrentStop();
     }
     // Keep the mapped stop alive while riders finish exiting, but do not let
     // that old stop advance a newly selected timetable trip.
-    activePlayerPassengerStopCompletesTimetable_ = false;
     if (!activePlayerPassengerStop_) {
         playerPassengerStopLatch_.reset();
         playerPassengerStopLatchRouteIndex_.reset();
@@ -41,9 +41,15 @@ void RenderLoop::SetPlayerTimetableSelection(
     const auto* trip =
         playerTimetable_.select(selection, passengerNetwork_.routes, passengerTimetableCourses_);
     if (trip == nullptr) {
+        playerPassengerServiceRouteIndex_.reset();
+        playerPassengerServiceNextStopIndex_ = 0;
+        ++playerPassengerServiceGeneration_;
         return;
     }
     playerPassengerServiceEnabled_ = true;
+    playerPassengerServiceRouteIndex_ = selection->passengerRouteIndex;
+    playerPassengerServiceNextStopIndex_ = selection->firstStopIndex;
+    ++playerPassengerServiceGeneration_;
     const auto& route = passengerNetwork_.routes[selection->passengerRouteIndex];
     playerTimetable_.state->lineName = openbus::app::passengerRouteDisplayLine(
         route, *openbus::app::passengerRouteHofRoute(route, playerVehicle_->scripts->hofData()));
@@ -68,8 +74,11 @@ void RenderLoop::advancePlayerTimetableTrip() {
     const auto* trip = playerTimetable_.advance(
         passengerNetwork_.routes, passengerTimetableCourses_, &playerVehicle_->scripts->hofData());
     if (trip != nullptr) {
+        playerPassengerServiceRouteIndex_ =
+            playerTimetable_.state->selection.passengerRouteIndex;
+        playerPassengerServiceNextStopIndex_ = playerTimetable_.state->selection.firstStopIndex;
+        ++playerPassengerServiceGeneration_;
         applyPlayerTripAiPolicy(*trip, playerTimetable_.state->selection.driveAsAdditionalBus);
         return;
     }
-    playerPassengerServiceEnabled_ = false;
 }

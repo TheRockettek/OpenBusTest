@@ -1422,10 +1422,35 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     const auto queuePose =
         [&](int stopId, std::size_t queueSlot) -> std::optional<openbus::map::MapTrafficPose> {
         const auto authored = authoredPassengerPositions_.find(stopId);
-        if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
-            return std::nullopt;
+        if (authored != authoredPassengerPositions_.end() && !authored->second.empty()) {
+            return authored->second[queueSlot % authored->second.size()];
         }
-        return authored->second[queueSlot % authored->second.size()];
+        for (const PassengerStopRouteState& route : passengerNetwork_.routes) {
+            for (std::size_t stopIndex = 0; stopIndex < route.stops.size(); ++stopIndex) {
+                if (route.stops[stopIndex].stopId != stopId) {
+                    continue;
+                }
+                auto pose = route.stopPose(stopIndex);
+                if (!pose) {
+                    continue;
+                }
+                if (const auto editorPosition = mapRenderer_->editorOnlyBusStopPosition(stopId)) {
+                    pose->position = *editorPosition;
+                }
+                const double passengerSide =
+                    openbus::map::mapTrafficPassengerSideSign(mapRenderer_->leftHandTraffic());
+                const double curbOffset = openbus::map::mapTrafficPassengerCurbOffsetMeters(
+                    mapRenderer_->leftHandTraffic(), 0.0, 2.4, 0.35);
+                const auto offset = openbus::map::mapTrafficPassengerWorldOffset(
+                    mapRenderer_->leftHandTraffic(), pose->headingRadians,
+                    curbOffset + passengerSide * 0.8, -0.8 * static_cast<double>(queueSlot));
+                pose->position[0] += offset[0];
+                pose->position[1] += offset[1];
+                pose->headingRadians -= passengerSide * std::numbers::pi * 0.5;
+                return pose;
+            }
+        }
+        return std::nullopt;
     };
     struct ScheduledStopRenderCandidate {
         const openbus::map::MapTrafficPassengerStop* stop = nullptr;
@@ -1522,9 +1547,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     const auto authoredPose = queuePose(stopId, 0);
                     if (!authoredPose) {
                         if (reportedPassengerAreaStops_.insert(stopId).second) {
-                            gameLog.Warning("No authored passenger waiting area matched stop " +
-                                            std::to_string(stopId) +
-                                            "; fallback passenger spawning is disabled");
+                            gameLog.Warning("No passenger waiting position could be generated for "
+                                            "stop " +
+                                            std::to_string(stopId) + ".");
                         }
                         continue;
                     }
@@ -1694,17 +1719,18 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId) {
                     return;
                 }
-                const auto authoredQueue = authoredPassengerPositions_.find(boardingStop->stopId);
-                if (authoredQueue == authoredPassengerPositions_.end() ||
-                    authoredQueue->second.empty()) {
-                    return;
-                }
-                const auto stopPose =
+                auto stopPose =
                     routeActor ? openbus::map::sampleMapTrafficRoute(
                                      routeActor->route, boardingStop->routeDistanceMeters, 0.0)
                                : playerStopPose;
                 if (!stopPose) {
                     throw std::runtime_error("Cannot sample a bus passenger boarding pose");
+                }
+                if (!routeActor) {
+                    if (const auto editorPosition =
+                            mapRenderer_->editorOnlyBusStopPosition(boardingStop->stopId)) {
+                        stopPose->position = *editorPosition;
+                    }
                 }
                 const double stopCameraDistance =
                     canDrawPassengers
@@ -1741,7 +1767,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             : std::max(initialQueue->second, waiting + 1);
                     const std::size_t queueSlot =
                         openbus::map::mapScheduledPassengerQueueSlot(initialCount, waiting);
-                    return authoredQueue->second[queueSlot % authoredQueue->second.size()];
+                    return queuePose(boardingStop->stopId, queueSlot).value_or(curbPose());
                 };
                 const auto drawPassengerBetweenPoses = [&](const PassengerCabinTravelPathData& path,
                                                            double progress, double startHeading,
@@ -2541,6 +2567,114 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
         }
     }
+    if (!renderingReflection_ && !captureMode_ && lastMainCameraPoseValid_ &&
+        mapRenderer_ != nullptr && playerTimetable_.state &&
+        playerTimetable_.state->selection.passengerRouteIndex < passengerNetwork_.routes.size()) {
+        const std::size_t timetableRouteIndex =
+            playerTimetable_.state->selection.passengerRouteIndex;
+        const PassengerStopRouteState& timetableRoute =
+            passengerNetwork_.routes[timetableRouteIndex];
+        const auto resolveEditorPosition = [this](const auto& stop) {
+            return mapRenderer_->editorOnlyBusStopPosition(stop.stopId);
+        };
+        const auto timetableStopIndex = openbus::app::nextPassengerStopWithPosition(
+            timetableRoute, playerTimetable_.state->nextStopIndex, resolveEditorPosition);
+        const double tileSize = mapRenderer_->tileSize();
+        if (!std::isfinite(tileSize) || tileSize <= 0.0) {
+            throw std::runtime_error("Map tile size is invalid for the passenger stop overlay");
+        }
+        const std::array<double, 2> debugOrigin = {
+            std::floor(lastMainCameraPose_.position[0] / tileSize) * tileSize,
+            std::floor(lastMainCameraPose_.position[1] / tileSize) * tileSize};
+        constexpr std::size_t segmentCount = 64;
+        std::vector<openbus::rendering::PrimitiveVertex> stopZoneVertices;
+        stopZoneVertices.reserve(segmentCount * 4);
+        const auto addRing = [&](const std::array<double, 3>& center, double radius,
+                                 const std::array<float, 3>& color) {
+            for (std::size_t segment = 0; segment < segmentCount; ++segment) {
+                const double fromAngle =
+                    2.0 * std::numbers::pi * static_cast<double>(segment) /
+                    static_cast<double>(segmentCount);
+                const double toAngle =
+                    2.0 * std::numbers::pi * static_cast<double>(segment + 1) /
+                    static_cast<double>(segmentCount);
+                for (const double angle : {fromAngle, toAngle}) {
+                    stopZoneVertices.push_back(
+                        {static_cast<float>(center[0] + radius * std::cos(angle) -
+                                            debugOrigin[0]),
+                         static_cast<float>(center[1] + radius * std::sin(angle) -
+                                            debugOrigin[1]),
+                         static_cast<float>(center[2] + 0.08), color[0], color[1], color[2]});
+                }
+            }
+        };
+        const auto stopPosition = [&](const PassengerStopRouteState& route,
+                                      std::size_t stopIndex)
+            -> std::optional<std::array<double, 3>> {
+            const auto pose = route.stopPose(stopIndex);
+            const int stopId = route.stops[stopIndex].stopId;
+            if (const auto editorPosition = mapRenderer_->editorOnlyBusStopPosition(stopId)) {
+                return editorPosition;
+            }
+            return pose ? std::optional{pose->position} : std::nullopt;
+        };
+        if (timetableStopIndex) {
+            const auto position = stopPosition(timetableRoute, *timetableStopIndex);
+            if (position) {
+                addRing(*position, PLAYER_TIMETABLE_STOP_VISIT_RADIUS_METERS,
+                        {1.0F, 0.68F, 0.05F});
+            }
+        }
+
+        std::optional<std::pair<std::size_t, std::size_t>> passengerServiceStop;
+        const bool serviceActive =
+            activePlayerPassengerStopRouteIndex_ && activePlayerPassengerStopIndex_;
+        if (serviceActive) {
+            passengerServiceStop =
+                std::pair{*activePlayerPassengerStopRouteIndex_, *activePlayerPassengerStopIndex_};
+        } else if (playerPassengerServiceRouteIndex_ &&
+                   *playerPassengerServiceRouteIndex_ < passengerNetwork_.routes.size()) {
+            const PassengerStopRouteState& serviceRoute =
+                passengerNetwork_.routes[*playerPassengerServiceRouteIndex_];
+            const auto serviceStopIndex = openbus::app::nextLocatedPassengerStop(
+                serviceRoute, playerPassengerServiceNextStopIndex_);
+            if (serviceStopIndex) {
+                passengerServiceStop = std::pair{*playerPassengerServiceRouteIndex_,
+                                                  *serviceStopIndex};
+            }
+        }
+        if (passengerServiceStop &&
+            passengerServiceStop->first < passengerNetwork_.routes.size()) {
+            const PassengerStopRouteState& serviceRoute =
+                passengerNetwork_.routes[passengerServiceStop->first];
+            if (passengerServiceStop->second < serviceRoute.stops.size()) {
+                const auto position = stopPosition(serviceRoute, passengerServiceStop->second);
+                if (position) {
+                    addRing(*position, PLAYER_PASSENGER_STOP_ARRIVAL_RADIUS_METERS,
+                            serviceActive ? std::array<float, 3>{0.2F, 1.0F, 0.25F}
+                                          : std::array<float, 3>{0.05F, 0.9F, 1.0F});
+                }
+            }
+        }
+        if (!stopZoneVertices.empty()) {
+            const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean depthWriteWasEnabled = GL_TRUE;
+            GLfloat previousLineWidth = 1.0F;
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+            glGetFloatv(GL_LINE_WIDTH, &previousLineWidth);
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            pushMatrix();
+            multiplyMatrix(translationMatrix({debugOrigin[0], debugOrigin[1], 0.0}));
+            openbus::rendering::drawPrimitives(stopZoneVertices, GL_LINES, 3.0F);
+            popMatrix();
+            glLineWidth(previousLineWidth);
+            glDepthMask(depthWriteWasEnabled);
+            if (depthWasEnabled) {
+                glEnable(GL_DEPTH_TEST);
+            }
+        }
+    }
     if (!renderingReflection_ && (cameraView_ == 0 || freeCameraEnabled_)) {
         const float precipitationTypeValue = simulationState_.sharedVariables().get("preciptype");
         const float precipitationRate = simulationState_.sharedVariables().get("preciprate");
@@ -3020,15 +3154,28 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                               << (departureMinute / 60) % 24 << ':' << std::setw(2)
                               << departureMinute % 60 << std::setfill(' ') << ')';
 
-                    const auto nextStopIndex =
-                        openbus::app::nextLocatedPassengerStop(route, timetableState.nextStopIndex);
+                    const auto resolveEditorPosition = [this](const auto& stop) {
+                        return mapRenderer_
+                                   ? mapRenderer_->editorOnlyBusStopPosition(stop.stopId)
+                                   : std::nullopt;
+                    };
+                    const auto nextStopIndex = openbus::app::nextPassengerStopWithPosition(
+                        route, timetableState.nextStopIndex, resolveEditorPosition);
                     std::string stopValue = "N/A";
                     std::string distanceValue = "N/A";
                     std::string delayValue = "N/A";
                     if (nextStopIndex) {
                         stopValue = route.stops[*nextStopIndex].name;
                         const auto stopPose = route.stopPose(*nextStopIndex);
-                        if (stopPose) {
+                        const auto editorStopPosition =
+                            mapRenderer_ ? mapRenderer_->editorOnlyBusStopPosition(
+                                               route.stops[*nextStopIndex].stopId)
+                                         : std::nullopt;
+                        const auto stopPosition =
+                            editorStopPosition ? editorStopPosition
+                                               : stopPose ? std::optional{stopPose->position}
+                                                          : std::nullopt;
+                        if (stopPosition) {
                             const bool dwellingAtNextStop =
                                 activePlayerPassengerStopRouteIndex_ ==
                                     timetableState.selection.passengerRouteIndex &&
@@ -3036,8 +3183,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             const double distanceMeters =
                                 dwellingAtNextStop
                                     ? 0.0
-                                    : std::hypot(stopPose->position[0] - playerPosition[0],
-                                                 stopPose->position[1] - playerPosition[1]);
+                                    : std::hypot((*stopPosition)[0] - playerPosition[0],
+                                                 (*stopPosition)[1] - playerPosition[1]);
                             std::ostringstream distanceText;
                             if (distanceMeters >= 1000.0) {
                                 distanceText << std::fixed << std::setprecision(1)
@@ -3091,6 +3238,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         metric("DISTANCE (DIRECT)", distanceValue);
                         metric("DELAY", delayValue);
                         ImGui::EndTable();
+                    }
+                    ImGui::TextDisabled(
+                        "Outer ring: 50 m timetable stop-visit radius. Inner ring: passenger "
+                        "service area (green while active).");
+                    if (playerVehicle_->passengers) {
+                        ImGui::TextDisabled("Passengers aboard: %zu",
+                                            playerVehicle_->passengers->service
+                                                .onboardPassengerCount());
+                    }
+                    if (scheduledPassengerHumanModels_.empty()) {
+                        ImGui::TextColored(
+                            ImVec4(1.0F, 0.75F, 0.2F, 1.0F),
+                            "Passenger models are unavailable; boarding will not be visible.");
                     }
                 }
                 ImGui::End();

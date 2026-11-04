@@ -20,6 +20,8 @@ inline constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 inline constexpr double MIN_FIELD_OF_VIEW = 20.0;
 inline constexpr double MAX_FIELD_OF_VIEW = 120.0;
 inline constexpr double GROUND_SHADOW_OFFSET_Z = 0.015;
+inline constexpr double PLAYER_TIMETABLE_STOP_VISIT_RADIUS_METERS = 50.0;
+inline constexpr double PLAYER_PASSENGER_STOP_ARRIVAL_RADIUS_METERS = 2.5;
 
 inline double mapTrafficSignalClockSeconds(double elapsedSeconds, double startHour) noexcept {
     return startHour * 3600.0 + elapsedSeconds;

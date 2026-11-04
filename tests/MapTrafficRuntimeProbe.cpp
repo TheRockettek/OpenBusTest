@@ -885,6 +885,15 @@ void verifyPlayerTimetableController() {
                                    .distanceMeters) &&
                 !nextLocatedPassengerStop(network.routes[0], 1),
             "wrong directions, earlier stops, and unlocated stops are excluded");
+    auto editorOnlyRoute = network.routes[0];
+    editorOnlyRoute.stopPoses.assign(editorOnlyRoute.stops.size(), std::nullopt);
+    const auto editorOnlyStopIndex = nextPassengerStopWithPosition(
+        editorOnlyRoute, 1, [](const auto& stop) -> std::optional<std::array<double, 3>> {
+            return stop.stopId == 2 ? std::optional{std::array<double, 3>{10.0, 0.0, 0.0}}
+                                    : std::nullopt;
+        });
+    require(editorOnlyStopIndex == std::optional<std::size_t>{1},
+            "editor-only bus-stop positions locate stops without route poses");
     auto placeholderHof = hof;
     placeholderHof.routes.front().line = "XXX";
     PlayerTimetableCatalog placeholderCatalog;
@@ -1090,12 +1099,15 @@ void verifyPlayerTimetableController() {
     appendedRoute.timetableKey = "second-trip";
     const std::vector<PassengerStopRouteState> expandedRoutes{hofRoute, appendedRoute};
     const std::vector<openbus::map::MapAiTimetableCourse> expandedCourses{
-        {"updated", {{"hof-trip", 0, 480.0}, {"second-trip", 0, 520.0}}}};
+        {"updated", {{"second-trip", 0, 520.0}, {"hof-trip", 0, 480.0}}}};
     catalog.invalidate();
     require(catalog.update(expandedRoutes, expandedCourses, hof) &&
                 catalog.lines.size() == 1 && catalog.lines[0].courses[0].trips.size() == 2 &&
+                catalog.lines[0].courses[0].trips[0].tripIndex == 1 &&
+                catalog.lines[0].courses[0].trips[0].routeIndex == 0 &&
+                catalog.lines[0].courses[0].trips[1].tripIndex == 0 &&
                 catalog.lines[0].courses[0].trips[1].routeIndex == 1,
-            "catalog rebuild includes newly registered routes and courses");
+            "catalog sorts matched course trips by departure time");
     const auto ambiguousMatch = analyzePassengerRouteHof(tripKeyLine, ambiguousHof);
     require(ambiguousMatch.status == PassengerHofMatchStatus::AmbiguousLines &&
                 ambiguousMatch.matchingSequences == 2,

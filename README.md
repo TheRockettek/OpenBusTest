@@ -70,7 +70,8 @@ shared section. If an HOF route has no stop list, it is available only
 when its line and destination/terminus match the map route. Public line numbers
 come from the HOF, except that an `XXX` placeholder uses the map's public line
 when available. Departure times come from the map timetable; HOF files do not
-supply departure times. Date-active Chrono timetables replace deactivated lines
+supply departure times, and the trip picker sorts departures by their scheduled
+start times. Date-active Chrono timetables replace deactivated lines
 and add or override timetable data for both player and AI services, so available
 lines can change with the selected start date.
 Player routes come from the map's schedules and known stop definitions,
@@ -78,6 +79,17 @@ independently of complete station links, AI road-route construction, AI depot
 buses, or an active AI bus population. Missing or ambiguous stop definitions
 are reported in the log. The panel warns if stop locations cannot be resolved:
 the trip can still be started, but those stops cannot be serviced.
+During an active trip, the outer amber ring marks the 50 m stop-visit radius
+centered on the matching editor-only bus-stop object; entering it advances the
+timetable independently of passenger boarding. If stops are close together,
+the bus must leave the previous visit radius before another stop can count.
+The editor-only object can locate a timetable stop even when it has no route
+pose. The inner ring marks the
+passenger-service area, which still requires slowing near the stop but does not
+require opening doors. Passenger queues use authored waiting areas when
+available and are generated beside the stop otherwise. The trip HUD reports
+onboard passenger count and warns when human models are unavailable, in which
+case boarding can proceed without visible passenger actors.
 **Cancel selection** closes setup, **Cancel trip now** immediately
 releases the assigned trip and its AI replacement policy, and **Stop driving after
 this trip** ends the assignment at the terminus. Course progression also stays

@@ -522,6 +522,15 @@ const std::vector<EditorPassengerDebugObject>& MapRenderer::editorPassengerDebug
     return impl_->editorPassengerDebugObjects;
 }
 
+std::optional<std::array<double, 3>> MapRenderer::editorOnlyBusStopPosition(int stopId) const {
+    for (const EditorPassengerDebugObject& object : impl_->editorPassengerDebugObjects) {
+        if (object.busStop && object.objectId == stopId) {
+            return object.position;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<openbus::map::MapTrafficActor>
 MapRenderer::createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,
                                 double laneOffsetMagnitudeMeters,

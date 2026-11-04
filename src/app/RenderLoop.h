@@ -527,9 +527,13 @@ class RenderLoop {
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
     std::optional<std::size_t> playerPassengerStopLatchIndex_;
     std::optional<int> activePlayerPassengerStop_;
-    bool activePlayerPassengerStopCompletesTimetable_ = false;
     std::optional<std::size_t> activePlayerPassengerStopRouteIndex_;
     std::optional<std::size_t> activePlayerPassengerStopIndex_;
+    std::optional<std::size_t> playerPassengerServiceRouteIndex_;
+    std::size_t playerPassengerServiceNextStopIndex_ = 0;
+    std::optional<std::array<double, 2>> playerTimetableStopVisitLatchPosition_;
+    std::uint64_t playerPassengerServiceGeneration_ = 0;
+    std::uint64_t activePlayerPassengerStopServiceGeneration_ = 0;
     void publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,
                                      std::size_t departureIndex) const;
     void finishPendingTrafficVehicleLoads();

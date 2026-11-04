@@ -142,6 +142,7 @@ class MapRenderer {
                                                                             int pathTypeCode) const;
     const std::vector<TrafficPathDebugSegment>& sceneryTrafficPathSegments() const;
     const std::vector<EditorPassengerDebugObject>& editorPassengerDebugObjects() const;
+    std::optional<std::array<double, 3>> editorOnlyBusStopPosition(int stopId) const;
     std::optional<openbus::map::MapTrafficActor> createTrafficActor(
         int splineId, std::string modelPath, double speedMetersPerSecond,
         double laneOffsetMagnitudeMeters, std::optional<std::string> driverModelPath = std::nullopt,

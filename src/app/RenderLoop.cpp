@@ -1119,9 +1119,12 @@ void RenderLoop::ResetForStartupMenu() {
     playerPassengerStopLatchRouteIndex_.reset();
     playerPassengerStopLatchIndex_.reset();
     activePlayerPassengerStop_.reset();
-    activePlayerPassengerStopCompletesTimetable_ = false;
     activePlayerPassengerStopRouteIndex_.reset();
     activePlayerPassengerStopIndex_.reset();
+    playerPassengerServiceRouteIndex_.reset();
+    playerPassengerServiceNextStopIndex_ = 0;
+    playerTimetableStopVisitLatchPosition_.reset();
+    ++playerPassengerServiceGeneration_;
     mapRenderer_.reset();
     vehicleCameras_.clear();
     vehicleScheduleViews_.clear();
