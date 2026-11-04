@@ -4,9 +4,11 @@
 #include "app/traffic/PlayerTripPolicy.h"
 #include "app/traffic/PassengerNetwork.h"
 #include "app/traffic/PassengerApproach.h"
+#include "app/traffic/PassengerCabinPath.h"
 #include "app/traffic/ScheduledBusTiming.h"
 #include "app/traffic/PlayerTimetableController.h"
 #include "app/vehicle/PassengerState.h"
+#include "app/vehicle/PassengerRequestVariables.h"
 
 #include <algorithm>
 #include <array>
@@ -1133,6 +1135,7 @@ void verifyPlayerTimetableController() {
 
 void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
+    MapPassengerQueueIdentities queueIdentities;
     {
         require(openbus::app::playerPassengerStopArrivalRadiusMeters == 20.0 &&
                     openbus::app::playerPassengerStopReleaseRadiusMeters >
@@ -1188,18 +1191,112 @@ void verifyPassengerServiceBehavior() {
                     "waiting passengers stop at the entrance");
     }
     {
+        VehicleConfig cabin;
+        cabin.passengerPositions = {{{0.0, 2.0, 0.0}}};
+        cabin.passengerPathPoints = {
+            {0, {0.0, 0.0, 0.0}}, {1, {0.0, 1.0, 0.0}}, {2, {0.0, 2.0, 0.0}}};
+        cabin.passengerPathLinks = {{0, 1, false}, {1, 2, false}};
+        cabin.passengerEntryPathPoints = {0};
+        cabin.passengerExitPathPoints = {0};
+        const MapTrafficPose bus{{10.0, 20.0, 1.0}, 0.3};
+        PassengerCabinPosition doorPosition;
+        const auto door = openbus::app::passengerCabinSeatPose(bus, doorPosition);
+        const auto seat = openbus::app::passengerCabinSeatPose(bus, cabin.passengerPositions[0]);
+        const auto seatLocal = openbus::app::passengerCabinStandingPoint(
+            cabin.passengerPositions[0].position, cabin.passengerPositions[0].seatHeight);
+        MapPassengerServiceRuntime service(1);
+        service.setWaitingPassengers(901, 1);
+        require(service.arrive({.stopId = 901, .dwellSeconds = 1.0, .nextStopId = 902}),
+                "headless cabin occupancy fixture starts boarding");
+        service.advance(0.225, true, true, true);
+        openbus::app::updatePassengerCabinPathOccupancy(service, cabin, bus, door.position,
+                                                        seatLocal, true, 0, 0);
+        require(service.passengerCountOnPathLink(0) == 1 &&
+                    service.passengerCountOnPathLink(1) == 0,
+                "simulation computes the first boarding link without a render pass");
+        service.advance(0.225, true, true, true);
+        require(service.passengerCountOnPathLink(0) == 0 &&
+                    service.passengerCountOnPathLink(1) == 1,
+                "simulation progress moves boarding occupancy to the next link");
+        service.advance(0.3, true, true, true);
+        require(service.passengerCountOnPathLink(1) == 0 && service.onboardPassengerCount() == 1,
+                "boarding completion clears path occupancy");
+        service.depart();
+        require(service.arrive({.stopId = 902, .dwellSeconds = 1.0}),
+                "headless cabin occupancy fixture starts alighting");
+        service.advance(0.225, false, true, true);
+        openbus::app::updatePassengerCabinPathOccupancy(
+            service, cabin, bus, seat.position,
+            openbus::app::passengerCabinLocalPoint(bus, door.position), false, 0, 0);
+        require(service.passengerCountOnPathLink(1) == 1 &&
+                    service.passengerCountOnPathLink(0) == 0,
+                "simulation computes the reverse alighting route without rendering");
+        service.advance(0.225, false, false, true);
+        require(service.passengerCountOnPathLink(1) == 1,
+                "closed exit doors leave alighting occupancy on the current link");
+        service.advance(0.225, false, true, true);
+        require(service.passengerCountOnPathLink(1) == 0 &&
+                    service.passengerCountOnPathLink(0) == 1,
+                "simulation advances alighting occupancy to the selected exit");
+        cabin.passengerPathLinks[0].oneWay = true;
+        openbus::app::updatePassengerCabinPathOccupancy(
+            service, cabin, bus, seat.position,
+            openbus::app::passengerCabinLocalPoint(bus, door.position), false, 0, 0);
+        require(service.passengerCountOnPathLink(0) == 0 &&
+                    service.passengerCountOnPathLink(1) == 0,
+                "an unreachable selected exit clears occupancy for the direct-path fallback");
+        service.depart();
+        require(service.passengerCountOnPathLink(0) == 0,
+                "departure clears active cabin path occupancy");
+
+        cabin.passengerPathLinks[0].oneWay = false;
+        cabin.passengerPositions[0].position[2] = 0.45;
+        cabin.passengerPositions[0].seatHeight = 0.45;
+        MapPassengerServiceRuntime seatedService(1);
+        seatedService.setWaitingPassengers(903, 1);
+        require(seatedService.arrive({.stopId = 903, .dwellSeconds = 1.0, .nextStopId = 904}),
+                "seated cabin occupancy fixture starts boarding");
+        seatedService.advance(0.375, true, true, true);
+        openbus::app::updatePassengerCabinPathOccupancy(
+            seatedService, cabin, bus, door.position, seatLocal, true, 0, 0);
+        require(seatedService.passengerCountOnPathLink(1) == 1,
+                "a seated passenger occupies the cabin link while walking to the seat");
+        seatedService.advance(0.3, true, true, true);
+        require(seatedService.boardingPassenger() &&
+                    seatedService.passengerCountOnPathLink(0) == 0 &&
+                    seatedService.passengerCountOnPathLink(1) == 0,
+                "the sitting transition does not occupy a cabin link");
+        seatedService.advance(0.075, true, true, true);
+        seatedService.depart();
+        require(seatedService.arrive({.stopId = 904, .dwellSeconds = 1.0}),
+                "seated cabin occupancy fixture starts alighting");
+        seatedService.advance(0.075, false, true, true);
+        openbus::app::updatePassengerCabinPathOccupancy(
+            seatedService, cabin, bus, seat.position,
+            openbus::app::passengerCabinLocalPoint(bus, door.position), false, 0, 0);
+        require(seatedService.passengerCountOnPathLink(0) == 0 &&
+                    seatedService.passengerCountOnPathLink(1) == 0,
+                "the standing transition does not occupy a cabin link");
+        seatedService.advance(0.3, false, true, true);
+        require(seatedService.passengerCountOnPathLink(1) == 1,
+                "alighting occupies the selected path after standing");
+    }
+    {
         MapPassengerServiceRuntime player(1);
         std::size_t queue = 1;
         require(player.arrive({.stopId = 50, .dwellSeconds = 1.0, .nextStopId = 51}),
                 "player stop starts");
-        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, 10.0, false, false, true);
+        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, queueIdentities, 10.0, false,
+                                                  false, true);
         require(player.dwelling() && queue == 1 && player.onboardPassengerCount() == 0,
                 "closed doors keep a player stop open without boarding past its nominal dwell");
-        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, 0.25, true, true, true);
+        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, queueIdentities, 0.25, true,
+                                                  true, true);
         require(player.boardingPassenger() && queue == 0,
                 "an open door reserves a passenger after the wait");
         const double progress = player.boardingProgress();
-        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, 2.0, false, false, true);
+        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, queueIdentities, 2.0, false,
+                                                  false, true);
         require(player.boardingPassenger() && player.boardingProgress() == progress,
                 "closing the door pauses an in-progress boarding passenger");
         player.depart();
@@ -1246,6 +1343,7 @@ void verifyPassengerServiceBehavior() {
     const std::size_t afterBoarding = boardingQueue.waitingPassengers(42);
     require(boardingQueue.boardingPassenger() && afterBoarding + 1 == beforeBoarding &&
                 mapScheduledPassengerQueueSlot(4, afterBoarding) == visibleSlot &&
+                boardingQueue.boardingPassengerQueueSlot(4) == visibleSlot &&
                 boardingQueue.boardingPassengerModelIndex() ==
                     mapScheduledPassengerModelIdentity(42, beforeBoarding - 1),
             "boarding retains the visible passenger's slot and model after queue decrement");
@@ -1347,6 +1445,24 @@ void verifyPassengerServiceBehavior() {
     require(!finalStopService.dwelling() && finalStopService.onboardPassengerCount() == 0,
             "final-stop service completes after the last passenger has exited");
 
+    MapPassengerServiceRuntime doorSwitchService(2);
+    doorSwitchService.setWaitingPassengers(870, 2);
+    require(doorSwitchService.arrive({.stopId = 870, .dwellSeconds = 2.0, .nextStopId = 871}),
+            "multi-door fixture starts boarding");
+    doorSwitchService.advance(2.0);
+    require(doorSwitchService.onboardPassengerCount() == 2 &&
+                doorSwitchService.arrive({.stopId = 871, .dwellSeconds = 2.0}),
+            "multi-door fixture has two alighting passengers");
+    doorSwitchService.advance(0.7, false, true, true, true);
+    doorSwitchService.advance(0.2, false, true, true, true);
+    require(doorSwitchService.alightingSeatIndex() == 1 &&
+                doorSwitchService.alightingProgress() == 0.0 &&
+                doorSwitchService.onboardPassengerCount() == 1,
+            "next alighter waits for its own door to be selected after a previous exit");
+    doorSwitchService.advance(0.25, false, false, true, true);
+    require(doorSwitchService.alightingProgress() == 0.0,
+            "an open previous door cannot move the next passenger through a closed exit");
+
     MapPassengerServiceRuntime alightingService(1);
     alightingService.setWaitingPassengers(800, 1);
     require(alightingService.arrive({.stopId = 800, .dwellSeconds = 2.0, .nextStopId = 900}),
@@ -1385,28 +1501,199 @@ void verifyPassengerServiceBehavior() {
                 secondBus.arrive({.stopId = 400, .dwellSeconds = 2.0, .nextStopId = 500}),
             "multiple buses can dwell at a shared stop");
     std::size_t sharedWaitingPassengers = 2;
-    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.375);
-    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.375);
+    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers,
+                                              queueIdentities, 0.375);
+    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers,
+                                              queueIdentities, 0.375);
     require(
         sharedWaitingPassengers == 0 &&
             firstBus.boardingPassengerModelIndex() == mapScheduledPassengerModelIdentity(400, 1) &&
-            secondBus.boardingPassengerModelIndex() == mapScheduledPassengerModelIdentity(400, 0),
+            secondBus.boardingPassengerModelIndex() == mapScheduledPassengerModelIdentity(400, 0) &&
+            firstBus.boardingPassengerQueueSlot(2) == 0 &&
+            secondBus.boardingPassengerQueueSlot(2) == 1,
         "buses at a shared stop reserve different passengers from the visible queue");
-    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.375);
-    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.375);
+    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers,
+                                              queueIdentities, 0.1);
+    require(firstBus.waitingPassengers(400) == 0 && firstBus.boardingPassengerQueueSlot(2) == 0 &&
+                secondBus.boardingPassengerQueueSlot(2) == 1,
+            "other reservations do not move an already boarding passenger to a different slot");
+    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers,
+                                              queueIdentities, 0.275);
+    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers,
+                                              queueIdentities, 0.375);
     require(firstBus.passengerModelIndexOnSeat(0) == 401 &&
-                secondBus.passengerModelIndexOnSeat(0) == 400,
+                secondBus.passengerModelIndexOnSeat(0) == 400 &&
+                !firstBus.boardingPassengerQueueSlot(2) && !secondBus.boardingPassengerQueueSlot(2),
             "shared queue passenger identities persist into each bus seat");
+
+    MapPassengerServiceRuntime departingBus(1);
+    MapPassengerServiceRuntime retiringBus(1);
+    require(departingBus.arrive({.stopId = 410, .dwellSeconds = 2.0, .nextStopId = 420}) &&
+                retiringBus.arrive({.stopId = 410, .dwellSeconds = 2.0, .nextStopId = 420}),
+            "shared cancellation fixture starts two buses at the same stop");
+    std::size_t cancellationQueue = 2;
+    advanceMapPassengerServiceWithSharedQueue(departingBus, 410, cancellationQueue, queueIdentities,
+                                              0.25);
+    advanceMapPassengerServiceWithSharedQueue(retiringBus, 410, cancellationQueue, queueIdentities,
+                                              0.25);
+    require(cancellationQueue == 0 && departingBus.waitingPassengers(410) == 1,
+            "the first bus has a stale local queue after the second reservation");
+    departMapPassengerServiceWithSharedQueue(departingBus, cancellationQueue, queueIdentities);
+    require(cancellationQueue == 1 && !departingBus.boardingPassenger() &&
+                !departingBus.boardingPassengerQueueSlot(2) &&
+                queueIdentities.modelIdentity(410, 0) == 411 &&
+                retiringBus.boardingPassengerModelIndex() == 410,
+            "departure returns its original model without replacing another reserved rider");
+    endMapPassengerServiceWithSharedQueue(retiringBus, cancellationQueue, queueIdentities);
+    require(cancellationQueue == 2 && !retiringBus.boardingPassenger() &&
+                !retiringBus.boardingPassengerQueueSlot(2) &&
+                queueIdentities.modelIdentity(410, 0) == 411 &&
+                queueIdentities.modelIdentity(410, 1) == 410,
+            "retirement preserves both returned models in the shared queue");
+    endMapPassengerServiceWithSharedQueue(retiringBus, cancellationQueue, queueIdentities);
+    require(cancellationQueue == 2 && queueIdentities.modelIdentity(410, 1) == 410,
+            "repeated retirement does not return or replace a rider twice");
+    MapPassengerServiceRuntime reboardingBus(2);
+    require(reboardingBus.arrive({.stopId = 410, .dwellSeconds = 2.0, .nextStopId = 420}),
+            "returned passengers can board a later bus");
+    advanceMapPassengerServiceWithSharedQueue(reboardingBus, 410, cancellationQueue,
+                                              queueIdentities, 1.5);
+    require(cancellationQueue == 0 && reboardingBus.passengerModelIndexOnSeat(0) == 410 &&
+                reboardingBus.passengerModelIndexOnSeat(1) == 411,
+            "multiple returned passengers keep their models when boarded in one update");
+    require(queueIdentities.modelIdentity(410, 0) == 410 &&
+                queueIdentities.modelIdentity(410, 1) == 411,
+            "boarding consumes overrides so later queue replenishment uses default models");
+    reboardingBus.advance(0.5);
+    require(reboardingBus.arrive({.stopId = 420, .dwellSeconds = 2.0}) &&
+                reboardingBus.alightingPassenger() &&
+                reboardingBus.passengerModelIndexOnSeat(0) == 410 &&
+                reboardingBus.passengerModelIndexOnSeat(1) == 411,
+            "reboarded passenger models persist through to alighting");
+
+    MapPassengerServiceRuntime interruptedBus(1);
+    MapPassengerServiceRuntime concurrentBus(1);
+    MapPassengerServiceRuntime replacementBus(1);
+    require(interruptedBus.arrive({.stopId = 415, .dwellSeconds = 2.0, .nextStopId = 420}) &&
+                concurrentBus.arrive({.stopId = 415, .dwellSeconds = 2.0, .nextStopId = 420}) &&
+                replacementBus.arrive({.stopId = 415, .dwellSeconds = 2.0, .nextStopId = 420}),
+            "replacement fixture starts three buses at the same stop");
+    std::size_t replacementQueue = 2;
+    advanceMapPassengerServiceWithSharedQueue(interruptedBus, 415, replacementQueue,
+                                              queueIdentities, 0.25);
+    advanceMapPassengerServiceWithSharedQueue(concurrentBus, 415, replacementQueue, queueIdentities,
+                                              0.25);
+    departMapPassengerServiceWithSharedQueue(interruptedBus, replacementQueue, queueIdentities);
+    advanceMapPassengerServiceWithSharedQueue(replacementBus, 415, replacementQueue,
+                                              queueIdentities, 0.25, false);
+    require(replacementQueue == 1 && queueIdentities.modelIdentity(415, 0) == 416,
+            "a closed door does not consume the returned rider's model identity");
+    advanceMapPassengerServiceWithSharedQueue(replacementBus, 415, replacementQueue,
+                                              queueIdentities, 0.75);
+    advanceMapPassengerServiceWithSharedQueue(concurrentBus, 415, replacementQueue, queueIdentities,
+                                              0.5);
+    require(replacementQueue == 0 && replacementBus.passengerModelIndexOnSeat(0) == 416 &&
+                concurrentBus.passengerModelIndexOnSeat(0) == 415,
+            "a returned rider can reboard while the other reserved rider finishes boarding");
+    require(queueIdentities.modelIdentity(410, 0) == 410,
+            "passenger identity overrides are isolated by stop");
+    MapPassengerQueueIdentities independentIdentities;
+    independentIdentities.returnPassenger(700, 0, 707);
+    independentIdentities.returnPassenger(701, 0, 709);
+    require(independentIdentities.take(700, 0) == 707 &&
+                independentIdentities.modelIdentity(701, 0) == 709 &&
+                independentIdentities.modelIdentity(700, 0) == 700,
+            "consuming an override leaves other stops intact and restores the default slot");
+    bool rejectedDuplicateQueuePosition = false;
+    try {
+        independentIdentities.returnPassenger(701, 0, 701);
+    } catch (const std::logic_error&) {
+        rejectedDuplicateQueuePosition = true;
+    }
+    require(rejectedDuplicateQueuePosition && independentIdentities.modelIdentity(701, 0) == 709,
+            "an already occupied returned-passenger slot is not silently replaced");
+    bool rejectedMismatchedQueue = false;
+    try {
+        advanceMapPassengerServiceWithSharedQueue(concurrentBus, 416, replacementQueue,
+                                                  queueIdentities, 0.1);
+    } catch (const std::invalid_argument&) {
+        rejectedMismatchedQueue = true;
+    }
+    require(rejectedMismatchedQueue && replacementQueue == 0,
+            "a service cannot consume another stop's shared queue");
+
+    MapPassengerServiceRuntime finishedBus(1);
+    MapPassengerServiceRuntime activeBus(1);
+    require(finishedBus.arrive({.stopId = 430, .dwellSeconds = 2.0, .nextStopId = 440}) &&
+                activeBus.arrive({.stopId = 430, .dwellSeconds = 2.0, .nextStopId = 440}),
+            "shared completed-boarding fixture starts two buses");
+    std::size_t completedQueue = 2;
+    advanceMapPassengerServiceWithSharedQueue(finishedBus, 430, completedQueue, queueIdentities,
+                                              0.75);
+    advanceMapPassengerServiceWithSharedQueue(activeBus, 430, completedQueue, queueIdentities,
+                                              0.25);
+    require(completedQueue == 0 && finishedBus.waitingPassengers(430) == 1,
+            "a completed bus may have a stale snapshot after another reservation");
+    departMapPassengerServiceWithSharedQueue(finishedBus, completedQueue, queueIdentities);
+    require(completedQueue == 0 && finishedBus.onboardPassengerCount() == 1,
+            "a completed bus cannot restore its stale queue snapshot on departure");
+    advanceMapPassengerServiceWithSharedQueue(activeBus, 430, completedQueue, queueIdentities, 0.5);
+    require(completedQueue == 0 && activeBus.onboardPassengerCount() == 1,
+            "the second reservation completes without creating extra passengers");
 
     MapPassengerServiceRuntime terminalBus(1);
     require(terminalBus.arrive({.stopId = 450, .dwellSeconds = 0.75, .nextStopId = 0}),
             "terminal bus opens a stop dwell without an onward passenger destination");
     std::size_t terminalStopQueue = 3;
-    advanceMapPassengerServiceWithSharedQueue(terminalBus, 450, terminalStopQueue, 0.75);
+    advanceMapPassengerServiceWithSharedQueue(terminalBus, 450, terminalStopQueue, queueIdentities,
+                                              0.75);
     require(terminalStopQueue == 3 && terminalBus.onboardPassengerCount() == 0 &&
                 !terminalBus.boardingPassenger(),
             "terminal calls preserve shared waiting passengers and do not board riders without a "
             "destination");
+
+    MapPassengerServiceRuntime capacityService(1);
+    const auto capacityRequests = [&] {
+        return openbus::app::vehicle::passengerServiceRequestVariables(0, 0, capacityService);
+    };
+    capacityService.setWaitingPassengers(460, 2);
+    require(capacityService.arrive({.stopId = 460, .dwellSeconds = 4.0, .nextStopId = 470}) &&
+                capacityRequests().entries[0],
+            "waiting passengers request entry when a seat is available");
+    capacityService.advance(0.375, true, true, true);
+    require(!capacityService.canAcceptWaitingPassenger() && capacityRequests().entries[0] &&
+                capacityService.waitingPassengers(460) == 1,
+            "a reserved last seat cannot accept another rider but keeps its entry request");
+    capacityService.advance(0.375, true, true, true);
+    require(capacityService.onboardPassengerCount() == 1 && !capacityRequests().entries[0] &&
+                capacityService.waitingPassengers(460) == 1,
+            "a full bus clears the entry request without consuming the remaining queue");
+    capacityService.depart();
+    capacityService.setWaitingPassengers(470, 1);
+    require(capacityService.arrive({.stopId = 470, .dwellSeconds = 4.0, .nextStopId = 480}) &&
+                capacityRequests().entries[0] && capacityRequests().exits[0],
+            "a pending alighter makes room for a waiting passenger and requests both doors");
+    capacityService.advance(0.375, false, false, true);
+    require(capacityRequests().entries[0] && capacityRequests().exits[0],
+            "closed doors retain requests while the occupied seat is due to be freed");
+    capacityService.advance(0.75, false, true, true);
+    require(capacityRequests().entries[0] && !capacityRequests().exits[0] &&
+                capacityService.onboardPassengerCount() == 0,
+            "entry stays requested once alighting frees the seat");
+    capacityService.advance(0.75, true, true, true);
+    require(!capacityRequests().entries[0] && capacityService.onboardPassengerCount() == 1,
+            "entry request clears after the newly available seat is filled");
+    capacityService.depart();
+    capacityService.setWaitingPassengers(480, 1);
+    require(capacityService.arrive({.stopId = 480, .dwellSeconds = 1.0}) &&
+                !capacityRequests().entries[0] && capacityRequests().exits[0],
+            "terminal service requests only alighting even when a seat will become available");
+    MapPassengerServiceRuntime noSeatService(0);
+    noSeatService.setWaitingPassengers(490, 1);
+    require(noSeatService.arrive({.stopId = 490, .dwellSeconds = 1.0, .nextStopId = 500}) &&
+                !openbus::app::vehicle::passengerServiceRequestVariables(0, 0, noSeatService)
+                     .entries[0],
+            "a vehicle with no seats does not request boarding");
 
     MapPassengerServiceRuntime boardingService(1);
     boardingService.setWaitingPassengers(600, 3);

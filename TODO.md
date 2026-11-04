@@ -220,6 +220,11 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   and their seat. Shared queue consumption gives simultaneous buses distinct
   passengers and preserves each rider identity through seating; first boarding
   priority rotates independently among vehicles sharing each stop queue. A
+  reserved boarder keeps its original queue slot while other buses board, and
+  departures or service cancellation update the current shared count rather
+  than restoring a stale per-bus snapshot. Returned riders retain their model
+  identity in the shared queue, including when another bus has reserved a
+  passenger, and keep it through reboarding and alighting. A
   scheduled AI bus now remains in service at its route end until its final-stop
   passenger alighting completes.
   Boarding animations retain the exact timetable call index, avoiding a
@@ -257,6 +262,40 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   transactions, and physical/audible coin output remain incomplete. Map
   ticket-pack/currency records now feed ticket and
   change-coin script macros for player and AI buses.
+
+  Passenger journey gaps to complete and validate:
+  - [ ] Give waiting passengers an expected service and destination so a
+    shared stop queue only boards an appropriate bus instead of assigning
+    every rider to its next stop.
+  - [ ] Have waiting passengers approach a nearby expected bus while it is
+    moving without entering the road, and permit a safe road crossing only
+    once it has stopped. Replace direct interpolation with road-aware walking
+    for player and scheduled AI buses.
+  - [~] Form a physical queue outside the entry and maintain single-passenger
+    boarding after the bus stops and the selected door opens. Validate queue
+    ordering and door gating for both player and scheduled AI buses.
+  - [ ] When ticket selling is enabled, implement the passenger transaction:
+    payment, change when owed, waiting for a ticket, and use of an applicable
+    ticket machine. Parsed locations and script accounting alone are not a
+    completed transaction.
+  - [~] Validate walking to the assigned seat and sitting in game, including
+    disconnected cabin-path fallback. Replace the fixed 0.75-second traversal
+    with movement appropriate to the path length and seating transition.
+  - [ ] Select an alighting stop within 200 m of each passenger's destination
+    and trigger the appropriate stop-request and bus-stop script behavior at
+    the relevant point in the journey; the current request at boarding and
+    next-stop assignment do not provide destination-based behavior.
+  - [~] Have alighters move to their predetermined exit and queue behind one
+    another, including while waiting for the door to open. Support multiple
+    alighters progressing concurrently while preserving queue order and the
+    existing single-boarder constraint.
+  - [ ] After leaving the bus, transfer each alighter to a nearby passenger
+    spline leading toward their destination; if no suitable spline can be
+    found, remove the passenger.
+  - [ ] Add focused regression coverage and an in-game end-to-end validation
+    for the journey, including moving-bus road safety, ticketing, the 200 m
+    destination rule, concurrent alighting, and spline handoff.
+
 - [~] The on-foot panel now selects a mapped line, ordered `.ttl` course,
   course trip, and first passenger-service stop. Player service follows that
   route and advances in `.ttl` order at the terminus; it stops at
@@ -334,7 +373,8 @@ by parser alignment and should not be described as supported:
   live static collision world. Remaining providers are scenery bus-stop arrival
   queues; those macros return safe results and report unavailable provider data.
   `GetHumanCountOnPathLink` reports occupancy for the active simulated
-  boarding/alighting passenger on authored vehicle-cabin path links; map/scenery
+  boarding/alighting passenger on authored vehicle-cabin path links. The
+  simulation updates occupancy independently of rendering; map/scenery
   path-link occupancy remains unsupported.
 - System trigger dispatch now reports chassis contacts and scheduled AI target
   and bus-stop changes. Passenger stop-request, rail-joint, repair, and
@@ -558,8 +598,9 @@ for alignment is not mistaken for supporting it.
 - [~] Ticket/passenger macros: `GiveChangeCoin`, `GetTicketName`, and
   `GetTicketValue` use map ticket/currency data and `GetHumanCountOnSeat` reads
   the current seat-occupancy variables. `GetHumanCountOnPathLink` reports the
-  active boarding/alighting passenger's authored cabin pathlink; scenery/world
-  pathlink occupancy and ticket purchasing/payment remain unimplemented.
+  active boarding/alighting passenger's authored cabin pathlink, including
+  when the bus is not drawn; scenery/world pathlink occupancy and ticket
+  purchasing/payment remain unimplemented.
 - [~] World lookup: `GetHeightAbovePoint` raycasts against the live static
   collision world and returns a safe zero with a warning when no provider is
   available. Vehicle probes cover provider results and stack behavior.
@@ -606,11 +647,16 @@ for alignment is not mistaken for supporting it.
   `contactshoe_*`. `PAX_Entry#_Open` and `PAX_Exit#_Open` remain script-owned;
   OpenBus consumes them for passenger service but does not derive them from
   door mechanics.
-- [~] `PAX_Entry#_Req` and `PAX_Exit#_Req` reflect queued/active boarding and
-  alighting when exactly one corresponding cabin entry/exit is configured.
-  Passenger movement is gated by configured `PAX_Entry#_Open` /
-  `PAX_Exit#_Open` states; routing requests across multiple doors is not
-  implemented.
+- [~] `PAX_Entry#_Req` and `PAX_Exit#_Req` follow the selected door even on
+  multi-door buses. Boarding uses the first configured entry; each alighter
+  uses a reachable exit selected from the seat's cabin path, with a nearest-door
+  fallback when paths are disconnected. Movement and animation use the same
+  selected door and wait for its `PAX_Entry#_Open` / `PAX_Exit#_Open` state.
+  Entry requests stop when no seat is available or due to be freed by an
+  alighter, while an already reserved boarder keeps its request.
+  Selection is deterministic rather than a complete native multi-door policy;
+  simultaneous passenger movement and selection of alternate entry doors
+  remain unimplemented.
 - [~] Add runtime producers for documented vehicle/scenery/human strings and
   state such as `act_route`, `act_busstop`, `SetLineTo`, `yard`,
   `file_schedule`, `Refresh_Strings`, `Switch`, `LastMovedDist`, `PAX_State`,

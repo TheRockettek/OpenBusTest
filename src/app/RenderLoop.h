@@ -282,6 +282,7 @@ class RenderLoop {
     void logDrivetrainDiagnosticVariables() const;
     double currentFieldOfView() const;
     double mapTrafficElapsedSeconds(double simulationTime) const;
+    void refreshPassengerWaitingPositions();
     std::optional<openbus::map::MapTrafficPose> passengerQueuePose(int stopId,
                                                                   std::size_t queueSlot) const;
     void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,

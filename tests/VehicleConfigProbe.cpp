@@ -519,6 +519,30 @@ int main(int argc, char** argv) {
         std::cerr << "Passenger cabin path routing did not preserve link direction\n";
         return 1;
     }
+    VehicleConfig multiDoorCabin;
+    multiDoorCabin.passengerPositions = {
+        {{1.0, 0.0, 0.0}}, {{0.0, 0.0, 0.0}}};
+    multiDoorCabin.passengerPathPoints = cabinPoints;
+    multiDoorCabin.passengerPathLinks = cabinLinks;
+    multiDoorCabin.passengerExitPathPoints = {10, 30};
+    if (passengerExitDoorForSeat(multiDoorCabin, 0, 8) != 1 ||
+        passengerExitDoorForSeat(multiDoorCabin, 1, 8) != 0 ||
+        passengerExitDoorForSeat(multiDoorCabin, 0, 1) != 0 ||
+        passengerExitDoorForSeat(multiDoorCabin, 0, 0)) {
+        std::cerr << "Passenger exit selection ignored directed paths or supported door limits\n";
+        return 1;
+    }
+    multiDoorCabin.passengerPathLinks.clear();
+    multiDoorCabin.passengerPositions[0].position[0] = 1.8;
+    if (passengerExitDoorForSeat(multiDoorCabin, 0, 8) != 1) {
+        std::cerr << "Passenger exit selection did not fall back to the nearest door\n";
+        return 1;
+    }
+    multiDoorCabin.passengerPathPoints.clear();
+    if (passengerExitDoorForSeat(multiDoorCabin, 0, 8) != 0) {
+        std::cerr << "Passenger exit selection did not use the first unresolved door\n";
+        return 1;
+    }
     const std::vector<std::array<double, 3>> travelPath = {
         {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {3.0, 0.0, 0.0}};
     const std::vector<std::optional<std::size_t>> travelPathLinks = {std::nullopt, 4};

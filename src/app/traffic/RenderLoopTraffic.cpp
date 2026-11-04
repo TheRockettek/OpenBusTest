@@ -401,18 +401,19 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             if (state.bus->passengerStopArrived) {
                 if (state.bus->scheduledServiceCancelled) {
-                    state.vehicle->passengers->service.endServiceAtCurrentStop();
+                    auto& service = state.vehicle->passengers->service;
+                    const auto queue = passengerNetwork_.queues.find(service.currentStopId());
+                    if (queue != passengerNetwork_.queues.end()) {
+                        openbus::map::endMapPassengerServiceWithSharedQueue(
+                            service, queue->second, passengerNetwork_.queueIdentities);
+                    } else {
+                        service.endServiceAtCurrentStop();
+                    }
                     if (state.bus->passengerStopDepartureRequested &&
                         state.vehicle->passengers->service.dwelling()) {
                         state.bus->passengerStopDepartureRequested = false;
                         state.vehicle->variables.set("ai_scheduled_atstation", 1.0F);
                     }
-                }
-                const int completedStopId = state.vehicle->passengers->service.currentStopId();
-                const auto queue = passengerNetwork_.queues.find(completedStopId);
-                if (queue != passengerNetwork_.queues.end()) {
-                    queue->second =
-                        state.vehicle->passengers->service.waitingPassengers(completedStopId);
                 }
             }
             const auto departureAction = openbus::map::mapTrafficPassengerStopDepartureAction(

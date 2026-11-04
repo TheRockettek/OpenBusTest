@@ -2,9 +2,11 @@
 
 #include "core/PassengerVariables.h"
 #include "core/Variables.h"
+#include "map/MapTrafficRuntime.h"
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 
 namespace openbus::app::vehicle {
@@ -14,21 +16,45 @@ struct PassengerRequestVariables {
     std::array<bool, openbus::scripting::passengerDoorSlotCount> exits = {};
 };
 
+enum class PassengerDoorKind { Entry, Exit };
+
+inline bool passengerDoorIsOpen(const Variables& variables, PassengerDoorKind kind,
+                                std::optional<std::size_t> doorIndex) {
+    if (!doorIndex || *doorIndex >= openbus::scripting::passengerDoorSlotCount) {
+        return false;
+    }
+    const std::string prefix = kind == PassengerDoorKind::Entry ? "pax_entry" : "pax_exit";
+    return variables.get(prefix + std::to_string(*doorIndex) + "_open") > 0.5F;
+}
+
 inline PassengerRequestVariables
-passengerRequestVariables(std::size_t entryCount, std::size_t exitCount, bool atPassengerStop,
+passengerRequestVariables(std::optional<std::size_t> entryDoor,
+                          std::optional<std::size_t> exitDoor, bool atPassengerStop,
                           std::size_t waitingPassengers, bool boardingPassenger,
                           bool alightingPassenger) {
     PassengerRequestVariables requests;
     if (!atPassengerStop) {
         return requests;
     }
-    if (entryCount == 1 && (waitingPassengers > 0 || boardingPassenger)) {
-        requests.entries[0] = true;
+    if (entryDoor && *entryDoor < requests.entries.size() &&
+        (waitingPassengers > 0 || boardingPassenger)) {
+        requests.entries[*entryDoor] = true;
     }
-    if (exitCount == 1 && alightingPassenger) {
-        requests.exits[0] = true;
+    if (exitDoor && *exitDoor < requests.exits.size() && alightingPassenger) {
+        requests.exits[*exitDoor] = true;
     }
     return requests;
+}
+
+inline PassengerRequestVariables
+passengerServiceRequestVariables(std::optional<std::size_t> entryDoor,
+                                 std::optional<std::size_t> exitDoor,
+                                 const openbus::map::MapPassengerServiceRuntime& service) {
+    const int stopId = service.currentStopId();
+    return passengerRequestVariables(
+        entryDoor, exitDoor, service.dwelling() && stopId != 0,
+        service.canAcceptWaitingPassenger() ? service.waitingPassengers(stopId) : 0,
+        service.boardingPassenger(), service.alightingPassenger());
 }
 
 inline void publishPassengerRequestVariables(Variables& variables,

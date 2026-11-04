@@ -35,13 +35,8 @@ void Vehicle::updateScripts(bool isAiVehicle) {
             static_cast<float>(passengers->service.onboardPassengerCount());
         variables.set("passengers_onboard", onboardPassengerCount);
         variables.set("humans_count", onboardPassengerCount);
-        const int stopId = passengers->service.currentStopId();
-        requests = openbus::app::vehicle::passengerRequestVariables(
-            cabin.passengerEntryPathPoints.size(), cabin.passengerExitPathPoints.size(),
-            passengers->service.dwelling() && stopId != 0,
-            passengers->service.acceptsBoarding() ? passengers->service.waitingPassengers(stopId)
-                                                  : 0,
-            passengers->service.boardingPassenger(), passengers->service.alightingPassenger());
+        requests = openbus::app::vehicle::passengerServiceRequestVariables(
+            passengers->entryDoor(), passengers->exitDoor(), passengers->service);
     }
     openbus::app::vehicle::publishPassengerRequestVariables(variables, requests);
     {

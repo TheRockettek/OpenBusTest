@@ -267,6 +267,17 @@ std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double huma
 std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
                                                      std::size_t initialPassengers) noexcept;
 std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosition);
+
+class MapPassengerQueueIdentities {
+  public:
+    std::size_t modelIdentity(int stopId, std::size_t queuePosition) const;
+    std::size_t take(int stopId, std::size_t queuePosition);
+    void returnPassenger(int stopId, std::size_t queuePosition, std::size_t modelIdentity);
+
+  private:
+    std::unordered_map<int, std::unordered_map<std::size_t, std::size_t>> overrides_;
+};
+
 std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount, std::size_t passengerIndex);
 std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
                                                      double lateralOffsetMeters,
@@ -309,17 +320,20 @@ class MapPassengerServiceRuntime {
     // Reserves a waiting passenger at the start of a boarding interval and seats them at
     // completion.
     void advance(double elapsedSeconds, bool allowBoarding = true, bool allowAlighting = true,
-                 bool holdAtStop = false);
+                 bool holdAtStop = false, bool stopAfterAlightingPassenger = false,
+                 MapPassengerQueueIdentities* queueIdentities = nullptr);
     bool dwelling() const noexcept;
     int currentStopId() const noexcept;
     bool boardingPassenger() const noexcept;
     bool acceptsBoarding() const noexcept;
+    bool canAcceptWaitingPassenger() const noexcept;
     double boardingProgress() const noexcept;
     std::optional<std::size_t> boardingSeatIndex() const noexcept;
     bool alightingPassenger() const noexcept;
     double alightingProgress() const noexcept;
     std::optional<std::size_t> alightingSeatIndex() const noexcept;
     std::optional<std::size_t> boardingPassengerModelIndex() const noexcept;
+    std::optional<std::size_t> boardingPassengerQueueSlot(std::size_t initialCount) const;
     std::uint64_t passengerStopRequestSequence() const noexcept;
     std::size_t waitingPassengers(int stopId) const noexcept;
     void setPassengerPathLinkProgressProfile(
@@ -340,6 +354,7 @@ class MapPassengerServiceRuntime {
     double boardingAccumulatorSeconds_ = 0.0;
     std::optional<std::size_t> boardingSeat_;
     std::optional<std::size_t> boardingPassengerModelIndex_;
+    std::optional<std::size_t> boardingPassengerQueuePosition_;
     std::vector<std::size_t> queuedAlightingSeats_;
     std::optional<std::size_t> alightingSeat_;
     double alightingAccumulatorSeconds_ = 0.0;
@@ -354,9 +369,16 @@ class MapPassengerServiceRuntime {
 
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
                                                std::size_t& sharedWaitingPassengers,
+                                               MapPassengerQueueIdentities& queueIdentities,
                                                double elapsedSeconds, bool allowBoarding = true,
-                                               bool allowAlighting = true,
-                                               bool holdAtStop = false);
+                                               bool allowAlighting = true, bool holdAtStop = false,
+                                               bool stopAfterAlightingPassenger = false);
+void departMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service,
+                                              std::size_t& sharedWaitingPassengers,
+                                              MapPassengerQueueIdentities& queueIdentities);
+void endMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service,
+                                           std::size_t& sharedWaitingPassengers,
+                                           MapPassengerQueueIdentities& queueIdentities);
 
 enum class MapTrafficPassengerStopDepartureAction {
     None,

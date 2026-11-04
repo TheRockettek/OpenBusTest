@@ -1291,6 +1291,74 @@ std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& point
     return route;
 }
 
+std::optional<std::size_t> passengerExitDoorForSeat(const VehicleConfig& configuration,
+                                                    std::size_t seatIndex,
+                                                    std::size_t maximumDoorCount) {
+    const auto& seat = configuration.passengerPositions.at(seatIndex);
+    const auto& points = configuration.passengerPathPoints;
+    const auto& exits = configuration.passengerExitPathPoints;
+    const std::size_t count = std::min(exits.size(), maximumDoorCount);
+    if (count == 0) {
+        return std::nullopt;
+    }
+    const std::array<double, 3> seatFloor = {seat.position[0], seat.position[1],
+                                             seat.position[2] - seat.seatHeight};
+    const auto distance = [](const auto& a, const auto& b) {
+        return std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]);
+    };
+    const auto findPoint = [&](int id) -> const PassengerPathPoint* {
+        const auto found = std::find_if(points.begin(), points.end(),
+                                        [id](const auto& point) { return point.index == id; });
+        return found == points.end() ? nullptr : &*found;
+    };
+    const PassengerPathPoint* nearest = nullptr;
+    double nearestDistance = std::numeric_limits<double>::infinity();
+    for (const auto& point : points) {
+        const double candidate = distance(seatFloor, point.position);
+        if (candidate < nearestDistance) {
+            nearest = &point;
+            nearestDistance = candidate;
+        }
+    }
+    std::optional<std::size_t> bestConnected;
+    std::optional<std::size_t> bestDirect;
+    double bestRouteLength = std::numeric_limits<double>::infinity();
+    double bestDirectDistance = std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto* exit = findPoint(exits[index]);
+        if (!exit) {
+            continue;
+        }
+        const double directDistance = distance(seatFloor, exit->position);
+        if (directDistance < bestDirectDistance) {
+            bestDirect = index;
+            bestDirectDistance = directDistance;
+        }
+        if (!nearest) {
+            continue;
+        }
+        const auto route = passengerPathRoute(points, configuration.passengerPathLinks,
+                                              nearest->index, exit->index);
+        if (route.empty()) {
+            continue;
+        }
+        double length = nearestDistance;
+        for (std::size_t routeIndex = 1; routeIndex < route.size(); ++routeIndex) {
+            const auto* from = findPoint(route[routeIndex - 1]);
+            const auto* to = findPoint(route[routeIndex]);
+            if (!from || !to) {
+                throw std::logic_error("Passenger path route contains an unknown point");
+            }
+            length += distance(from->position, to->position);
+        }
+        if (length < bestRouteLength) {
+            bestConnected = index;
+            bestRouteLength = length;
+        }
+    }
+    return bestConnected ? bestConnected : bestDirect ? bestDirect : std::optional<std::size_t>{0};
+}
+
 std::vector<std::pair<double, std::optional<std::size_t>>>
 passengerPathLinkProgressProfile(const std::vector<std::array<double, 3>>& path,
                                  const std::vector<std::optional<std::size_t>>& segmentLinks) {

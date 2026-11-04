@@ -72,6 +72,7 @@ struct PassengerNetwork {
     std::vector<PassengerStopRouteState> routes;
     std::unordered_map<int, std::size_t> queues;
     std::unordered_map<int, std::size_t> initialQueues;
+    openbus::map::MapPassengerQueueIdentities queueIdentities;
     std::size_t updateOffset = 0;
 
     PassengerRouteRegistrationReport

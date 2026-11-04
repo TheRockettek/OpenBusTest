@@ -29,6 +29,15 @@ the authored seat height; zero-height positions remain standing. Passengers
 walk to the seat before sitting and stand up before alighting. Missing or
 incomplete model skin weights use an approximate seated-only geometric rig,
 while normal walking retains its existing animation.
+On multi-door buses, boarders request and use the first configured entry.
+Alighters request and use the shortest reachable configured exit from their
+seat's nearest cabin path point. If no exit is reachable, they use the nearest
+known exit, or the first configured exit if its geometry is unavailable. The
+selected door must be open before movement progresses; changing to the next
+passenger re-evaluates the door. Door slots beyond index 7 are not managed.
+Waiting passengers request entry only when a seat is free or an alighter is
+due to free one; a reserved boarder keeps the request until boarding completes.
+Full buses leave the remaining queue in place without holding the entry request.
 Queues are shared by stop ID across registered scheduled routes and replenished
 to at least their initial size when a scheduled AI bus departs or the player bus
 leaves a served stop. When multiple calls share an ID, their queue renders at
@@ -92,15 +101,17 @@ per-vehicle `Variables` convention:
 * `gethumancountonseat` and `gethumancountonpathlink` read the numeric vehicle
   variables `human_count_on_seat_<index>` and
   `human_count_on_path_link_<index>`. These are macro surfaces for an owning
-  passenger runtime. Vehicle scripts now receive per-seat counts from the
-  service state initialized from `passengercabin.cfg`; path-link values are not
-  populated yet.
+  passenger runtime. Vehicle scripts receive per-seat counts and the active
+  boarding or alighting passenger's cabin path-link occupancy. The simulation
+  uses the same selected door and path as rendering, and updates occupancy
+  without relying on a draw pass. Direct fallback paths have no authored
+  path-link occupancy.
 
 The same macros are available to player and AI vehicle scripts because both
 use `ScriptRuntime` and fall back to map-shared ticket/currency values. Ticket
 and coin configuration loading is active, but passenger ticket selection,
-payment transactions, physical coin dispensing, and live path-link occupancy
-remain unimplemented.
+payment transactions, physical coin dispensing, and scenery/world path-link
+occupancy remain unimplemented.
 
 ## Service runtime
 
@@ -109,7 +120,14 @@ occupancy, alighting, a dwell timer, and boarding at a bounded rate. A
 passenger is reserved from the shared queue while the boarding interval runs,
 then assigned to a seat on completion. Queue model identities derive from the
 stop ID and queue position, so the nearest displayed rider keeps the same
-identity when reserved, seated, and later alighted. During boarding and alighting, the
+identity when reserved, seated, and later alighted. Its boarding origin remains
+fixed when another bus consumes the shared queue. A departure or service
+cancellation first synchronizes with the shared count before returning an
+unfinished boarder. The returned rider keeps their model identity in the queue
+and through later boarding, even if another bus reserved a rider concurrently.
+Model identities for newly replenished demand remain deterministic and are not
+globally unique passenger identifiers.
+During boarding and alighting, the
 configured human model animates between the roadside and seat. If the authored
 cabin entry/exit points and directed path-link graph connect the endpoints,
 movement follows that graph; otherwise it uses a direct fallback path. Seated

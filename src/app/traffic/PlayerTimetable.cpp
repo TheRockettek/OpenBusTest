@@ -28,7 +28,14 @@ void RenderLoop::SetPlayerTimetableSelection(
     clearPlayerTripAiPolicy();
     playerTimetableStopVisitLatchPosition_.reset();
     if (playerVehicle_ && playerVehicle_->passengers && activePlayerPassengerStop_) {
-        playerVehicle_->passengers->service.endServiceAtCurrentStop();
+        auto& service = playerVehicle_->passengers->service;
+        const auto queue = passengerNetwork_.queues.find(*activePlayerPassengerStop_);
+        if (queue != passengerNetwork_.queues.end()) {
+            openbus::map::endMapPassengerServiceWithSharedQueue(
+                service, queue->second, passengerNetwork_.queueIdentities);
+        } else {
+            service.endServiceAtCurrentStop();
+        }
     }
     // Keep the mapped stop alive while riders finish exiting, but do not let
     // that old stop advance a newly selected timetable trip.

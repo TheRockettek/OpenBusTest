@@ -413,6 +413,41 @@ std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosi
     return stopIdentity + queuePosition;
 }
 
+std::size_t MapPassengerQueueIdentities::modelIdentity(int stopId,
+                                                       std::size_t queuePosition) const {
+    const std::size_t defaultIdentity = mapScheduledPassengerModelIdentity(stopId, queuePosition);
+    const auto stop = overrides_.find(stopId);
+    if (stop == overrides_.end()) {
+        return defaultIdentity;
+    }
+    const auto passenger = stop->second.find(queuePosition);
+    return passenger == stop->second.end() ? defaultIdentity : passenger->second;
+}
+
+std::size_t MapPassengerQueueIdentities::take(int stopId, std::size_t queuePosition) {
+    const std::size_t identity = modelIdentity(stopId, queuePosition);
+    const auto stop = overrides_.find(stopId);
+    if (stop != overrides_.end()) {
+        stop->second.erase(queuePosition);
+        if (stop->second.empty()) {
+            overrides_.erase(stop);
+        }
+    }
+    return identity;
+}
+
+void MapPassengerQueueIdentities::returnPassenger(int stopId, std::size_t queuePosition,
+                                                  std::size_t modelIdentity) {
+    const std::size_t defaultIdentity = mapScheduledPassengerModelIdentity(stopId, queuePosition);
+    const auto stop = overrides_.find(stopId);
+    if (stop != overrides_.end() && stop->second.contains(queuePosition)) {
+        throw std::logic_error("Returned passenger queue position is already occupied");
+    }
+    if (modelIdentity != defaultIdentity) {
+        overrides_[stopId].emplace(queuePosition, modelIdentity);
+    }
+}
+
 std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount, std::size_t passengerIndex) {
     if (passengerIndex >= initialCount) {
         throw std::invalid_argument(
@@ -528,6 +563,7 @@ void MapPassengerServiceRuntime::endServiceAtCurrentStop() {
         ++waitingByStop_[currentStopId_];
         boardingSeat_.reset();
         boardingPassengerModelIndex_.reset();
+        boardingPassengerQueuePosition_.reset();
         boardingAccumulatorSeconds_ = 0.0;
         clearPassengerPathLinkProgressProfile();
     }
@@ -559,6 +595,7 @@ void MapPassengerServiceRuntime::depart() {
     }
     boardingSeat_.reset();
     boardingPassengerModelIndex_.reset();
+    boardingPassengerQueuePosition_.reset();
     boardingAccumulatorSeconds_ = 0.0;
     alightingSeat_.reset();
     queuedAlightingSeats_.clear();
@@ -569,7 +606,9 @@ void MapPassengerServiceRuntime::depart() {
 }
 
 void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoarding,
-                                         bool allowAlighting, bool holdAtStop) {
+                                         bool allowAlighting, bool holdAtStop,
+                                         bool stopAfterAlightingPassenger,
+                                         MapPassengerQueueIdentities* queueIdentities) {
     if (!dwelling_ || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) {
         return;
     }
@@ -595,6 +634,9 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
                 alightingSeat_ = queuedAlightingSeats_.front();
                 queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
             }
+            if (stopAfterAlightingPassenger && alightingSeat_) {
+                break;
+            }
         }
     }
 
@@ -619,8 +661,10 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             boardingSeat_ =
                 static_cast<std::size_t>(std::distance(seatDestinations_.begin(), seat));
             --waiting;
+            boardingPassengerQueuePosition_ = waiting;
             boardingPassengerModelIndex_ =
-                mapScheduledPassengerModelIdentity(currentStopId_, waiting);
+                queueIdentities ? queueIdentities->take(currentStopId_, waiting)
+                                : mapScheduledPassengerModelIdentity(currentStopId_, waiting);
             boardingAccumulatorSeconds_ = 0.0;
             clearPassengerPathLinkProgressProfile();
         }
@@ -637,6 +681,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             ++passengerStopRequestSequence_;
             boardingSeat_.reset();
             boardingPassengerModelIndex_.reset();
+            boardingPassengerQueuePosition_.reset();
             boardingAccumulatorSeconds_ = 0.0;
             clearPassengerPathLinkProgressProfile();
         }
@@ -652,6 +697,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             ++passengerStopRequestSequence_;
             boardingSeat_.reset();
             boardingPassengerModelIndex_.reset();
+            boardingPassengerQueuePosition_.reset();
             boardingAccumulatorSeconds_ = 0.0;
             clearPassengerPathLinkProgressProfile();
         }
@@ -679,6 +725,21 @@ bool MapPassengerServiceRuntime::acceptsBoarding() const noexcept {
     return nextStopId_ != 0;
 }
 
+bool MapPassengerServiceRuntime::canAcceptWaitingPassenger() const noexcept {
+    if (!dwelling_ || !acceptsBoarding()) {
+        return false;
+    }
+    if (alightingSeat_ || !queuedAlightingSeats_.empty()) {
+        return true;
+    }
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (!seatDestinations_[seat] && boardingSeat_ != seat) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double MapPassengerServiceRuntime::boardingProgress() const noexcept {
     return boardingSeat_ ? std::clamp(boardingAccumulatorSeconds_ / 0.75, 0.0, 1.0) : 0.0;
 }
@@ -702,6 +763,16 @@ std::optional<std::size_t> MapPassengerServiceRuntime::alightingSeatIndex() cons
 std::optional<std::size_t>
 MapPassengerServiceRuntime::boardingPassengerModelIndex() const noexcept {
     return boardingPassengerModelIndex_;
+}
+
+std::optional<std::size_t>
+MapPassengerServiceRuntime::boardingPassengerQueueSlot(std::size_t initialCount) const {
+    if (!boardingPassengerQueuePosition_) {
+        return std::nullopt;
+    }
+    return mapScheduledPassengerQueueSlot(
+        std::max(initialCount, *boardingPassengerQueuePosition_ + 1),
+        *boardingPassengerQueuePosition_);
 }
 
 std::uint64_t MapPassengerServiceRuntime::passengerStopRequestSequence() const noexcept {
@@ -778,15 +849,59 @@ std::size_t MapPassengerServiceRuntime::seatCount() const noexcept {
 
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
                                                std::size_t& sharedWaitingPassengers,
+                                               MapPassengerQueueIdentities& queueIdentities,
                                                double elapsedSeconds, bool allowBoarding,
-                                               bool allowAlighting, bool holdAtStop) {
+                                               bool allowAlighting, bool holdAtStop,
+                                               bool stopAfterAlightingPassenger) {
     if (stopId == 0) {
         throw std::invalid_argument(trafficInputError(
             "Shared passenger queue requires a valid stop ID", "stopId=", stopId,
             "waitingPassengers=", sharedWaitingPassengers, "elapsedSeconds=", elapsedSeconds));
     }
+    if (service.currentStopId() != stopId) {
+        throw std::invalid_argument("Shared passenger queue does not match the service stop");
+    }
     service.setWaitingPassengers(stopId, sharedWaitingPassengers);
-    service.advance(elapsedSeconds, allowBoarding, allowAlighting, holdAtStop);
+    service.advance(elapsedSeconds, allowBoarding, allowAlighting, holdAtStop,
+                    stopAfterAlightingPassenger, &queueIdentities);
+    sharedWaitingPassengers = service.waitingPassengers(stopId);
+}
+
+void departMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service,
+                                              std::size_t& sharedWaitingPassengers,
+                                              MapPassengerQueueIdentities& queueIdentities) {
+    const int stopId = service.currentStopId();
+    if (stopId == 0) {
+        throw std::invalid_argument("Cannot depart a shared passenger queue without a stop ID");
+    }
+    const auto boardingIdentity = service.boardingPassengerModelIndex();
+    if (service.boardingPassenger() && !boardingIdentity) {
+        throw std::logic_error("Boarding passenger has no model identity");
+    }
+    service.setWaitingPassengers(stopId, sharedWaitingPassengers);
+    service.depart();
+    if (boardingIdentity && service.waitingPassengers(stopId) > sharedWaitingPassengers) {
+        queueIdentities.returnPassenger(stopId, sharedWaitingPassengers, *boardingIdentity);
+    }
+    sharedWaitingPassengers = service.waitingPassengers(stopId);
+}
+
+void endMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service,
+                                           std::size_t& sharedWaitingPassengers,
+                                           MapPassengerQueueIdentities& queueIdentities) {
+    const int stopId = service.currentStopId();
+    if (stopId == 0) {
+        throw std::invalid_argument("Cannot end a shared passenger service without a stop ID");
+    }
+    const auto boardingIdentity = service.boardingPassengerModelIndex();
+    if (service.boardingPassenger() && !boardingIdentity) {
+        throw std::logic_error("Boarding passenger has no model identity");
+    }
+    service.setWaitingPassengers(stopId, sharedWaitingPassengers);
+    service.endServiceAtCurrentStop();
+    if (boardingIdentity && service.waitingPassengers(stopId) > sharedWaitingPassengers) {
+        queueIdentities.returnPassenger(stopId, sharedWaitingPassengers, *boardingIdentity);
+    }
     sharedWaitingPassengers = service.waitingPassengers(stopId);
 }
 

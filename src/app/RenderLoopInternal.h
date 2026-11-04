@@ -5,6 +5,7 @@
 #include "app/RenderLoop.h"
 #include "app/ScriptTickScheduler.h"
 #include "app/traffic/PassengerApproach.h"
+#include "app/traffic/PassengerCabinPath.h"
 #include "app/vehicle/Vehicle.h"
 #include "input/VehicleKeyBindings.h"
 
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace openbus::app {
 
@@ -28,28 +30,56 @@ inline constexpr double PLAYER_PASSENGER_STOP_ARRIVAL_RADIUS_METERS =
 inline constexpr double PLAYER_PASSENGER_STOP_RELEASE_RADIUS_METERS =
     playerPassengerStopReleaseRadiusMeters;
 
+inline std::optional<openbus::map::MapTrafficPose>
+passengerConfiguredDoorQueuePose(const Vehicle& bus, const openbus::map::MapTrafficPose& pose,
+                                 bool leftHandTraffic, const std::vector<int>& doors,
+                                 std::optional<std::size_t> doorIndex, std::size_t queueSlot) {
+    if (!doorIndex || *doorIndex >= doors.size()) {
+        return std::nullopt;
+    }
+    const auto& cabin = bus.passengers->configuration();
+    const int doorId = doors[*doorIndex];
+    const auto point = std::find_if(cabin.passengerPathPoints.begin(),
+                                    cabin.passengerPathPoints.end(),
+                                    [doorId](const auto& candidate) {
+                                        return candidate.index == doorId;
+                                    });
+    if (point == cabin.passengerPathPoints.end()) {
+        return std::nullopt;
+    }
+    if (std::abs(point->position[0]) > 1.0e-6) {
+        leftHandTraffic = point->position[0] < 0.0;
+    }
+    return passengerDoorQueuePose(pose, point->position[1], bus.trafficWidthMeters, leftHandTraffic,
+                                  queueSlot);
+}
+
 inline openbus::map::MapTrafficPose
 playerPassengerDoorQueuePose(const Vehicle& bus, const BodyPose& chassis, bool leftHandTraffic,
                              std::size_t queueSlot) {
     openbus::map::MapTrafficPose pose;
     pose.position = transformLocalPoint(chassis, {0.0, 0.0, bus.modelOffsetZ});
     pose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
-    double entryForward = bus.trafficLengthMeters * 0.3;
-    const auto& cabin = bus.passengers->configuration();
-    if (!cabin.passengerEntryPathPoints.empty()) {
-        const int entryId = cabin.passengerEntryPathPoints.front();
-        const auto entry = std::find_if(
-            cabin.passengerPathPoints.begin(), cabin.passengerPathPoints.end(),
-            [entryId](const auto& point) { return point.index == entryId; });
-        if (entry != cabin.passengerPathPoints.end()) {
-            entryForward = entry->position[1];
-            if (std::abs(entry->position[0]) > 1.0e-6) {
-                leftHandTraffic = entry->position[0] < 0.0;
-            }
-        }
-    }
-    return passengerDoorQueuePose(pose, entryForward, bus.trafficWidthMeters, leftHandTraffic,
-                                  queueSlot);
+    const auto configured = passengerConfiguredDoorQueuePose(
+        bus, pose, leftHandTraffic, bus.passengers->configuration().passengerEntryPathPoints,
+        bus.passengers->entryDoor(), queueSlot);
+    return configured.value_or(passengerDoorQueuePose(
+        pose, bus.trafficLengthMeters * 0.3, bus.trafficWidthMeters, leftHandTraffic, queueSlot));
+}
+
+inline openbus::map::MapTrafficPose passengerCurbPose(const openbus::map::MapTrafficPose& stopPose,
+                                                      bool leftHandTraffic, double laneOffset,
+                                                      double vehicleWidth) {
+    const double passengerSide = openbus::map::mapTrafficPassengerSideSign(leftHandTraffic);
+    const double curbOffset = openbus::map::mapTrafficPassengerCurbOffsetMeters(
+        leftHandTraffic, laneOffset, vehicleWidth, 0.35);
+    const auto offset = openbus::map::mapTrafficPassengerWorldOffset(
+        leftHandTraffic, stopPose.headingRadians, curbOffset + passengerSide * 1.8, 0.0);
+    auto pose = stopPose;
+    pose.position[0] += offset[0];
+    pose.position[1] += offset[1];
+    pose.headingRadians -= passengerSide * std::numbers::pi * 0.5;
+    return pose;
 }
 
 inline double mapTrafficSignalClockSeconds(double elapsedSeconds, double startHour) noexcept {

@@ -193,6 +193,9 @@ void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScript
 std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& points,
                                     const std::vector<PassengerPathLink>& links, int fromPoint,
                                     int toPoint);
+std::optional<std::size_t> passengerExitDoorForSeat(const VehicleConfig& configuration,
+                                                    std::size_t seatIndex,
+                                                    std::size_t maximumDoorCount);
 std::vector<std::pair<double, std::optional<std::size_t>>>
 passengerPathLinkProgressProfile(const std::vector<std::array<double, 3>>& path,
                                  const std::vector<std::optional<std::size_t>>& segmentLinks);
