@@ -2121,45 +2121,92 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
     }
     const std::vector<std::string> lines = splitLines(decodeText(ticketPackPath));
     MapTicketPackDefinition definition;
-    for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
-        if (lowerAscii(trim(lines[lineIndex])) != "[ticket]") {
-            continue;
+    const auto unquote = [](std::string field) {
+        if (field.size() >= 2 && field.front() == '"' && field.back() == '"') {
+            field = field.substr(1, field.size() - 2);
         }
-        std::array<std::string, 4> fields;
+        return field;
+    };
+    const auto readFields = [&](std::size_t lineIndex) {
+        std::vector<std::string> fields;
         std::size_t next = lineIndex + 1;
-        bool complete = true;
-        for (std::string& field : fields) {
-            while (next < lines.size() && trim(lines[next]).empty()) {
-                ++next;
+        while (next < lines.size() && !isSectionHeaderLine(trim(lines[next]))) {
+            const std::string field = trim(lines[next++]);
+            if (!field.empty()) {
+                fields.push_back(field);
             }
-            if (next >= lines.size() || isSectionHeaderLine(trim(lines[next]))) {
-                complete = false;
-                break;
-            }
-            field = trim(lines[next++]);
         }
-        MapTicketDefinition ticket;
-        double value = 0.0;
-        int type = 0;
-        if (complete && !fields[0].empty() && parseReal(fields[2], value) && value >= 0.0 &&
-            value <= static_cast<double>((std::numeric_limits<float>::max)()) &&
-            parseInteger(fields[3], type) && type >= 0) {
-            const auto unquote = [](std::string field) {
-                if (field.size() >= 2 && field.front() == '"' && field.back() == '"') {
-                    field = field.substr(1, field.size() - 2);
+        return std::pair{std::move(fields), next};
+    };
+    for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+        const std::string section = lowerAscii(trim(lines[lineIndex]));
+        if (section == "[ticketpack]") {
+            auto [fields, next] = readFields(lineIndex);
+            std::array<double, 4> values{};
+            const std::size_t fieldCount = std::min(fields.size(), values.size());
+            bool valid = !fields.empty();
+            for (std::size_t field = 0; field < fieldCount; ++field) {
+                valid = parseReal(fields[field], values[field]) && values[field] >= 0.0 &&
+                        values[field] <= 1.0 && valid;
+            }
+            if (fields.size() == 1 && valid) {
+                definition.ticketBuyProbability = values[0];
+            } else if (fields.size() == values.size() && valid) {
+                definition.stamperProbability = values[0];
+                definition.ticketBuyProbability = values[1];
+                definition.chattiness = values[2];
+                definition.whingeProbability = values[3];
+            } else {
+                definition.diagnostics.warning(
+                    lineIndex + 1, "ticketpack",
+                    "invalid or incomplete ticket-pack properties in " +
+                        pathToUtf8(ticketPackPath.filename()));
+            }
+            if (next > lineIndex + 1) {
+                lineIndex = next - 1;
+            }
+        } else if (section == "[ticket]") {
+            auto [fields, next] = readFields(lineIndex);
+            MapTicketDefinition ticket;
+            bool valid = false;
+            if (fields.size() == 7) {
+                valid = !fields[0].empty() && !fields[1].empty() &&
+                        parseInteger(fields[2], ticket.maxStations) &&
+                        ticket.maxStations >= 0 && parseReal(fields[3], ticket.ageMin) &&
+                        ticket.ageMin >= 0.0 && parseReal(fields[4], ticket.ageMax) &&
+                        ticket.ageMax >= ticket.ageMin && parseReal(fields[5], ticket.value) &&
+                        ticket.value >= 0.0 &&
+                        ticket.value <= static_cast<double>((std::numeric_limits<float>::max)());
+                if (valid) {
+                    ticket.name = unquote(std::move(fields[0]));
+                    ticket.englishName = unquote(std::move(fields[1]));
+                    ticket.displayString = unquote(std::move(fields[6]));
+                    ticket.displayValue = ticket.displayString;
                 }
-                return field;
-            };
-            ticket.name = unquote(std::move(fields[0]));
-            ticket.displayValue = unquote(std::move(fields[1]));
-            ticket.value = value;
-            ticket.type = type;
-            definition.tickets.push_back(std::move(ticket));
-            lineIndex = next - 1;
+            } else if (fields.size() == 4) {
+                valid = !fields[0].empty() && parseReal(fields[2], ticket.value) &&
+                        ticket.value >= 0.0 &&
+                        ticket.value <= static_cast<double>((std::numeric_limits<float>::max)()) &&
+                        parseInteger(fields[3], ticket.type) && ticket.type >= 0;
+                if (valid) {
+                    ticket.name = unquote(std::move(fields[0]));
+                    ticket.displayValue = unquote(std::move(fields[1]));
+                    ticket.displayString = ticket.displayValue;
+                    ticket.englishName = ticket.name;
+                }
+            }
+            if (valid) {
+                definition.tickets.push_back(std::move(ticket));
+            } else {
+                definition.diagnostics.warning(lineIndex + 1, "ticket",
+                                               "invalid or incomplete ticket entry in " +
+                                                   pathToUtf8(ticketPackPath.filename()));
+            }
+            if (next > lineIndex + 1) {
+                lineIndex = next - 1;
+            }
         } else {
-            definition.diagnostics.warning(lineIndex + 1, "ticket",
-                                           "invalid or incomplete ticket entry in " +
-                                               pathToUtf8(ticketPackPath.filename()));
+            continue;
         }
     }
     return definition;

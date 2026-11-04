@@ -3,6 +3,8 @@
 #include "physics/BusConfiguration.h"
 #include "physics/World.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -21,6 +23,13 @@ struct WheelStaticContactSettings {
 struct BusCollisionEvent {
     std::array<double, 3> position;
     double energy = 0.0;
+};
+
+struct BusPassengerMassPoint {
+    std::size_t seatIndex = 0;
+    double massKg = 0.0;
+    // Position in chassis-local coordinates, relative to the chassis body origin.
+    std::array<double, 3> localPosition = {};
 };
 
 class BusSimulation {
@@ -49,6 +58,8 @@ class BusSimulation {
                                            const std::vector<double>& wheelBrakeForces,
                                            const std::vector<double>& wheelSpringFactors = {});
     void setFrozen(bool frozen);
+    void setPassengerMassPoints(const std::vector<BusPassengerMassPoint>& points);
+    double totalMassKg() const;
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
                          double brake) const;
     double positionX() const;

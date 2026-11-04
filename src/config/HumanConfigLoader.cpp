@@ -98,8 +98,9 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
             double number = 0.0;
             if (!parseDouble(value.text, number)) {
                 configuration.diagnostics.error(value.number, keyword, "expected a numeric value");
-            } else if (keyword == "age" && number < 0.0) {
-                configuration.diagnostics.error(value.number, keyword, "age must be non-negative");
+            } else if (number < 0.0) {
+                configuration.diagnostics.error(value.number, keyword,
+                                                keyword + " must be non-negative");
             } else {
                 std::optional<double>& field =
                     keyword == "mass" ? configuration.mass : configuration.age;

@@ -504,7 +504,10 @@ MapPassengerServiceRuntime::MapPassengerServiceRuntime(std::size_t seatCount)
     : seatDestinations_(seatCount), seatPassengerModelIndices_(seatCount),
       seatPedestrianJourneys_(seatCount), seatDestinationPositions_(seatCount),
       seatStopRequests_(seatCount, false), seatOutsideAlightingRadius_(seatCount, false),
-      seatForcedAlighting_(seatCount, false) {}
+      seatForcedAlighting_(seatCount, false), queuedAlightingAccumulatorSeconds_(seatCount, 0.0),
+      queuedAlightingAnimationSeconds_(seatCount, 0.75),
+      queuedAlightingAnimationDurationSet_(seatCount, false),
+      queuedAlightingTargetProgress_(seatCount, 0.0) {}
 
 void MapPassengerServiceRuntime::setWaitingPassengers(int stopId, std::size_t count) {
     if (stopId != 0) {
@@ -554,6 +557,13 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     alightingAnimationSeconds_ = 0.75;
     alightingAnimationDurationSet_ = false;
     alightingDoorWaitProgress_.reset();
+    std::fill(queuedAlightingAccumulatorSeconds_.begin(),
+              queuedAlightingAccumulatorSeconds_.end(), 0.0);
+    std::fill(queuedAlightingAnimationSeconds_.begin(), queuedAlightingAnimationSeconds_.end(),
+              0.75);
+    std::fill(queuedAlightingAnimationDurationSet_.begin(),
+              queuedAlightingAnimationDurationSet_.end(), false);
+    std::fill(queuedAlightingTargetProgress_.begin(), queuedAlightingTargetProgress_.end(), 0.0);
     std::vector<bool> selectedSeats(seatDestinations_.size(), false);
     for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
         const auto& destination = seatPedestrianJourneys_[seat]
@@ -662,6 +672,10 @@ void MapPassengerServiceRuntime::depart() {
     boardingAccumulatorSeconds_ = 0.0;
     alightingSeat_.reset();
     queuedAlightingSeats_.clear();
+    std::fill(queuedAlightingAccumulatorSeconds_.begin(),
+              queuedAlightingAccumulatorSeconds_.end(), 0.0);
+    std::fill(queuedAlightingAnimationDurationSet_.begin(),
+              queuedAlightingAnimationDurationSet_.end(), false);
     alightingAccumulatorSeconds_ = 0.0;
     alightingDoorWaitProgress_.reset();
     dwellRemainingSeconds_ = 0.0;
@@ -696,6 +710,23 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
         holdAtStop ? std::max(dwellRemainingSeconds_, elapsedSeconds) : dwellRemainingSeconds_;
     double elapsedForAlightingSeconds = 0.0;
     double alightingSeconds = elapsedSeconds;
+    double queuedAlightingElapsedSeconds = elapsedSeconds;
+    if (allowAlighting && alightingSeat_ &&
+        (!requireAnimationDuration || alightingAnimationDurationSet_)) {
+        queuedAlightingElapsedSeconds =
+            std::min(elapsedSeconds,
+                     std::max(0.0, alightingAnimationSeconds_ - alightingAccumulatorSeconds_));
+    }
+    for (const std::size_t seat : queuedAlightingSeats_) {
+        if (!queuedAlightingAnimationDurationSet_[seat]) {
+            continue;
+        }
+        const double targetTime =
+            queuedAlightingTargetProgress_[seat] * queuedAlightingAnimationSeconds_[seat];
+        queuedAlightingAccumulatorSeconds_[seat] =
+            std::min(targetTime, queuedAlightingAccumulatorSeconds_[seat] +
+                                     queuedAlightingElapsedSeconds);
+    }
     while (alightingSeconds > 1.0e-9 && alightingSeat_) {
         if (requireAnimationDuration && !alightingAnimationDurationSet_) {
             break;
@@ -726,6 +757,11 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             if (!queuedAlightingSeats_.empty()) {
                 alightingSeat_ = queuedAlightingSeats_.front();
                 queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
+                alightingAccumulatorSeconds_ =
+                    queuedAlightingAccumulatorSeconds_[*alightingSeat_];
+                alightingAnimationSeconds_ = queuedAlightingAnimationSeconds_[*alightingSeat_];
+                alightingAnimationDurationSet_ =
+                    queuedAlightingAnimationDurationSet_[*alightingSeat_];
             }
             if (stopAfterAlightingPassenger && alightingSeat_) {
                 break;
@@ -806,7 +842,8 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             completeBoardingPassenger();
         }
     }
-    if (!holdAtStop && dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_) {
+    if (!holdAtStop && dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_ &&
+        queuedAlightingSeats_.empty()) {
         dwellRemainingSeconds_ = 0.0;
         dwelling_ = false;
     }
@@ -888,7 +925,7 @@ std::optional<std::size_t> MapPassengerServiceRuntime::boardingSeatIndex() const
 }
 
 bool MapPassengerServiceRuntime::alightingPassenger() const noexcept {
-    return alightingSeat_.has_value();
+    return alightingSeat_.has_value() || !queuedAlightingSeats_.empty();
 }
 
 std::size_t MapPassengerServiceRuntime::outOfRangeAssignedPassengers() const noexcept {
@@ -919,6 +956,24 @@ double MapPassengerServiceRuntime::alightingProgress() const noexcept {
 
 std::optional<std::size_t> MapPassengerServiceRuntime::alightingSeatIndex() const noexcept {
     return alightingSeat_;
+}
+
+double MapPassengerServiceRuntime::alightingProgressForSeat(std::size_t seatIndex) const noexcept {
+    if (alightingSeat_ == seatIndex) {
+        return alightingProgress();
+    }
+    if (seatIndex >= queuedAlightingAccumulatorSeconds_.size() ||
+        queuedAlightingAnimationSeconds_[seatIndex] <= 0.0) {
+        return 0.0;
+    }
+    return std::clamp(queuedAlightingAccumulatorSeconds_[seatIndex] /
+                          queuedAlightingAnimationSeconds_[seatIndex],
+                      0.0, 1.0);
+}
+
+const std::vector<std::size_t>&
+MapPassengerServiceRuntime::queuedAlightingSeatIndices() const noexcept {
+    return queuedAlightingSeats_;
 }
 
 std::optional<std::size_t>
@@ -1030,11 +1085,32 @@ void MapPassengerServiceRuntime::setPassengerAnimationDuration(double seconds) {
             }
             alightingAnimationSeconds_ = seconds;
             alightingAnimationDurationSet_ = true;
+            queuedAlightingAnimationSeconds_[*alightingSeat_] = seconds;
+            queuedAlightingAnimationDurationSet_[*alightingSeat_] = true;
         }
     } else {
         throw std::logic_error("Cannot set animation duration without an active passenger");
     }
     updatePassengerPathLinkIndex();
+}
+
+void MapPassengerServiceRuntime::setQueuedAlightingPassengerAnimation(std::size_t seatIndex,
+                                                                      double seconds,
+                                                                      double queueProgress) {
+    if (!std::isfinite(seconds) || seconds <= 0.0 || !std::isfinite(queueProgress) ||
+        queueProgress < 0.0 || queueProgress >= 1.0 ||
+        std::ranges::find(queuedAlightingSeats_, seatIndex) == queuedAlightingSeats_.end()) {
+        throw std::invalid_argument("Queued alighting animation parameters are invalid");
+    }
+    if (!queuedAlightingAnimationDurationSet_[seatIndex]) {
+        if (seconds < queuedAlightingAccumulatorSeconds_[seatIndex]) {
+            throw std::invalid_argument("Queued alighting duration is less than elapsed time");
+        }
+        queuedAlightingAnimationSeconds_[seatIndex] = seconds;
+        queuedAlightingAnimationDurationSet_[seatIndex] = true;
+    }
+    queuedAlightingTargetProgress_[seatIndex] =
+        std::max(queuedAlightingTargetProgress_[seatIndex], queueProgress);
 }
 
 void MapPassengerServiceRuntime::setAlightingDoorWaitProgress(std::optional<double> progress) {

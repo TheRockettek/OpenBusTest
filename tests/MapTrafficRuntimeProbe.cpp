@@ -329,6 +329,40 @@ void verifyPassengerDoorGating() {
     require(!service.alightingPassenger() && service.onboardPassengerCount() == 0 &&
                 !service.dwelling(),
             "opening an exit door resumes and completes alighting");
+
+    MapPassengerServiceRuntime queuedAlighting(3);
+    queuedAlighting.setWaitingPassengers(40, 3);
+    require(queuedAlighting.arrive({.stopId = 40, .dwellSeconds = 2.25, .nextStopId = 50}),
+            "queued alighting fixture boards its passengers");
+    queuedAlighting.advance(2.25);
+    require(queuedAlighting.arrive({.stopId = 50, .dwellSeconds = 5.0, .nextStopId = 60}),
+            "queued alighting fixture reaches their destination");
+    require(queuedAlighting.alightingSeatIndex() == 0 &&
+                queuedAlighting.queuedAlightingSeatIndices() ==
+                    std::vector<std::size_t>{1, 2},
+            "alighters retain FIFO seat order");
+    queuedAlighting.setPassengerAnimationDuration(3.0);
+    queuedAlighting.setAlightingDoorWaitProgress(0.8);
+    queuedAlighting.setQueuedAlightingPassengerAnimation(1, 3.0, 0.2);
+    queuedAlighting.setQueuedAlightingPassengerAnimation(2, 3.0, 0.4);
+    queuedAlighting.advance(0.3, true, false, false, true, nullptr, true);
+    require(queuedAlighting.alightingProgressForSeat(1) > 0.0 &&
+                queuedAlighting.alightingProgressForSeat(1) < 0.2 &&
+                queuedAlighting.alightingProgressForSeat(2) > 0.0 &&
+                queuedAlighting.alightingProgressForSeat(2) < 0.4,
+            "queued alighters walk toward the exit while waiting for the closed door");
+    queuedAlighting.setQueuedAlightingPassengerAnimation(1, 3.0, 0.1);
+    queuedAlighting.advance(1.0, true, false, false, true, nullptr, true);
+    const double firstQueuedProgress = queuedAlighting.alightingProgressForSeat(1);
+    require(std::abs(firstQueuedProgress - 0.2) < 1.0e-9 &&
+                std::abs(queuedAlighting.alightingProgressForSeat(2) - 0.4) < 1.0e-9,
+            "queued alighters wait at their spaced positions until the exit opens");
+    queuedAlighting.advance(1.7, true, true, false, true, nullptr, true);
+    require(queuedAlighting.alightingSeatIndex() == 1 &&
+                std::abs(queuedAlighting.alightingProgress() - firstQueuedProgress) < 1.0e-9 &&
+                queuedAlighting.queuedAlightingSeatIndices() ==
+                    std::vector<std::size_t>{2},
+            "the first queued alighter is promoted with their progress preserved");
 }
 
 void verifyPassengerServiceRetirement() {

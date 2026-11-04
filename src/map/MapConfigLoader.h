@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -66,12 +67,21 @@ struct MapGlobalMetadata {
 
 struct MapTicketDefinition {
     std::string name;
+    std::string englishName;
     std::string displayValue;
+    std::string displayString;
     double value = 0.0;
     int type = 0;
+    int maxStations = 0;
+    double ageMin = 0.0;
+    double ageMax = (std::numeric_limits<double>::max)();
 };
 
 struct MapTicketPackDefinition {
+    double stamperProbability = 0.0;
+    double ticketBuyProbability = 0.0;
+    double chattiness = 0.0;
+    double whingeProbability = 0.0;
     std::vector<MapTicketDefinition> tickets;
     ConfigurationDiagnostics diagnostics;
 };

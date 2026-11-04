@@ -100,6 +100,37 @@ int main() {
     World simulationWorld;
 
     BusSimulation simulation(simulationWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    const double dryMassKg = simulation.totalMassKg();
+    const auto dryCenterOfGravity = simulation.centerOfGravity();
+    const std::array<double, 3> passengerPosition = {2.0, 0.0, 1.0};
+    simulation.setPassengerMassPoints({{0, 140.0, passengerPosition}});
+    if (std::abs(simulation.totalMassKg() - dryMassKg - 140.0) > 1.0e-9) {
+        std::cerr << "passenger mass was not added to the vehicle mass\n";
+        return 1;
+    }
+    const auto loadedCenterOfGravity = simulation.centerOfGravity();
+    const double passengerWorldX = simulation.chassisPose().position[0] + passengerPosition[0];
+    const double expectedCenterOfGravityX =
+        dryCenterOfGravity[0] +
+        140.0 / (dryMassKg + 140.0) * (passengerWorldX - dryCenterOfGravity[0]);
+    if (std::abs(loadedCenterOfGravity[0] - expectedCenterOfGravityX) > 1.0e-9) {
+        std::cerr << "passenger seat position did not affect the vehicle center of gravity\n";
+        return 1;
+    }
+    bool rejectedInvalidPassengerMass = false;
+    try {
+        simulation.setPassengerMassPoints(
+            {{0, std::numeric_limits<double>::quiet_NaN(), passengerPosition}});
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidPassengerMass = true;
+    }
+    if (!rejectedInvalidPassengerMass ||
+        std::abs(simulation.totalMassKg() - dryMassKg - 140.0) > 1.0e-9) {
+        std::cerr << "invalid passenger mass changed the physics state\n";
+        return 1;
+    }
+    simulation.step(0.0, 0.0, 0.0);
+    simulation.setPassengerMassPoints({});
     {
         BusConfiguration zeroResistanceConfiguration = testConfiguration();
         zeroResistanceConfiguration.rollingResistanceForceNewtons = 0.0;

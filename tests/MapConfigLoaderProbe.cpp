@@ -73,8 +73,11 @@ void runFixtureProbe() {
                      "[map]\n0\n0\ntile_0_0.map\n[map]\n0\n0\ntile_0_0.map\n"
                      "[map]\n1\n0\ntile_1_0.map\n");
         writeUtf16Le(root / "Tickets.otp",
-                     "[ticketpack]\n0.5\n[ticket]\n\"Single Ride\"\n\"1.50\"\n1.5\n0\n"
-                     "[ticket]\nDay Pass\n6.00\n6\n1\n");
+                     "[ticketpack]\n0.1\n0.75\n0.2\n0.3\n"
+                     "[ticket]\n\"Single Ride\"\n\"Single Ride\"\n0\n0\n120\n1.5\n\"1.50\"\n"
+                     "[ticket]\nDay Pass\nDay Pass\n0\n16\n120\n6\n6.00\n");
+        writeUtf16Le(root / "LegacyTickets.otp",
+                     "[ticketpack]\n0.5\n[ticket]\n\"Legacy Ride\"\n\"2.00\"\n2\n0\n");
         writeUtf16Le(root / "Money.cfg", "[currency]\nCredits\n2\n[coin]\ncoins\\small.o3d\n0.05\n"
                                          "[coin]\ncoins\\large.o3d\n1.00\n");
         writeUtf16Le(root / "tile_0_0.map",
@@ -285,12 +288,25 @@ void runFixtureProbe() {
                     definition.metadata.hasLeftHandTraffic,
                 "global map identity, description, version, and marker metadata captured");
         const auto ticketPack = openbus::map::loadMapTicketPackDefinition(root / "Tickets.otp");
+        const auto legacyTicketPack =
+            openbus::map::loadMapTicketPackDefinition(root / "LegacyTickets.otp");
         const auto currency = openbus::map::loadMapCurrencyDefinition(root / "Money.cfg");
-        require(ticketPack.tickets.size() == 2 && ticketPack.tickets[0].name == "Single Ride" &&
-                    ticketPack.tickets[0].displayValue == "1.50" &&
+        require(ticketPack.tickets.size() == 2 &&
+                    ticketPack.stamperProbability == 0.1 &&
+                    ticketPack.ticketBuyProbability == 0.75 &&
+                    ticketPack.chattiness == 0.2 && ticketPack.whingeProbability == 0.3 &&
+                    ticketPack.tickets[0].name == "Single Ride" &&
+                    ticketPack.tickets[0].englishName == "Single Ride" &&
+                    ticketPack.tickets[0].displayString == "1.50" &&
                     ticketPack.tickets[0].value == 1.5 &&
+                    ticketPack.tickets[0].ageMax == 120.0 &&
                     ticketPack.tickets[1].name == "Day Pass" &&
-                    ticketPack.tickets[1].value == 6.0 && currency.name == "Credits" &&
+                    ticketPack.tickets[1].ageMin == 16.0 &&
+                    ticketPack.tickets[1].value == 6.0 &&
+                    legacyTicketPack.ticketBuyProbability == 0.5 &&
+                    legacyTicketPack.tickets.size() == 1 &&
+                    legacyTicketPack.tickets[0].name == "Legacy Ride" &&
+                    legacyTicketPack.tickets[0].value == 2.0 && currency.name == "Credits" &&
                     currency.mode == "2" && currency.coins.size() == 2 &&
                     currency.coins[0].modelPath == "coins\\small.o3d" &&
                     currency.coins[0].value == 0.05 && currency.coins[1].value == 1.0,

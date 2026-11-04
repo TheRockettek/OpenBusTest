@@ -360,6 +360,8 @@ class MapPassengerServiceRuntime {
     bool canCurrentPassengerAlightAt(const std::array<double, 3>& position) const;
     double alightingProgress() const noexcept;
     std::optional<std::size_t> alightingSeatIndex() const noexcept;
+    double alightingProgressForSeat(std::size_t seatIndex) const noexcept;
+    const std::vector<std::size_t>& queuedAlightingSeatIndices() const noexcept;
     std::optional<std::size_t> boardingPassengerModelIndex() const noexcept;
     std::optional<int> boardingPassengerDestinationStopId() const noexcept;
     std::optional<std::size_t> boardingPassengerQueueSlot(std::size_t initialCount) const;
@@ -371,6 +373,8 @@ class MapPassengerServiceRuntime {
     void rearmPassengerStopRequestsAfterStop(int stopId);
     std::size_t waitingPassengers(int stopId) const noexcept;
     void setPassengerAnimationDuration(double seconds);
+    void setQueuedAlightingPassengerAnimation(std::size_t seatIndex, double seconds,
+                                               double queueProgress);
     void setAlightingDoorWaitProgress(std::optional<double> progress);
     void setPassengerPathLinkProgressProfile(
         std::vector<std::pair<double, std::optional<std::size_t>>> profile);
@@ -407,6 +411,10 @@ class MapPassengerServiceRuntime {
     std::optional<std::size_t> boardingPassengerFixedQueueSlot_;
     std::optional<std::size_t> eligibleWaitingPassengers_;
     std::vector<std::size_t> queuedAlightingSeats_;
+    std::vector<double> queuedAlightingAccumulatorSeconds_;
+    std::vector<double> queuedAlightingAnimationSeconds_;
+    std::vector<bool> queuedAlightingAnimationDurationSet_;
+    std::vector<double> queuedAlightingTargetProgress_;
     std::size_t outOfRangeAssignedPassengers_ = 0;
     std::optional<std::size_t> alightingSeat_;
     double alightingAccumulatorSeconds_ = 0.0;

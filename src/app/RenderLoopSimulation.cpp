@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -186,7 +187,7 @@ void RenderLoop::cancelMovingPlayerPassengerService(const BusSimulation& simulat
     }
 }
 
-void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
+void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
     soundViewpoint_ =
@@ -339,13 +340,22 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 vehicle->variables, openbus::app::vehicle::PassengerDoorKind::Exit,
                 vehicle->passengers->exitDoor());
             const auto alightingSeatBefore = service.alightingSeatIndex();
-            const auto alightingDoorBefore = vehicle->passengers->exitDoor();
-            const auto alightingModelBefore =
-                alightingSeatBefore ? service.passengerModelIndexOnSeat(*alightingSeatBefore)
-                                    : std::nullopt;
-            const auto pedestrianJourneyBefore =
-                alightingSeatBefore ? service.passengerPedestrianJourneyOnSeat(*alightingSeatBefore)
-                                    : std::nullopt;
+            struct AlightingPassengerSnapshot {
+                std::size_t seatIndex;
+                std::optional<std::size_t> modelIndex;
+                std::optional<openbus::map::MapPassengerPedestrianJourney> pedestrianJourney;
+            };
+            std::vector<AlightingPassengerSnapshot> alightingPassengersBefore;
+            if (alightingSeatBefore) {
+                alightingPassengersBefore.push_back(
+                    {*alightingSeatBefore, service.passengerModelIndexOnSeat(*alightingSeatBefore),
+                     service.passengerPedestrianJourneyOnSeat(*alightingSeatBefore)});
+            }
+            for (const std::size_t seat : service.queuedAlightingSeatIndices()) {
+                alightingPassengersBefore.push_back(
+                    {seat, service.passengerModelIndexOnSeat(seat),
+                     service.passengerPedestrianJourneyOnSeat(seat)});
+            }
             if (exitOpen && playerServiceActive && alightingSeatBefore) {
                 if (!mapRenderer_ || !activePlayerPassengerStopRouteIndex_ ||
                     !activePlayerPassengerStopIndex_) {
@@ -369,7 +379,7 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 const auto outside = passengerConfiguredDoorQueuePose(
                                          *vehicle, busPose, mapRenderer_->leftHandTraffic(),
                                          vehicle->passengers->configuration().passengerExitPathPoints,
-                                         alightingDoorBefore, 0)
+                                         vehicle->passengers->exitDoorForSeat(*alightingSeatBefore), 0)
                                          .value_or(curb);
                 exitOpen = service.canCurrentPassengerAlightAt(outside.position);
                 if (!exitOpen && reportedPassengerDriftStops_.insert(activeStop->second).second) {
@@ -488,21 +498,296 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 }
             }
             bool passengerReady = true;
-            if (playerServiceActive && queue != passengerNetwork_.queues.end()) {
-                playerPassengerApproachSeconds_ += passengerServiceTimeStep;
-                if (nextPassenger && !vehicle->passengers->service.boardingPassenger()) {
+            bool passengerTicketSalePending = false;
+            if (activeStop != sharedQueueStops.end() && queue != passengerNetwork_.queues.end() &&
+                nextPassenger && !service.boardingPassenger()) {
+                const auto& rider =
+                    passengerNetwork_.waitingPassengers(activeStop->second)[*nextPassenger];
+                auto& approach = passengerApproachProgress_[vehicle.get()];
+                if (approach.stopId != activeStop->second ||
+                    approach.modelIndex != rider.modelIndex) {
+                    approach = {};
+                    approach.stopId = activeStop->second;
+                    approach.modelIndex = rider.modelIndex;
+                }
+                approach.elapsedSeconds += passengerServiceTimeStep;
+                const double approachSeconds = approach.elapsedSeconds;
+                if (!playerServiceActive) {
+                    const auto scheduled = scheduledStopVehicles.find(vehicle.get());
+                    if (scheduled == scheduledStopVehicles.end() || !mapRenderer_) {
+                        throw std::logic_error("Scheduled passenger approach has no active bus pose");
+                    }
+                }
+                if (nextPassenger) {
                     const std::size_t slot =
                         passengerNetwork_.waitingPassengers(activeStop->second)[*nextPassenger]
                             .queueSlot;
-                    const auto start = passengerQueuePose(activeStop->second, slot);
-                    if (!start || mapRenderer_ == nullptr) {
-                        throw std::logic_error("Cannot locate waiting player bus passengers");
+                    std::optional<openbus::map::MapTrafficPose> start;
+                    std::optional<openbus::map::MapTrafficPose> destination;
+                    std::optional<openbus::map::MapTrafficPose> busPoseForTicket;
+                    if (playerServiceActive) {
+                        const auto chassis = simulation.chassisPose();
+                        busPoseForTicket.emplace();
+                        busPoseForTicket->position =
+                            transformLocalPoint(chassis, {0.0, 0.0, vehicle->modelOffsetZ});
+                        busPoseForTicket->headingRadians =
+                            std::atan2(chassis.rotation[0], chassis.rotation[3]);
+                        start = passengerQueuePose(activeStop->second, slot);
+                        destination = playerPassengerDoorQueuePose(
+                            *vehicle, chassis, mapRenderer_->leftHandTraffic(), slot);
+                    } else {
+                        const auto scheduled = scheduledStopVehicles.find(vehicle.get());
+                        if (scheduled == scheduledStopVehicles.end() || !mapRenderer_) {
+                            throw std::logic_error(
+                                "Scheduled passenger approach has no mapped bus state");
+                        }
+                        const auto& state = *scheduled->second;
+                        if (state.bus->nextPassengerStopIndex >= state.bus->passengerStops.size()) {
+                            throw std::logic_error("Scheduled passenger approach has no stop call");
+                        }
+                        start = passengerQueuePose(activeStop->second, slot);
+                        auto busPose = openbus::map::sampleMapTrafficActorPose(
+                            state.actor, state.actor.distanceMeters);
+                        if (!busPose) {
+                            throw std::runtime_error(
+                                "Cannot sample scheduled passenger approach bus pose");
+                        }
+                        busPose->position[2] += vehicle->aiDeltaHeight;
+                        busPoseForTicket = *busPose;
+                        destination = passengerConfiguredDoorQueuePose(
+                            *vehicle, *busPose, mapRenderer_->leftHandTraffic(),
+                            vehicle->passengers->configuration().passengerEntryPathPoints,
+                            vehicle->passengers->entryDoor(), slot);
+                        if (!destination) {
+                            *destination = passengerDoorQueuePose(
+                                *busPose, vehicle->trafficLengthMeters * 0.3,
+                                vehicle->trafficWidthMeters, mapRenderer_->leftHandTraffic(), slot);
+                        }
                     }
-                    const auto destination = playerPassengerDoorQueuePose(
-                        *vehicle, simulation.chassisPose(), mapRenderer_->leftHandTraffic(), slot);
-                    passengerReady = playerPassengerApproachSeconds_ >=
-                                     passengerApproachDuration(*start, destination);
+                    if (!start || !destination) {
+                        throw std::logic_error("Cannot locate passenger entry queue poses");
+                    }
+                    const bool reachedEntry =
+                        approachSeconds >= passengerApproachDuration(*start, *destination);
+                    passengerReady = reachedEntry;
+                    const auto& cabin = vehicle->passengers->configuration();
+                    if (entryOpen && reachedEntry && !approach.ticketSaleStarted) {
+                        approach.ticketSaleStarted = true;
+                        approach.ticketSaleComplete = true;
+                        if (!cabin.passengerCabinNoTicketSale &&
+                            passengerTicketPack_.ticketBuyProbability > 0.0 &&
+                            !passengerTicketPack_.tickets.empty()) {
+                            std::uniform_real_distribution<double> purchaseChance(0.0, 1.0);
+                            if (purchaseChance(passengerTransactionRandom_) <
+                                passengerTicketPack_.ticketBuyProbability) {
+                                const auto& route = passengerNetwork_.routes.at(*serviceRouteIndex);
+                                std::size_t originIndex = route.stops.size();
+                                if (playerServiceActive && activePlayerPassengerStopIndex_) {
+                                    originIndex = *activePlayerPassengerStopIndex_;
+                                } else if (const auto scheduled =
+                                               scheduledStopVehicles.find(vehicle.get());
+                                           scheduled != scheduledStopVehicles.end()) {
+                                    originIndex =
+                                        scheduled->second->bus->nextPassengerStopIndex;
+                                }
+                                const auto& journey = *rider.journey;
+                                const auto& destinationPosition =
+                                    journey.pedestrianJourney
+                                        ? journey.pedestrianJourney->destination
+                                        : journey.destinationPosition;
+                                std::optional<std::size_t> stationCount;
+                                if (originIndex < route.stops.size()) {
+                                    for (std::size_t index = originIndex + 1;
+                                         index < route.stops.size(); ++index) {
+                                        if (route.stops[index].stopId != journey.destinationStopId) {
+                                            continue;
+                                        }
+                                        const auto pose = route.stopPose(index);
+                                        if (pose &&
+                                            std::hypot(pose->position[0] - destinationPosition[0],
+                                                       pose->position[1] -
+                                                           destinationPosition[1]) <=
+                                                openbus::map::passengerStopRequestRadiusMeters) {
+                                            stationCount = index - originIndex;
+                                            break;
+                                        }
+                                    }
+                                }
+                                const std::optional<double> passengerAge =
+                                    scheduledPassengerHumanAges_.empty()
+                                        ? std::nullopt
+                                        : scheduledPassengerHumanAges_[
+                                              rider.modelIndex %
+                                              scheduledPassengerHumanAges_.size()];
+                                std::optional<std::size_t> ticketIndex;
+                                for (std::size_t index = 0;
+                                     index < passengerTicketPack_.tickets.size(); ++index) {
+                                    const auto& ticket = passengerTicketPack_.tickets[index];
+                                    if ((!stationCount && ticket.maxStations != 0) ||
+                                        (stationCount && ticket.maxStations != 0 &&
+                                         *stationCount >
+                                             static_cast<std::size_t>(ticket.maxStations)) ||
+                                        !passengerAge || *passengerAge < ticket.ageMin ||
+                                        *passengerAge > ticket.ageMax) {
+                                        continue;
+                                    }
+                                    if (!ticketIndex ||
+                                        ticket.value <
+                                            passengerTicketPack_.tickets[*ticketIndex].value) {
+                                        ticketIndex = index;
+                                    }
+                                }
+                                if (ticketIndex) {
+                                    const auto& ticket =
+                                        passengerTicketPack_.tickets[*ticketIndex];
+                                    const bool hasPaymentCoins =
+                                        ticket.value <= 0.0 || !passengerCurrency_.coins.empty();
+                                    if (ticket.value > 0.0 && !hasPaymentCoins) {
+                                        if (reportedPassengerTicketStops_.insert(activeStop->second)
+                                                .second) {
+                                            gameLog.Warning(
+                                                "Passenger ticket sale is unavailable without map "
+                                                "currency coins at stop " +
+                                                std::to_string(activeStop->second) + ".");
+                                        }
+                                    } else {
+                                        double payment = ticket.value;
+                                        if (ticket.value > 0.0) {
+                                            std::vector<double> coinValues;
+                                            coinValues.reserve(passengerCurrency_.coins.size());
+                                            for (const auto& coin : passengerCurrency_.coins) {
+                                                coinValues.push_back(coin.value);
+                                            }
+                                            std::ranges::sort(coinValues, std::greater{});
+                                            payment = 0.0;
+                                            for (const double coinValue : coinValues) {
+                                                const double remaining = ticket.value - payment;
+                                                if (remaining <= 1.0e-8) {
+                                                    break;
+                                                }
+                                                payment +=
+                                                    std::floor((remaining + 1.0e-8) / coinValue) *
+                                                    coinValue;
+                                            }
+                                            if (payment + 1.0e-8 < ticket.value) {
+                                                const double smallestCoin =
+                                                    std::ranges::min(coinValues);
+                                                payment +=
+                                                    std::ceil((ticket.value - payment - 1.0e-8) /
+                                                              smallestCoin) *
+                                                    smallestCoin;
+                                            }
+                                        }
+                                        approach.ticketBought = true;
+                                        approach.changeDue =
+                                            std::max(0.0, payment - ticket.value);
+                                        approach.ticketSaleComplete = false;
+                                        if (!cabin.passengerTicketSaleMachines.empty()) {
+                                            approach.ticketMachineConfigurationIndex = 0;
+                                        } else {
+                                            approach.ticketPaymentStarted = true;
+                                            approach.cashDispensedAtSaleStart =
+                                                std::max(0.0, static_cast<double>(
+                                                                  vehicle->variables.get(
+                                                                      "cash_dispensed_total")));
+                                        }
+                                        vehicle->variables.set(
+                                            "passenger_ticket_sale_active",
+                                            approach.ticketPaymentStarted ? 1.0F : 0.0F);
+                                        vehicle->variables.set("passenger_ticket_sale_price",
+                                                               static_cast<float>(ticket.value));
+                                        vehicle->variables.set("passenger_ticket_sale_paid_amount",
+                                                               static_cast<float>(payment));
+                                        vehicle->variables.set(
+                                            "passenger_ticket_sale_change_due",
+                                            static_cast<float>(approach.changeDue));
+                                        vehicle->variables.set(
+                                            "passenger_ticket_sale_machine_index",
+                                            !approach.ticketMachineConfigurationIndex
+                                                ? -1.0F
+                                                : static_cast<float>(
+                                                      cabin.passengerTicketSaleMachines[
+                                                          *approach.ticketMachineConfigurationIndex]
+                                                          .index));
+                                        vehicle->variables.setString("passenger_ticket_sale_name",
+                                                                     ticket.name);
+                                        vehicle->variables.setString(
+                                            "passenger_ticket_sale_display_string",
+                                            ticket.displayString);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (entryOpen && reachedEntry && approach.ticketBought &&
+                        approach.ticketMachineConfigurationIndex &&
+                        !approach.ticketPaymentStarted) {
+                        const auto machinePose = passengerVehicleLocalPose(
+                            *busPoseForTicket,
+                            cabin.passengerTicketSaleMachines[
+                                *approach.ticketMachineConfigurationIndex]
+                                .position);
+                        approach.ticketMachineApproachSeconds += passengerServiceTimeStep;
+                        if (approach.ticketMachineApproachSeconds >=
+                            passengerApproachDuration(*destination, machinePose)) {
+                            approach.ticketPaymentStarted = true;
+                            approach.cashDispensedAtSaleStart =
+                                std::max(0.0, static_cast<double>(
+                                                  vehicle->variables.get(
+                                                      "cash_dispensed_total")));
+                            vehicle->variables.set("passenger_ticket_sale_active", 1.0F);
+                        }
+                    }
+                    if (entryOpen && reachedEntry && approach.ticketBought &&
+                        approach.ticketPaymentStarted && !approach.ticketPrinted) {
+                        const double dispensed =
+                            std::max(0.0, static_cast<double>(vehicle->variables.get(
+                                              "cash_dispensed_total")) -
+                                              approach.cashDispensedAtSaleStart);
+                        if (dispensed + 1.0e-4 >= approach.changeDue) {
+                            approach.ticketWaitSeconds += passengerServiceTimeStep;
+                            if (approach.ticketWaitSeconds >= 0.75) {
+                                approach.ticketPrinted = true;
+                                vehicle->variables.set("passenger_ticket_sale_active", 0.0F);
+                                std::uniform_real_distribution<double> stampChance(0.0, 1.0);
+                                const bool stamped =
+                                    !cabin.passengerCabinStampers.empty() &&
+                                    stampChance(passengerTransactionRandom_) <
+                                        passengerTicketPack_.stamperProbability;
+                                vehicle->variables.set("passenger_ticket_last_stamped",
+                                                       stamped ? 1.0F : 0.0F);
+                                if (stamped) {
+                                    vehicle->variables.set(
+                                        "passenger_ticket_stamper_index",
+                                        static_cast<float>(
+                                            cabin.passengerCabinStampers.front().index));
+                                }
+                                if (!approach.ticketMachineConfigurationIndex) {
+                                    approach.ticketSaleComplete = true;
+                                }
+                            }
+                        }
+                    }
+                    if (entryOpen && reachedEntry && approach.ticketPrinted &&
+                        approach.ticketMachineConfigurationIndex &&
+                        !approach.ticketSaleComplete) {
+                        const auto machinePose = passengerVehicleLocalPose(
+                            *busPoseForTicket,
+                            cabin.passengerTicketSaleMachines[
+                                *approach.ticketMachineConfigurationIndex]
+                                .position);
+                        approach.ticketMachineReturnSeconds += passengerServiceTimeStep;
+                        if (approach.ticketMachineReturnSeconds >=
+                            passengerApproachDuration(machinePose, *destination)) {
+                            approach.ticketSaleComplete = true;
+                        }
+                    }
+                    passengerTicketSalePending =
+                        approach.ticketBought && !approach.ticketSaleComplete;
+                    passengerReady = reachedEntry && approach.ticketSaleComplete;
                 }
+            } else if (activeStop == sharedQueueStops.end()) {
+                passengerApproachProgress_.erase(vehicle.get());
             }
             if (queue != passengerNetwork_.queues.end()) {
                 passengerNetwork_.advanceService(
@@ -510,14 +795,17 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                     entryOpen && passengerReady, exitOpen,
                     (playerServiceActive && activePlayerPassengerStopServiceGeneration_ ==
                                                 playerPassengerServiceGeneration_) ||
-                        passengerDestinationPending,
+                        passengerDestinationPending || passengerTicketSalePending,
                     passengerDestinationPending);
             } else {
                 vehicle->passengers->service.advance(passengerServiceTimeStep, entryOpen, exitOpen,
                                                      false, true, nullptr, true);
             }
-            if (alightingSeatBefore && alightingModelBefore && pedestrianJourneyBefore &&
-                service.passengerCountOnSeat(*alightingSeatBefore) == 0) {
+            for (const auto& passenger : alightingPassengersBefore) {
+                if (!passenger.modelIndex || !passenger.pedestrianJourney ||
+                    service.passengerCountOnSeat(passenger.seatIndex) != 0) {
+                    continue;
+                }
                 if (activeStop == sharedQueueStops.end() || !mapRenderer_) {
                     throw std::logic_error("Alighting pedestrian has no active mapped stop");
                 }
@@ -566,14 +854,15 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 }
                 const auto curb = passengerCurbPose(*stopPose, mapRenderer_->leftHandTraffic(),
                                                     laneOffset, vehicleWidth);
+                const auto exitDoor = vehicle->passengers->exitDoorForSeat(passenger.seatIndex);
                 const auto outside = passengerConfiguredDoorQueuePose(
                                          *vehicle, busPose, mapRenderer_->leftHandTraffic(),
                                          vehicle->passengers->configuration().passengerExitPathPoints,
-                                         alightingDoorBefore, 0)
+                                         exitDoor, 0)
                                          .value_or(curb);
                 auto handoff = openbus::app::makePassengerPedestrianHandoff(
-                    *pedestrianJourneyBefore, outside, busPose, mapRenderer_->leftHandTraffic(),
-                    *alightingModelBefore);
+                    *passenger.pedestrianJourney, outside, busPose,
+                    mapRenderer_->leftHandTraffic(), *passenger.modelIndex);
                 if (handoff) {
                     alightedPassengers_.push_back(std::move(*handoff));
                 } else if (reportedPassengerHandoffStops_.insert(activeStop->second).second) {
@@ -693,6 +982,45 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                             service, cabin, busPose, seatPose.position,
                             passengerCabinLocalPoint(busPose, outside.position), false, *seat,
                             vehicle->passengers->exitDoor());
+                        const auto& queuedSeats = service.queuedAlightingSeatIndices();
+                        for (std::size_t queueIndex = 0; queueIndex < queuedSeats.size();
+                             ++queueIndex) {
+                            const std::size_t queuedSeat = queuedSeats[queueIndex];
+                            if (queuedSeat >= cabin.passengerPositions.size()) {
+                                throw std::logic_error(
+                                    "Queued alighting passenger has no configured seat");
+                            }
+                            const auto queuedSeatPose = passengerCabinSeatPose(
+                                busPose, cabin.passengerPositions[queuedSeat]);
+                            const auto queuedExitDoor =
+                                vehicle->passengers->exitDoorForSeat(queuedSeat);
+                            const auto queuedOutside = passengerConfiguredDoorQueuePose(
+                                                           *vehicle, busPose,
+                                                           mapRenderer_->leftHandTraffic(),
+                                                           cabin.passengerExitPathPoints,
+                                                           queuedExitDoor, 0)
+                                                           .value_or(curb);
+                            const auto queuedEndLocal =
+                                passengerCabinLocalPoint(busPose, queuedOutside.position);
+                            auto queuedPath = passengerCabinTravelPath(
+                                cabin, busPose, queuedSeatPose.position, queuedEndLocal, false,
+                                queuedExitDoor);
+                            if (queuedPath.positions.empty()) {
+                                queuedPath.positions = {queuedSeatPose.position,
+                                                        queuedOutside.position};
+                                queuedPath.segmentLinkIndices = {std::nullopt};
+                            }
+                            const bool queuedHasSeat =
+                                cabin.passengerPositions[queuedSeat].seatHeight > 0.0;
+                            const double queuedDuration = passengerCabinTravelDuration(
+                                queuedPath, queuedSeatPose.position, queuedOutside.position,
+                                queuedHasSeat);
+                            const double queueProgress = passengerCabinQueueProgress(
+                                queuedPath, queuedSeatPose.position, queuedOutside.position,
+                                queuedHasSeat, queueIndex + 1);
+                            service.setQueuedAlightingPassengerAnimation(
+                                queuedSeat, queuedDuration, queueProgress);
+                        }
                     }
                 }
             }
@@ -715,6 +1043,37 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                                                                      passengerServiceTimeStep);
         });
     }
+    std::vector<BusPassengerMassPoint> passengerMassPoints;
+    if (playerVehicle_ != nullptr && playerVehicle_->passengers) {
+        const auto& service = playerVehicle_->passengers->service;
+        const auto& cabin = playerVehicle_->passengers->configuration();
+        for (std::size_t seatIndex = 0; seatIndex < service.seatCount(); ++seatIndex) {
+            if (service.passengerCountOnSeat(seatIndex) == 0) {
+                continue;
+            }
+            const auto modelIndex = service.passengerModelIndexOnSeat(seatIndex);
+            if (!modelIndex || scheduledPassengerHumanMassesKg_.empty()) {
+                continue;
+            }
+            const auto& passengerMass =
+                scheduledPassengerHumanMassesKg_[*modelIndex %
+                                                  scheduledPassengerHumanMassesKg_.size()];
+            if (passengerMass && *passengerMass > 0.0) {
+                if (seatIndex >= cabin.passengerPositions.size()) {
+                    throw std::logic_error("Passenger mass point has no configured seat");
+                }
+                const auto& seat = cabin.passengerPositions[seatIndex];
+                const auto standingPoint =
+                    passengerCabinStandingPoint(seat.position, seat.seatHeight);
+                const auto modelPoint = passengerCabinModelPoint(standingPoint);
+                passengerMassPoints.push_back(
+                    {seatIndex, *passengerMass,
+                     {modelPoint[0], modelPoint[1],
+                      modelPoint[2] + playerVehicle_->modelOffsetZ}});
+            }
+        }
+    }
+    simulation.setPassengerMassPoints(passengerMassPoints);
     updateScripts();
     for (TrafficVehicleState& trafficVehicle : trafficFleet_.vehicles) {
         if (!trafficVehicle.populationEnabled || trafficVehicle.vehicle == nullptr) {
@@ -976,7 +1335,7 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                 }
                 playerVehicle_->passengers->service.setEligibleWaitingPassengers(0);
                 activePlayerPassengerStop_ = stop.stopId;
-                playerPassengerApproachSeconds_ = 0.0;
+                passengerApproachProgress_.erase(playerVehicle_);
                 activePlayerPassengerStopRouteIndex_ = nearestStop.routeIndex;
                 activePlayerPassengerStopIndex_ = nearestStop.stopIndex;
                 activePlayerPassengerStopServiceGeneration_ = playerPassengerServiceGeneration_;

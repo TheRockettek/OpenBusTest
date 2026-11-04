@@ -269,17 +269,24 @@ recognized but incomplete semantics.
   Station-only timetables retain their authored line and destination, and
   ordinary spline stops no longer require a scenery-path index. Many trips
   remain unavailable when AI road-route construction cannot connect their
-  checkpoints; player timetable registration must be decoupled from that
-  requirement without fabricating stop positions. The timetable panel caches
+  checkpoints; expand route construction without fabricating stop positions.
+  The timetable panel caches
   HOF matching and course/trip choices until the player, map, or registered
   routes change. Catalog diagnostics report HOF data, rejection counts, and
   samples of unavailable routes rather than repeating matching every frame.
-  Passenger mass, ticket purchase, fare transactions, and physical/audible coin
-  output remain incomplete. Map ticket-pack/currency records feed ticket and
-  change-coin script macros for player and AI buses.
+  Passenger mass from authored `.hum` files now contributes to player-bus
+  physics at each occupied seat's authored position. Physical fare transactions
+  and physical/audible coin output remain incomplete. Map
+  ticket-pack/currency records feed ticket and change-coin script macros for
+  player and AI buses.
 
   Passenger journey gaps to complete and validate:
 
+  - [~] Seated passengers' authored `.hum` masses contribute to player-bus
+    total mass and combined center of gravity at their configured seat positions;
+    values are interpreted as tonnes. Each rider is represented by a fixed mass
+    body, so detailed human inertia and native physics parity remain approximate.
+    Validate acceleration, braking and suspension response in game.
   - [~] Waiting riders retain an expected mapped service and downstream stop
     in the shared queue; buses board only matching riders. Nearby directed
     pedestrian splines now generate world destinations before boarding, with a
@@ -289,14 +296,20 @@ recognized but incomplete semantics.
     moving without entering the road, and permit a safe road crossing only
     once it has stopped. Replace direct interpolation with road-aware walking
     for player and scheduled AI buses.
-  - [~] Player-bus waiting positions now form a single line beside the entry;
-    validate its in-game spacing and road safety. Add the same approach and
-    physical queue for scheduled AI buses, and validate queue ordering and
-    single-passenger, door-gated boarding for both.
-  - [ ] When ticket selling is enabled, implement the passenger transaction:
-    payment, change when owed, waiting for a ticket, and use of an applicable
-    ticket machine. Parsed locations and script accounting alone are not a
-    completed transaction.
+  - [~] Player-bus waiting positions form a single line beside the entry.
+    Scheduled AI passengers now approach the entry queue only after their bus
+    has stopped; player and AI approaches retain a single active rider and
+    wait outside the door for it to open. Validate spacing, queue ordering and
+    single-passenger, door-gated boarding in game. Approaching a moving bus
+    still needs road-aware pedestrian routing and crossing safety.
+  - [~] Ticket packs now retain purchase/stamping probabilities and ticket
+    names, values, age limits and station limits. Eligible riders may buy the
+    cheapest ticket and visibly walk to the first configured machine, then wait
+    for driver `GiveChangeCoin` calls to cover modeled
+    change before ticket issuance and boarding. Passenger cash is simulated;
+    stamper actor movement and physical coin output are not implemented. Validate
+    purchase probability, change accounting, machine use and door gating in
+    game.
   - [~] Cabin traversal now uses the connected or fallback path length and a
     walking-speed-based duration, including the seating transition. Validate
     walking and sitting in game, including disconnected cabin-path fallback.
@@ -310,10 +323,11 @@ recognized but incomplete semantics.
     forced terminal or cancelled-service unloading outside the limit; validate
     this in game.
   - [~] The active alighter can stand and approach a connected exit while it
-    is closed, stopping up to 0.5 m short of the door along the path. If its
-    path is unknown, the alighter waits in its seat. Support multiple alighters
-    progressing concurrently and queuing behind each other, preserving queue order
-    and the existing single-boarder constraint; validate the approach in game.
+    is closed, stopping up to 0.5 m short of the door along the path. Queued
+    alighters now walk toward spaced waiting positions concurrently; only the
+    head of the FIFO queue can exit, and promotion preserves its progress.
+    Runtime regression coverage verifies closed-door waiting and FIFO promotion;
+    validate the visual queue and exit-door behavior in game.
   - [~] After leaving the bus, alighters follow their assigned directed
     pedestrian spline when a short outward connector is available; otherwise
     they disappear. Validate the conservative connector and road safety in
@@ -361,18 +375,19 @@ recognized but incomplete semantics.
 The following OMSI BUS/model features are absent or only partially implemented.
 The implemented portions should not be mistaken for full native behavior:
 
-- Passenger mass and native cabin/door semantics. Timed boarding/alighting is
+- Native cabin/door semantics. Timed boarding/alighting is
   connected to live scheduled AI/player bus stops, with movement following
   configured entry/exit path links
   when a connected cabin graph is available, fallback boarding/alighting
-  animations between the roadside and assigned cabin seats, and occupied seats
+  animations between the roadside and assigned cabin seats, occupied seats
   rendered. Basic `[passengercabin]` seat positions, illumination groups,
   entries/exits, and path links are loaded and covered by
   `OpenBusVehicleConfigProbe`. When a
   connected graph exists, pathfinding follows one-way and bidirectional cabin
   links, and timetable offsets position stops within their mapped spline
-  segments; detailed native door/aisle semantics and passenger mass remain
-  unverified.
+  segments; detailed native door/aisle semantics remain unverified. Seated
+  passenger mass from `.hum` configuration is applied at authored seat
+  positions, but human inertia and live physics parity remain unverified.
 - Native HOF route/path selection and timetable behavior beyond the current
   map player-trip workflow, plus stop announcements and arrival-board data.
   Basic `[paths]` point/link graphs and step metadata are loaded and covered by

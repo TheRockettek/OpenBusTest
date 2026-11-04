@@ -157,9 +157,9 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
     return path;
 }
 
-inline double passengerCabinTravelDuration(const PassengerCabinTravelPathData& path,
-                                           const std::array<double, 3>& startWorld,
-                                           const std::array<double, 3>& endWorld, bool hasSeat) {
+inline double passengerCabinTravelPathLength(const PassengerCabinTravelPathData& path,
+                                             const std::array<double, 3>& startWorld,
+                                             const std::array<double, 3>& endWorld) {
     double length = 0.0;
     const auto addSegment = [&](const auto& from, const auto& to) {
         const double segment = std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
@@ -175,6 +175,13 @@ inline double passengerCabinTravelDuration(const PassengerCabinTravelPathData& p
             addSegment(path.positions[index - 1], path.positions[index]);
         }
     }
+    return length;
+}
+
+inline double passengerCabinTravelDuration(const PassengerCabinTravelPathData& path,
+                                           const std::array<double, 3>& startWorld,
+                                           const std::array<double, 3>& endWorld, bool hasSeat) {
+    const double length = passengerCabinTravelPathLength(path, startWorld, endWorld);
     const double walkingPortion = hasSeat ? 1.0 - passengerSeatTransitionPortion : 1.0;
     const double duration = length / (passengerApproachSpeedMetersPerSecond * walkingPortion);
     if (!std::isfinite(duration)) {
@@ -212,6 +219,23 @@ passengerAlightingDoorWaitProgress(const PassengerCabinTravelPathData& path, boo
                                           (1.0 - passengerSeatTransitionPortion) * walkingProgress
                                     : walkingProgress;
     return std::min(progress, std::nextafter(1.0, 0.0));
+}
+
+inline double passengerCabinQueueProgress(const PassengerCabinTravelPathData& path,
+                                          const std::array<double, 3>& startWorld,
+                                          const std::array<double, 3>& endWorld, bool hasSeat,
+                                          std::size_t queuePosition) {
+    const double length = passengerCabinTravelPathLength(path, startWorld, endWorld);
+    if (length <= 1.0e-9) {
+        return 0.0;
+    }
+    constexpr double queueSpacingMeters = 0.6;
+    const double nearDoorProgress = passengerAlightingDoorWaitProgress(path, hasSeat).value_or(
+        std::nextafter(1.0, 0.0));
+    const double walkingPortion = hasSeat ? 1.0 - passengerSeatTransitionPortion : 1.0;
+    const double separation = walkingPortion * queueSpacingMeters *
+                              static_cast<double>(queuePosition) / length;
+    return std::clamp(nearDoorProgress - separation, 0.0, std::nextafter(1.0, 0.0));
 }
 
 inline void updatePassengerCabinPathOccupancy(

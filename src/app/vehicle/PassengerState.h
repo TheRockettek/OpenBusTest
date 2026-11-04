@@ -32,6 +32,9 @@ struct PassengerState {
         const auto seat = service.alightingSeatIndex();
         return seat ? exitDoorsBySeat.at(*seat) : std::nullopt;
     }
+    [[nodiscard]] std::optional<std::size_t> exitDoorForSeat(std::size_t seatIndex) const {
+        return exitDoorsBySeat.at(seatIndex);
+    }
 
     std::shared_ptr<const SharedVehicleDefinition> definition;
     openbus::map::MapPassengerServiceRuntime service;

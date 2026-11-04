@@ -4,6 +4,7 @@
 #include "app/MapTrafficWorker.h"
 #include "app/ImGuiLayer.h"
 #include "app/vehicle/VehicleDefinition.h"
+#include "config/HumanConfigLoader.h"
 #include "core/AssetPath.h"
 #include "render/map/MapRenderer.h"
 #include "map/MapSplineProfile.h"
@@ -904,12 +905,18 @@ void RenderLoop::SetScheduledPassengerHumanModels(
         throw std::logic_error("Cannot load scheduled passenger models before loading a map");
     }
     scheduledPassengerHumanModels_.clear();
+    scheduledPassengerHumanAges_.clear();
+    scheduledPassengerHumanMassesKg_.clear();
     for (const std::filesystem::path& path : humanConfigPaths) {
         if (path.empty() || !std::filesystem::is_regular_file(path)) {
             continue;
         }
         mapRenderer_->loadHumanTrafficModel(path);
         scheduledPassengerHumanModels_.push_back(path);
+        const auto human = openbus::config::loadHumanConfig(path);
+        scheduledPassengerHumanAges_.push_back(human.age);
+        scheduledPassengerHumanMassesKg_.push_back(
+            human.mass ? std::optional<double>{*human.mass * 1000.0} : std::nullopt);
     }
 }
 
@@ -1107,6 +1114,10 @@ void RenderLoop::ResetForStartupMenu() {
     humanTrafficActors_.clear();
     alightedPassengers_.clear();
     scheduledPassengerHumanModels_.clear();
+    scheduledPassengerHumanAges_.clear();
+    scheduledPassengerHumanMassesKg_.clear();
+    passengerTicketPack_ = {};
+    passengerCurrency_ = {};
     passengerNetwork_ = {};
     passengerTimetableCourses_.clear();
     playerTimetableCatalog_.invalidate();
@@ -1121,6 +1132,8 @@ void RenderLoop::ResetForStartupMenu() {
     reportedPassengerHandoffStops_.clear();
     reportedPassengerDriftStops_.clear();
     passengerPedestrianPaths_.clear();
+    passengerApproachProgress_.clear();
+    reportedPassengerTicketStops_.clear();
     playerPassengerStopLatch_.reset();
     playerPassengerStopLatchRouteIndex_.reset();
     playerPassengerStopLatchIndex_.reset();
@@ -1176,6 +1189,19 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
                         std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                         bool prepareInitialWindowAsync) {
     TraceScope trace("map", "RenderLoop::SetMap");
+    auto& previousMapVariables = simulationState_.sharedVariables();
+    for (std::size_t index = 0; index < passengerTicketPack_.tickets.size(); ++index) {
+        previousMapVariables.setString("ticket_name_" + std::to_string(index), "");
+        previousMapVariables.set("ticket_value_" + std::to_string(index), 0.0F);
+    }
+    for (std::size_t index = 0; index < passengerCurrency_.coins.size(); ++index) {
+        previousMapVariables.set("cash_coin_value_" + std::to_string(index), 0.0F);
+        previousMapVariables.setString("cash_coin_model_" + std::to_string(index), "");
+    }
+    passengerTicketPack_ = {};
+    passengerCurrency_ = {};
+    passengerApproachProgress_.clear();
+    reportedPassengerTicketStops_.clear();
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
@@ -1227,6 +1253,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (const auto ticketPackPath = resolveMapAsset(map.metadata.ticketPack, "ticket pack")) {
         TraceScope ticketTrace("map", "RenderLoop::SetMap.loadTicketPack");
         const auto ticketPack = openbus::map::loadMapTicketPackDefinition(*ticketPackPath);
+        passengerTicketPack_ = ticketPack;
         for (std::size_t index = 0; index < ticketPack.tickets.size(); ++index) {
             const openbus::map::MapTicketDefinition& ticket = ticketPack.tickets[index];
             globalVariables.setString("ticket_name_" + std::to_string(index), ticket.name);
@@ -1243,6 +1270,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     }
     if (const auto currencyPath = resolveMapAsset(map.metadata.moneySystem, "currency")) {
         const auto currency = openbus::map::loadMapCurrencyDefinition(*currencyPath);
+        passengerCurrency_ = currency;
         globalVariables.setString("cash_currency_name", currency.name);
         for (std::size_t index = 0; index < currency.coins.size(); ++index) {
             globalVariables.set("cash_coin_value_" + std::to_string(index),

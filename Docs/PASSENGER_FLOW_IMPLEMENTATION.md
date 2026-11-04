@@ -8,9 +8,9 @@ directed station link has a complete ordered path. Player buses can board and
 alight at mapped calls when stationary, aligned with their approach direction,
 and within 20 metres of the stop. Waiting passengers walk from their authored
 waiting positions to the actual front entry and remain there until the entry
-door's `pax_entryN_open` variable is set. Player-bus entry waiting positions
-form a single line beside the bus; scheduled AI buses do not yet use this
-approach queue. Exiting similarly requires an open
+door's `pax_entryN_open` variable is set. Player-bus and scheduled-AI entry
+waiting positions form a single line beside the bus. Exiting similarly requires
+an open
 `pax_exitN_open` door. The player stop remains active until the bus moves away;
 when the bus starts moving, service is cancelled before passengers advance and
 an interrupted boarder returns to the shared queue. Boarding riders receive a
@@ -76,8 +76,11 @@ selected exit along the path while it is closed, but cannot pass it until it
 opens. Without a known
 connected exit path, the alighter remains seated until the door opens.
 Changing to the next passenger re-evaluates the door and waiting point. Only
-one alighter moves at a time; the others remain seated. Door slots beyond index
-7 are not managed.
+the head of the FIFO queue can exit, but queued alighters now walk concurrently
+toward spaced waiting positions along their seat-to-exit paths. Their progress
+is retained when each rider is promoted to the active alighter. Door slots
+beyond index 7 are not managed. Runtime probes cover closed-door waiting and
+FIFO promotion; visual validation of the queue remains outstanding.
 Waiting passengers request entry only when a seat is free or an alighter is
 due to free one; a reserved boarder keeps the request until boarding completes.
 Full buses leave the remaining queue in place without holding the entry request.
@@ -128,10 +131,12 @@ Vehicle scripts in both the native OSC and Lua backends can use the following
 per-vehicle `Variables` convention:
 
 * The map's global `[ticketpack]` path is loaded from the OMSI root. The loader
-  reads ordered `[ticket]` blocks and publishes `ticket_name_<index>` and
-  `ticket_value_<index>` for `getticketname` and `getticketvalue`. A vehicle-
-  local value overrides the map value. Indices must be whole, non-negative
-  integers; missing/invalid entries return an empty string or `0`.
+  retains `stamper_prop`, `ticketbuy_prop`, `chattiness`, `whinge_prop`, and
+  ordered ticket names, station limits, age limits, values, and display strings.
+  It publishes `ticket_name_<index>` and `ticket_value_<index>` for
+  `getticketname` and `getticketvalue`. A vehicle-local value overrides the map
+  value. Indices must be whole, non-negative integers; missing/invalid entries
+  return an empty string or `0`.
 * The map's `[moneysystem]` config is loaded for its ordered `[coin]` records.
   `givechangecoin` consumes a whole, non-negative coin index, looks up the
   configured denomination, and updates
@@ -141,6 +146,16 @@ per-vehicle `Variables` convention:
   indices or denominations are ignored. This is script-visible accounting;
   coin models are retained as `cash_coin_model_<index>` but not yet animated,
   sounded, or physically dispensed.
+* When ticket sales are enabled, a waiting passenger may buy the cheapest
+  ticket matching the rider's `[age]` value and downstream station count, with
+  purchase and stamping chances from the ticket pack. A purchaser's approach,
+  machine wait, and return durations are simulated using the first configured
+  ticket-machine position, and the passenger is rendered walking to the
+  machine and back. Simulated tender uses the configured coin denominations.
+  If change is owed, boarding remains blocked until driver scripts call
+  `GiveChangeCoin` for enough change; the passenger then waits for ticket
+  issuance and returns to the entry queue. Sale state is exposed through
+  `passenger_ticket_sale_*` vehicle variables.
 * `gethumancountonseat` and `gethumancountonpathlink` read the numeric vehicle
   variables `human_count_on_seat_<index>` and
   `human_count_on_path_link_<index>`. These are macro surfaces for an owning
@@ -152,9 +167,18 @@ per-vehicle `Variables` convention:
 
 The same macros are available to player and AI vehicle scripts because both
 use `ScriptRuntime` and fall back to map-shared ticket/currency values. Ticket
-and coin configuration loading is active, but passenger ticket selection,
-payment transactions, physical coin dispensing, and scenery/world path-link
-occupancy remain unimplemented.
+selection and the change/ticket wait gate are implemented, but passenger cash
+is simulated, money/change points and stamper positions do not yet drive actor
+movement, coin output has no physical animation or sound, and scenery/world
+path-link occupancy remains unimplemented. Ticketing still needs in-game
+validation.
+
+The player bus's physics mass includes seated passengers whose `.hum` files
+specify `[mass]`. OMSI human mass values are interpreted as tonnes and converted
+to kilograms. Each rider is represented by a fixed mass body at the authored
+seat position, so occupied seats affect total mass and the combined center of
+gravity. Human body inertia and native physics parity remain approximate and
+need in-game validation.
 
 ## Service runtime
 
@@ -190,8 +214,8 @@ coordinates set the lower-leg gait pivot. Right-elbow and right-hand
 coordinates set approximate forearm and wrist flex pivots while walking; neck
 Y/Z coordinates set an approximate head-stabilization pivot, and waist Y/Z
 coordinates anchor gait-linked torso lean. These controls drive approximate
-mesh deformations rather than native limb animation; human `[seatheight]`,
-mass, and voice are not yet applied.
+mesh deformations rather than native limb animation; human `[seatheight]` and
+voice are not yet applied.
 Scheduled AI buses stop at mapped timetable calls and board waiting
 passengers into available seats during an eight-second dwell. Queue consumption
 is serialized each update against the shared remaining count, preventing two

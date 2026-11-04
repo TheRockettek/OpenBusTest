@@ -139,6 +139,14 @@ struct BusSimulation::Impl {
         bool skid = false;
     };
 
+    struct PassengerMassBody {
+        std::size_t seatIndex = 0;
+        double massKg = 0.0;
+        std::array<double, 3> localPosition = {};
+        dBodyID body = nullptr;
+        dJointID joint = nullptr;
+    };
+
     World& world;
     dBodyID chassis = nullptr;
     std::unordered_set<dGeomID> wheelGeometries;
@@ -148,6 +156,7 @@ struct BusSimulation::Impl {
     VehiclePlacement placement;
     std::vector<Corner> corners;
     dTriMeshDataID chassisCollisionMeshData = nullptr;
+    std::vector<PassengerMassBody> passengerMassBodies;
     double fixedStep = 0.0;
     int maxCatchUpSteps;
     double accumulator = 0.0;
@@ -169,6 +178,116 @@ struct BusSimulation::Impl {
     BusCollisionEvent chassisCollisionStepEvent = {};
     std::optional<BusCollisionEvent> pendingCollisionEvent;
 
+    dReal totalMassKg() const {
+        dReal mass = static_cast<dReal>(configuration.mass);
+        for (const PassengerMassBody& passenger : passengerMassBodies) {
+            mass += static_cast<dReal>(passenger.massKg);
+        }
+        return mass;
+    }
+
+    void rebuildChassisMass() {
+        if (chassis == nullptr) {
+            return;
+        }
+        const dReal componentMass = corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
+        const dReal baseChassisMass = configuration.mass - componentMass;
+        dMass chassisMass;
+        dMassSetBoxTotal(&chassisMass, baseChassisMass, configuration.collisionLength,
+                         configuration.collisionWidth, configuration.collisionHeight);
+        if (hasValidMomentOfInertia(configuration)) {
+            const std::array<dReal, 3> configuredInertia = configuredOdeInertia(configuration);
+            chassisMass.I[0] = std::max(chassisMass.I[0], configuredInertia[0]);
+            chassisMass.I[5] = std::max(chassisMass.I[5], configuredInertia[1]);
+            chassisMass.I[10] = std::max(chassisMass.I[10], configuredInertia[2]);
+        }
+        dBodySetMass(chassis, &chassisMass);
+    }
+
+    void setPassengerMassPoints(const std::vector<BusPassengerMassPoint>& points) {
+        std::unordered_set<std::size_t> seatIndices;
+        double totalPassengerMassKg = 0.0;
+        for (const BusPassengerMassPoint& point : points) {
+            if (!std::isfinite(point.massKg) || point.massKg <= 0.0 ||
+                !std::all_of(point.localPosition.begin(), point.localPosition.end(),
+                             [](double value) { return std::isfinite(value); })) {
+                throw std::invalid_argument("Passenger mass points must have finite positions and "
+                                            "positive finite masses");
+            }
+            totalPassengerMassKg += point.massKg;
+            if (!std::isfinite(totalPassengerMassKg)) {
+                throw std::invalid_argument("Total passenger mass must be finite");
+            }
+            if (!seatIndices.insert(point.seatIndex).second) {
+                throw std::invalid_argument("Passenger mass points must have unique seat indices");
+            }
+        }
+        if (points.size() == passengerMassBodies.size() &&
+            std::equal(points.begin(), points.end(), passengerMassBodies.begin(),
+                       [](const BusPassengerMassPoint& point,
+                          const PassengerMassBody& passenger) {
+                           return point.seatIndex == passenger.seatIndex &&
+                                  point.massKg == passenger.massKg &&
+                                  point.localPosition == passenger.localPosition;
+                       })) {
+            return;
+        }
+
+        std::vector<PassengerMassBody> replacement;
+        replacement.reserve(points.size());
+        try {
+            for (const BusPassengerMassPoint& point : points) {
+                PassengerMassBody passenger;
+                passenger.seatIndex = point.seatIndex;
+                passenger.massKg = point.massKg;
+                passenger.localPosition = point.localPosition;
+                passenger.body = dBodyCreate(world.physicsWorld());
+                if (passenger.body == nullptr) {
+                    throw std::runtime_error("Unable to create passenger mass body");
+                }
+                dMass bodyMass;
+                dMassSetBoxTotal(&bodyMass, static_cast<dReal>(point.massKg), 0.4, 0.4, 0.7);
+                dBodySetMass(passenger.body, &bodyMass);
+                dVector3 worldPosition;
+                dBodyGetRelPointPos(chassis, static_cast<dReal>(point.localPosition[0]),
+                                    static_cast<dReal>(point.localPosition[1]),
+                                    static_cast<dReal>(point.localPosition[2]), worldPosition);
+                dBodySetPosition(passenger.body, worldPosition[0], worldPosition[1],
+                                 worldPosition[2]);
+                dBodySetRotation(passenger.body, dBodyGetRotation(chassis));
+                passenger.joint = dJointCreateFixed(world.physicsWorld(), nullptr);
+                if (passenger.joint == nullptr) {
+                    dBodyDestroy(passenger.body);
+                    passenger.body = nullptr;
+                    throw std::runtime_error("Unable to create passenger mass joint");
+                }
+                dJointAttach(passenger.joint, chassis, passenger.body);
+                dJointSetFixed(passenger.joint);
+                replacement.push_back(passenger);
+            }
+        } catch (...) {
+            for (PassengerMassBody& passenger : replacement) {
+                if (passenger.joint != nullptr) {
+                    dJointDestroy(passenger.joint);
+                }
+                if (passenger.body != nullptr) {
+                    dBodyDestroy(passenger.body);
+                }
+            }
+            throw;
+        }
+
+        for (PassengerMassBody& passenger : passengerMassBodies) {
+            if (passenger.joint != nullptr) {
+                dJointDestroy(passenger.joint);
+            }
+            if (passenger.body != nullptr) {
+                dBodyDestroy(passenger.body);
+            }
+        }
+        passengerMassBodies = std::move(replacement);
+    }
+
     void recordChassisCollision(const dContactGeom& contact) {
         const bool firstContactThisStep = !chassisCollisionDetectedThisStep;
         chassisCollisionDetectedThisStep = true;
@@ -177,7 +296,7 @@ struct BusSimulation::Impl {
         const double normalSpeed = pointVelocity[0] * contact.normal[0] +
                                    pointVelocity[1] * contact.normal[1] +
                                    pointVelocity[2] * contact.normal[2];
-        const double energy = 0.5 * configuration.mass * normalSpeed * normalSpeed;
+        const double energy = 0.5 * totalMassKg() * normalSpeed * normalSpeed;
         if (!firstContactThisStep && energy <= chassisCollisionStepEnergy) {
             return;
         }
@@ -199,6 +318,14 @@ struct BusSimulation::Impl {
     }
 
     ~Impl() {
+        for (PassengerMassBody& passenger : passengerMassBodies) {
+            if (passenger.joint) {
+                dJointDestroy(passenger.joint);
+            }
+            if (passenger.body) {
+                dBodyDestroy(passenger.body);
+            }
+        }
         if (chassisGeom) {
             dGeomDestroy(chassisGeom);
             chassisGeom = nullptr;
@@ -435,22 +562,13 @@ struct BusSimulation::Impl {
         openbus::rendering::TraceScope vehiclePhysicsTrace(
             "physics", "BusSimulation::Impl.initialize.vehiclePhysics");
         chassis = dBodyCreate(world.physicsWorld());
-        dMass mass;
         const dReal chassisMass =
             configuration.mass - corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
         if (chassisMass <= 0.0) {
             simulationLog.Error("Bus mass is too low for configured wheel and suspension masses");
             throw std::invalid_argument("Bus mass must exceed wheel and suspension masses");
         }
-        dMassSetBoxTotal(&mass, chassisMass, configuration.collisionLength,
-                         configuration.collisionWidth, configuration.collisionHeight);
-        if (hasValidMomentOfInertia(configuration)) {
-            const std::array<dReal, 3> configuredInertia = configuredOdeInertia(configuration);
-            mass.I[0] = std::max(mass.I[0], configuredInertia[0]);
-            mass.I[5] = std::max(mass.I[5], configuredInertia[1]);
-            mass.I[10] = std::max(mass.I[10], configuredInertia[2]);
-        }
-        dBodySetMass(chassis, &mass);
+        rebuildChassisMass();
         const dReal placementYaw = static_cast<dReal>(placement.yawDegrees * PI / 180.0);
         dMatrix3 placementRotation;
         dRFromAxisAndAngle(placementRotation, 0.0, 0.0, 1.0, placementYaw);
@@ -752,7 +870,7 @@ struct BusSimulation::Impl {
                     ? driveTorque / (2.0 * drivenAxles)
                     : 0.0;
             const dReal staticWheelLoad =
-                configuration.mass * std::abs(GRAVITY) / static_cast<dReal>(corners.size());
+                totalMassKg() * std::abs(GRAVITY) / static_cast<dReal>(corners.size());
             const dReal effectiveNormalLoad = std::max(supportForce, staticWheelLoad);
             const dReal tireForceLimit =
                 std::min(TIRE_GRIP_LONG, effectiveNormalLoad) * ROAD_FRICTION_COEFFICIENT;
@@ -795,11 +913,11 @@ struct BusSimulation::Impl {
         const dReal rollingMagnitude =
             configuration.rollingResistanceForceNewtons.has_value()
                 ? static_cast<dReal>(*configuration.rollingResistanceForceNewtons)
-                : LEGACY_ROLLING_RESIST_COEFFICIENT * configuration.mass * std::abs(GRAVITY);
+                : LEGACY_ROLLING_RESIST_COEFFICIENT * totalMassKg() * std::abs(GRAVITY);
         const dReal rolling =
             std::abs(longitudinalSpeed) > 0.01
                 ? -std::min(rollingMagnitude,
-                            configuration.mass * std::abs(longitudinalSpeed) / fixedStep) *
+                            totalMassKg() * std::abs(longitudinalSpeed) / fixedStep) *
                       (longitudinalSpeed > 0.0 ? 1.0 : -1.0)
                 : 0.0;
         dBodyAddRelForce(chassis, drag + rolling, 0.0, 0.0);
@@ -936,6 +1054,14 @@ void BusSimulation::setFrozen(bool frozen) {
     impl_->accumulator = 0.0;
 }
 
+void BusSimulation::setPassengerMassPoints(const std::vector<BusPassengerMassPoint>& points) {
+    impl_->setPassengerMassPoints(points);
+}
+
+double BusSimulation::totalMassKg() const {
+    return impl_->totalMassKg();
+}
+
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,
                                     double steering, double brake) const {
     variables.set("throttle", std::clamp(throttle, -1.0, 1.0));
@@ -1022,7 +1148,8 @@ double BusSimulation::steeringAngle() const {
 
 std::array<double, 3> BusSimulation::centerOfGravity() const {
     const dReal chassisMass =
-        impl_->configuration.mass - impl_->corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
+        impl_->configuration.mass -
+        impl_->corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
     std::array<dReal, 3> center = {0.0, 0.0, 0.0};
     auto addBody = [&](dBodyID body, dReal bodyMass) {
         const dReal* position = dBodyGetPosition(body);
@@ -1036,7 +1163,10 @@ std::array<double, 3> BusSimulation::centerOfGravity() const {
         addBody(corner.steeringBody, KNUCKLE_MASS);
         addBody(corner.wheelBody, WHEEL_MASS);
     }
-    const dReal inverseMass = 1.0 / impl_->configuration.mass;
+    for (const auto& passenger : impl_->passengerMassBodies) {
+        addBody(passenger.body, static_cast<dReal>(passenger.massKg));
+    }
+    const dReal inverseMass = 1.0 / impl_->totalMassKg();
     return {center[0] * inverseMass, center[1] * inverseMass, center[2] * inverseMass};
 }
 

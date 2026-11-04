@@ -55,6 +55,18 @@ passengerConfiguredDoorQueuePose(const Vehicle& bus, const openbus::map::MapTraf
 }
 
 inline openbus::map::MapTrafficPose
+passengerVehicleLocalPose(const openbus::map::MapTrafficPose& busPose,
+                          const std::array<double, 3>& localPosition) {
+    auto pose = busPose;
+    const double cosine = std::cos(busPose.headingRadians);
+    const double sine = std::sin(busPose.headingRadians);
+    pose.position[0] += localPosition[0] * cosine + localPosition[1] * sine;
+    pose.position[1] += -localPosition[0] * sine + localPosition[1] * cosine;
+    pose.position[2] += localPosition[2];
+    return pose;
+}
+
+inline openbus::map::MapTrafficPose
 playerPassengerDoorQueuePose(const Vehicle& bus, const BodyPose& chassis, bool leftHandTraffic,
                              std::size_t queueSlot) {
     openbus::map::MapTrafficPose pose;

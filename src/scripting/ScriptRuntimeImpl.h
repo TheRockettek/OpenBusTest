@@ -306,11 +306,10 @@ struct ScriptRuntime::Impl {
 
     static int safeNrSpecRandom(lua_State* lua);
 
-    // TODO: Implement currency configuration and change-coin issuance.
     static int safeGiveChangeCoin(lua_State* lua);
 
-    // TODO: Implement ticket-pack and global-string lookups.
     static int safeTicketName(lua_State* lua);
+    static int safeTicketValue(lua_State* lua);
 
     static void discardSystemFloats(Impl* runtime, std::size_t count);
 

@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <utility>
 #include <unordered_map>
@@ -252,7 +253,7 @@ class RenderLoop {
     bool isPaused() const noexcept {
         return paused_;
     }
-    void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
+    void updatePlayerVariables(BusSimulation& simulation, double throttle, double steering,
                                double brake);
     void updatePostPhysicsVariables(BusSimulation& simulation);
     void draw(const BusSimulation& simulation, const World& world);
@@ -534,6 +535,7 @@ class RenderLoop {
     std::unordered_set<int> reportedPassengerPedestrianStops_;
     std::unordered_set<int> reportedPassengerHandoffStops_;
     std::unordered_set<int> reportedPassengerDriftStops_;
+    std::unordered_set<int> reportedPassengerTicketStops_;
     std::map<std::pair<std::size_t, int>, openbus::map::MapPassengerPedestrianJourney>
         passengerPedestrianPaths_;
     std::optional<int> playerPassengerStopLatch_;
@@ -542,7 +544,23 @@ class RenderLoop {
     std::optional<int> activePlayerPassengerStop_;
     std::optional<std::size_t> activePlayerPassengerStopRouteIndex_;
     std::optional<std::size_t> activePlayerPassengerStopIndex_;
-    double playerPassengerApproachSeconds_ = 0.0;
+    struct PassengerApproachProgress {
+        int stopId = 0;
+        std::size_t modelIndex = 0;
+        double elapsedSeconds = 0.0;
+        bool ticketSaleStarted = false;
+        bool ticketBought = false;
+        bool ticketSaleComplete = false;
+        bool ticketPaymentStarted = false;
+        bool ticketPrinted = false;
+        std::optional<std::size_t> ticketMachineConfigurationIndex;
+        double changeDue = 0.0;
+        double cashDispensedAtSaleStart = 0.0;
+        double ticketMachineApproachSeconds = 0.0;
+        double ticketMachineReturnSeconds = 0.0;
+        double ticketWaitSeconds = 0.0;
+    };
+    std::unordered_map<Vehicle*, PassengerApproachProgress> passengerApproachProgress_;
     std::optional<std::size_t> playerPassengerServiceRouteIndex_;
     std::size_t playerPassengerServiceNextStopIndex_ = 0;
     std::optional<std::array<double, 2>> playerTimetableStopVisitLatchPosition_;
@@ -566,6 +584,11 @@ class RenderLoop {
     std::vector<HumanTrafficState> humanTrafficActors_;
     std::vector<openbus::app::PassengerPedestrianHandoff> alightedPassengers_;
     std::vector<std::filesystem::path> scheduledPassengerHumanModels_;
+    std::vector<std::optional<double>> scheduledPassengerHumanAges_;
+    std::vector<std::optional<double>> scheduledPassengerHumanMassesKg_;
+    openbus::map::MapTicketPackDefinition passengerTicketPack_;
+    openbus::map::MapCurrencyDefinition passengerCurrency_;
+    std::mt19937 passengerTransactionRandom_{0x4f70656eU};
     std::size_t targetHumanTrafficCount_ = 0;
     Vehicle* playerVehicle_ = nullptr;
     Vehicle* mapBusVehicle_ = nullptr;
