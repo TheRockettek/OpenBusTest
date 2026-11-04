@@ -649,6 +649,12 @@ class MapTrafficLaneNetwork {
     std::optional<MapPassengerPedestrianJourney>
     passengerJourneyNear(const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition,
                          std::size_t seed, double maximumDistanceMeters = 25.0) const;
+    std::optional<MapPassengerPedestrianJourney>
+    passengerJourneyBetween(const std::vector<int>& splineIds,
+                            const std::array<double, 3>& startPosition,
+                            const std::array<double, 3>& destinationPosition, std::size_t seed,
+                            double maximumConnectorMeters = 2.0,
+                            double maximumRouteMeters = 50.0) const;
     std::vector<MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
     std::optional<MapTrafficPose> timetableStopPose(int splineId, std::size_t pathIndex,
@@ -673,6 +679,11 @@ class MapTrafficLaneNetwork {
     std::optional<MapTrafficLaneStart>
     selectLane(MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
                const std::vector<MapTrafficLaneStart>& candidates) const;
+    std::optional<MapPassengerPedestrianJourney>
+    passengerJourney(const std::vector<int>& splineIds, const std::array<double, 3>& startPosition,
+                     std::size_t seed, double maximumStartDistanceMeters,
+                     const std::optional<std::array<double, 3>>& destinationPosition,
+                     double maximumConnectorMeters, double maximumRouteMeters) const;
 
     std::vector<MapTrafficRouteSegment> segments_;
     std::vector<double> lengths_;

@@ -112,6 +112,19 @@ std::filesystem::path resolveCtiTexture(const std::filesystem::path& ctiPath,
     return std::filesystem::absolute(candidates.front()).lexically_normal();
 }
 
+bool pathIsWithin(const std::filesystem::path& path, const std::filesystem::path& directory) {
+    std::string pathValue = pathKey(path);
+    std::string directoryValue = pathKey(directory);
+    if (directoryValue.empty()) {
+        return false;
+    }
+    if (directoryValue.back() != '/') {
+        directoryValue.push_back('/');
+    }
+    return pathValue.size() > directoryValue.size() &&
+           pathValue.compare(0, directoryValue.size(), directoryValue) == 0;
+}
+
 std::string hofName(const std::filesystem::path& path) {
     Reader reader(path);
     if (!reader.isOpen()) {
@@ -204,10 +217,33 @@ discoverVehicleCatalog(const std::filesystem::path& vehiclesDirectory) {
 
 std::vector<VehicleAppearance>
 discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
-                           const std::filesystem::path& vehiclesDirectory) {
+                           const std::filesystem::path& vehiclesDirectory,
+                           const std::vector<ModelCtcTemplate>& ctcTemplates) {
     std::vector<VehicleAppearance> appearances;
-    for (const std::filesystem::path& ctiPath :
-         vehicleSideFiles(vehicleConfigPath, vehiclesDirectory, ".cti")) {
+    std::vector<std::filesystem::path> ctiFiles =
+        vehicleSideFiles(vehicleConfigPath, vehiclesDirectory, ".cti");
+    if (!ctcTemplates.empty()) {
+        std::vector<std::filesystem::path> templateFiles;
+        for (const ModelCtcTemplate& ctc : ctcTemplates) {
+            const std::filesystem::path templateDirectory =
+                openbus::assets::resolveReferencedPath(vehicleConfigPath, ctc.texturePath);
+            std::error_code directoryError;
+            if (!std::filesystem::is_directory(templateDirectory, directoryError) ||
+                directoryError) {
+                continue;
+            }
+            for (const std::filesystem::path& ctiPath : ctiFiles) {
+                if (pathIsWithin(ctiPath, templateDirectory) &&
+                    std::ranges::find(templateFiles, ctiPath) == templateFiles.end()) {
+                    templateFiles.push_back(ctiPath);
+                }
+            }
+        }
+        if (!templateFiles.empty()) {
+            ctiFiles = std::move(templateFiles);
+        }
+    }
+    for (const std::filesystem::path& ctiPath : ctiFiles) {
         Reader reader(ctiPath);
         if (!reader.isOpen()) {
             throw std::runtime_error("Could not open appearance configuration: " +

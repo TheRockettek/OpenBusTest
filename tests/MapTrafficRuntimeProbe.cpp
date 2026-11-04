@@ -1203,6 +1203,48 @@ void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
     MapPassengerQueueIdentities queueIdentities;
     {
+        MapTrafficRoute curvedPedestrianRoute;
+        MapTrafficRouteSegment curvedPedestrianSegment;
+        curvedPedestrianSegment.points = {{0.0, 0.0, 2.0}, {5.0, 5.0, 2.0}, {10.0, 0.0, 2.0}};
+        const double curvedPedestrianLength = 2.0 * std::hypot(5.0, 5.0);
+        curvedPedestrianRoute.segments.push_back(curvedPedestrianSegment);
+        curvedPedestrianRoute.cumulativeEndDistances.push_back(curvedPedestrianLength);
+        curvedPedestrianRoute.totalLength = curvedPedestrianLength;
+        const MapPassengerPedestrianJourney curvedJourney{
+            std::make_shared<const MapTrafficRoute>(curvedPedestrianRoute), 0.0,
+            curvedPedestrianLength, {10.0, 0.0, 2.0}};
+        MapTrafficPose approachStart;
+        approachStart.position = {0.0, 0.0, 2.0};
+        MapTrafficPose approachEnd;
+        approachEnd.position = {10.0, 0.0, 2.0};
+        const auto roadApproach = openbus::app::makePassengerRoadApproach(
+            curvedJourney, approachStart, approachEnd);
+        require(roadApproach.has_value(),
+                "nearby queue and door poses connect to a pedestrian path");
+        const auto roadApproachMidpoint = openbus::app::passengerQueueApproachPose(
+            roadApproach, approachStart, approachEnd,
+            openbus::app::passengerQueueApproachDuration(roadApproach, approachStart,
+                                                        approachEnd) *
+                0.5);
+        require(roadApproachMidpoint.position[1] > 4.9,
+                "passenger approach follows the authored pedestrian path instead of crossing it");
+        MapTrafficPose smallDoorShift = approachEnd;
+        smallDoorShift.position[0] += 0.5;
+        require(!openbus::app::passengerApproachTargetChanged(approachEnd, smallDoorShift),
+                "small door movements do not restart passenger approaches");
+        MapTrafficPose movedDoor = approachEnd;
+        movedDoor.position[0] += 1.0;
+        require(openbus::app::passengerApproachTargetChanged(approachEnd, movedDoor),
+                "material door movement triggers passenger approach replanning");
+        movedDoor = approachEnd;
+        movedDoor.headingRadians = 0.2;
+        require(openbus::app::passengerApproachTargetChanged(approachEnd, movedDoor),
+                "material door rotation triggers passenger approach replanning");
+        MapTrafficPose unsafeEnd = approachEnd;
+        unsafeEnd.position[1] = 3.0;
+        require(!openbus::app::makePassengerRoadApproach(curvedJourney, approachStart, unsafeEnd),
+                "road approach is rejected when a safe path connector is not nearby");
+
         MapTrafficLaneNetwork lanes;
         auto spline = makeSpline(9901, 0, 0, 0.0);
         spline.length = 100.0;
@@ -1216,6 +1258,55 @@ void verifyPassengerServiceBehavior() {
                 "generated pedestrian destination is within 200 metres of the stop");
         require(!lanes.passengerJourneyNear({9901}, {500.0, 0.0, 2.0}, 5),
                 "a distant pedestrian lane is not treated as nearby");
+        MapTrafficLaneNetwork destinationLanes;
+        auto nearestLane = makeSpline(9910, 0, 0, 0.0);
+        nearestLane.length = 20.0;
+        destinationLanes.addSegment({{nearestLane, 0, 0}});
+        MapTrafficRouteSegment alternateLane{{makeSpline(9911, 0, 0, 1.5), 0, 0}};
+        alternateLane.points = {{5.0, 1.5, 2.0}, {10.0, 6.0, 2.0}, {15.0, 10.0, 2.0}};
+        destinationLanes.addSegment(std::move(alternateLane));
+        destinationLanes.finalize();
+        const auto connectedJourney = destinationLanes.passengerJourneyBetween(
+            {9910, 9911}, {5.0, 0.0, 2.0}, {15.0, 10.0, 2.0}, 4);
+        require(connectedJourney && connectedJourney->route &&
+                    connectedJourney->route->segments.front().spline.placement.splineId == 9911,
+                "door-aware pedestrian lookup tries another nearby route when the nearest cannot connect");
+        require(std::hypot(connectedJourney->destination[0] - 15.0,
+                           connectedJourney->destination[1] - 10.0) <= 2.0,
+                "alternate pedestrian route reaches a safe connector near the door");
+        MapTrafficPose alternateApproachStart;
+        alternateApproachStart.position = {5.0, 0.0, 2.0};
+        MapTrafficPose alternateApproachEnd;
+        alternateApproachEnd.position = {15.0, 10.0, 2.0};
+        const auto alternateApproach = openbus::app::makePassengerRoadApproach(
+            *connectedJourney, alternateApproachStart, alternateApproachEnd);
+        require(alternateApproach.has_value(),
+                "door-aware alternate route builds a complete queue-to-door approach");
+        const auto alternateApproachMidpoint = openbus::app::passengerRoadApproachPose(
+            *alternateApproach,
+            openbus::app::passengerRoadApproachDuration(*alternateApproach) * 0.5);
+        require(alternateApproachMidpoint.position[1] > 5.2,
+                "alternate queue-to-door movement follows the selected pedestrian lane");
+        const auto strictJourney = destinationLanes.passengerJourneyBetween(
+            {9910, 9911}, {5.0, 1.1, 2.0}, {15.0, 10.0, 2.0}, 4, 0.5, 50.0);
+        require(strictJourney && strictJourney->route &&
+                    strictJourney->route->segments.front().spline.placement.splineId == 9911,
+                "strict alternate-route search finds a path within the alighting connector limit");
+        const auto strictStart = sampleMapTrafficRoute(
+            *strictJourney->route, strictJourney->startDistanceMeters, 0.0);
+        require(strictStart.has_value(), "strict alternate-route start can be sampled");
+        MapTrafficPose alternateBusPose;
+        alternateBusPose.position = {5.0, 0.0, 2.0};
+        require(openbus::app::makePassengerPedestrianHandoff(
+                    *strictJourney, *strictStart, alternateBusPose, false, 22)
+                    .has_value(),
+                "alternate route passes the existing conservative curb-side handoff checks");
+        require(!destinationLanes.passengerJourneyBetween(
+                    {9910, 9911}, {5.0, 0.0, 2.0}, {15.0, 10.0, 2.0}, 4, 0.5, 50.0),
+                "strict handoff lookup rejects a connector outside its safety limit");
+        require(!destinationLanes.passengerJourneyBetween(
+                    {9910, 9911}, {5.0, 0.0, 2.0}, {15.0, 15.0, 2.0}, 4),
+                "door-aware lookup rejects routes without a safe destination connector");
         const auto laneStart = sampleMapTrafficRoute(*journey->route, journey->startDistanceMeters, 0.0);
         require(laneStart.has_value(), "pedestrian handoff start can be sampled");
         const auto side = mapTrafficPassengerWorldOffset(false, 0.0, 1.0, 0.0);
@@ -1506,6 +1597,37 @@ void verifyPassengerServiceBehavior() {
                     network.passengerMatchesService(passengers[*repeatedPassenger], 0,
                                                     repeatedCall, 2),
                 "boarding selects riders for the exact repeated origin call");
+    }
+    {
+        openbus::app::PassengerNetwork network;
+        openbus::app::PassengerStopRouteState manyDestinations;
+        manyDestinations.timetableKey = "many-destinations";
+        manyDestinations.stops = openbus::app::PassengerStops(
+            {{.stopId = 100, .waitingPassengers = 8},
+             {.stopId = 201},
+             {.stopId = 202},
+             {.stopId = 203},
+             {.stopId = 204}});
+        manyDestinations.stopPoses.assign(5, MapTrafficPose{});
+        openbus::app::PassengerStopRouteState oneDestination;
+        oneDestination.timetableKey = "one-destination";
+        oneDestination.stops = openbus::app::PassengerStops(
+            {{.stopId = 100, .waitingPassengers = 8}, {.stopId = 300}});
+        oneDestination.stopPoses.assign(2, MapTrafficPose{});
+        network.routes.push_back(std::move(manyDestinations));
+        network.routes.push_back(std::move(oneDestination));
+        network.initializeQueues(network.routes[0].stops.values());
+        const auto& passengers = network.waitingPassengers(100);
+        const auto manyDestinationRiders = std::ranges::count_if(
+            passengers, [](const auto& passenger) {
+                return passenger.journey && passenger.journey->routeIndex == 0;
+            });
+        const auto oneDestinationRiders = std::ranges::count_if(
+            passengers, [](const auto& passenger) {
+                return passenger.journey && passenger.journey->routeIndex == 1;
+            });
+        require(manyDestinationRiders == 4 && oneDestinationRiders == 4,
+                "shared-stop riders are balanced across service routes independent of destination count");
     }
     {
         openbus::app::PassengerNetwork network;

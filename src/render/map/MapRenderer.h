@@ -142,6 +142,11 @@ class MapRenderer {
     std::optional<openbus::map::MapPassengerPedestrianJourney>
     passengerPedestrianJourneyNear(const std::array<double, 3>& stopPosition,
                                    std::size_t seed) const;
+    std::optional<openbus::map::MapPassengerPedestrianJourney>
+    passengerPedestrianJourneyBetween(const std::array<double, 3>& startPosition,
+                                      const std::array<double, 3>& destinationPosition,
+                                      std::size_t seed, double maximumConnectorMeters = 2.0,
+                                      double maximumRouteMeters = 50.0) const;
     std::vector<int> trafficSplineIdsInTiles(int pathTypeCode,
                                              const std::vector<std::pair<int, int>>& tiles) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;

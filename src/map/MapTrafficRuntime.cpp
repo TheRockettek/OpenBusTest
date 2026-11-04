@@ -3786,11 +3786,33 @@ std::size_t MapTrafficLaneNetwork::laneCount(int splineId) const {
 std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourneyNear(
     const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition, std::size_t seed,
     double maximumDistanceMeters) const {
+    return passengerJourney(splineIds, stopPosition, seed, maximumDistanceMeters, std::nullopt,
+                            0.0, 0.0);
+}
+
+std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourneyBetween(
+    const std::vector<int>& splineIds, const std::array<double, 3>& startPosition,
+    const std::array<double, 3>& destinationPosition, std::size_t seed,
+    double maximumConnectorMeters, double maximumRouteMeters) const {
+    return passengerJourney(splineIds, startPosition, seed, maximumConnectorMeters,
+                            destinationPosition, maximumConnectorMeters, maximumRouteMeters);
+}
+
+std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourney(
+    const std::vector<int>& splineIds, const std::array<double, 3>& startPosition,
+    std::size_t seed, double maximumStartDistanceMeters,
+    const std::optional<std::array<double, 3>>& destinationPosition,
+    double maximumConnectorMeters, double maximumRouteMeters) const {
     if (!finalized_) {
         throw std::logic_error("Pedestrian journey requires a finalized lane network");
     }
-    if (!std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0 ||
-        !std::ranges::all_of(stopPosition, [](double value) { return std::isfinite(value); })) {
+    if (!std::isfinite(maximumStartDistanceMeters) || maximumStartDistanceMeters < 0.0 ||
+        !std::ranges::all_of(startPosition, [](double value) { return std::isfinite(value); }) ||
+        (destinationPosition &&
+         (!std::ranges::all_of(*destinationPosition,
+                               [](double value) { return std::isfinite(value); }) ||
+          !std::isfinite(maximumConnectorMeters) || maximumConnectorMeters < 0.0 ||
+          !std::isfinite(maximumRouteMeters) || maximumRouteMeters <= 0.0))) {
         throw std::invalid_argument("Pedestrian journey position or search radius is invalid");
     }
     struct Candidate {
@@ -3815,24 +3837,27 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
             double bestDistance = std::numeric_limits<double>::infinity();
             double bestAlong = 0.0;
             const std::size_t samples =
-                std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(length / 2.0)));
+                std::max<std::size_t>(
+                    1, static_cast<std::size_t>(
+                           std::ceil(length / (destinationPosition ? 1.0 : 2.0))));
             for (std::size_t sample = 0; sample <= samples; ++sample) {
                 const double along = length * static_cast<double>(sample) / samples;
                 const auto pose = sampleMapTrafficRoute(single, along, 0.0);
                 if (!pose) {
                     throw std::runtime_error("Cannot sample a pedestrian lane");
                 }
-                if (std::abs(pose->position[2] - stopPosition[2]) > 2.0) {
+                if (std::abs(pose->position[2] - startPosition[2]) >
+                    (destinationPosition ? 0.5 : 2.0)) {
                     continue;
                 }
-                const double distance = std::hypot(pose->position[0] - stopPosition[0],
-                                                   pose->position[1] - stopPosition[1]);
+                const double distance = std::hypot(pose->position[0] - startPosition[0],
+                                                   pose->position[1] - startPosition[1]);
                 if (distance < bestDistance) {
                     bestDistance = distance;
                     bestAlong = along;
                 }
             }
-            if (bestDistance <= maximumDistanceMeters) {
+            if (bestDistance <= maximumStartDistanceMeters) {
                 candidates.push_back({splineId, selector, bestAlong, bestDistance});
             }
         }
@@ -3841,23 +3866,74 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
         return std::tie(first.distanceToStop, first.splineId, first.laneSelector) <
                std::tie(second.distanceToStop, second.splineId, second.laneSelector);
     });
+    std::optional<MapPassengerPedestrianJourney> bestJourney;
+    double bestWalkingDistance = std::numeric_limits<double>::infinity();
     for (const auto& candidate : candidates) {
-        auto route = buildRoute(candidate.splineId, candidate.laneSelector);
-        if (!route || route->totalLength - candidate.distanceAlongLane < 5.0) {
-            continue;
+        const std::size_t routeVariantCount = destinationPosition ? 16 : 1;
+        for (std::size_t routeVariant = 0; routeVariant < routeVariantCount; ++routeVariant) {
+            const std::size_t routeSeed = destinationPosition ? seed + routeVariant : 0;
+            auto route = buildRoute(candidate.splineId, candidate.laneSelector, routeSeed);
+            if (!route) {
+                continue;
+            }
+            if (!destinationPosition) {
+                if (route->totalLength - candidate.distanceAlongLane < 5.0) {
+                    continue;
+                }
+                const double destinationDistance = std::min(
+                    route->totalLength - 0.01,
+                    candidate.distanceAlongLane + 15.0 + static_cast<double>(seed % 31));
+                const auto destination = sampleMapTrafficRoute(*route, destinationDistance, 0.0);
+                if (!destination) {
+                    throw std::runtime_error("Cannot sample a pedestrian destination");
+                }
+                return MapPassengerPedestrianJourney{
+                    std::make_shared<const MapTrafficRoute>(std::move(*route)),
+                    candidate.distanceAlongLane, destinationDistance, destination->position};
+            }
+
+            const double lastRouteDistance =
+                std::min(route->totalLength - 0.01,
+                         candidate.distanceAlongLane + maximumRouteMeters);
+            if (lastRouteDistance < candidate.distanceAlongLane) {
+                continue;
+            }
+            const auto routeView = std::make_shared<const MapTrafficRoute>(*route);
+            const double routeSpan = lastRouteDistance - candidate.distanceAlongLane;
+            const std::size_t sampleCount = std::max<std::size_t>(
+                1, static_cast<std::size_t>(std::ceil(routeSpan / 0.5)));
+            for (std::size_t sample = 0; sample <= sampleCount; ++sample) {
+                const double destinationDistance =
+                    candidate.distanceAlongLane +
+                    routeSpan * static_cast<double>(sample) / static_cast<double>(sampleCount);
+                const auto destination =
+                    sampleMapTrafficRoute(*route, destinationDistance, 0.0);
+                if (!destination) {
+                    throw std::runtime_error("Cannot sample a pedestrian destination");
+                }
+                if (std::abs(destination->position[2] - (*destinationPosition)[2]) > 0.5) {
+                    continue;
+                }
+                const double connectorDistance =
+                    std::hypot(destination->position[0] - (*destinationPosition)[0],
+                               destination->position[1] - (*destinationPosition)[1]);
+                if (connectorDistance > maximumConnectorMeters) {
+                    continue;
+                }
+                const double walkingDistance =
+                    candidate.distanceToStop +
+                    destinationDistance - candidate.distanceAlongLane + connectorDistance;
+                if (walkingDistance < bestWalkingDistance) {
+                    bestWalkingDistance = walkingDistance;
+                    bestJourney = MapPassengerPedestrianJourney{
+                        routeView,
+                        candidate.distanceAlongLane, destinationDistance,
+                        destination->position};
+                }
+            }
         }
-        const double destinationDistance = std::min(
-            route->totalLength - 0.01,
-            candidate.distanceAlongLane + 15.0 + static_cast<double>(seed % 31));
-        const auto destination = sampleMapTrafficRoute(*route, destinationDistance, 0.0);
-        if (!destination) {
-            throw std::runtime_error("Cannot sample a pedestrian destination");
-        }
-        return MapPassengerPedestrianJourney{std::make_shared<const MapTrafficRoute>(std::move(*route)),
-                                             candidate.distanceAlongLane, destinationDistance,
-                                             destination->position};
     }
-    return std::nullopt;
+    return bestJourney;
 }
 
 std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(

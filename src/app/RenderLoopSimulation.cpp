@@ -271,8 +271,9 @@ void RenderLoop::cancelMovingPlayerPassengerService(const BusSimulation& simulat
                     const auto doorQueue = playerPassengerDoorQueuePose(
                         *playerVehicle_, chassis, mapRenderer_->leftHandTraffic(),
                         rider.queueSlot);
-                    current = openbus::app::passengerApproachPose(
-                        *start, doorQueue, approach->second.elapsedSeconds);
+                    current = openbus::app::passengerQueueApproachPose(
+                        approach->second.roadApproach, *start, doorQueue,
+                        approach->second.elapsedSeconds);
                 }
             }
             if (current) {
@@ -348,6 +349,107 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                 }
             }
         }
+        const auto queueDoorPose = [this, &simulation, &scheduledStopVehicles](
+                                       Vehicle* vehicle, std::size_t queueSlot)
+            -> std::optional<openbus::map::MapTrafficPose> {
+            if (!mapRenderer_) {
+                return std::nullopt;
+            }
+            std::optional<openbus::map::MapTrafficPose> destination;
+            if (vehicle == playerVehicle_) {
+                destination = playerPassengerDoorQueuePose(
+                    *vehicle, simulation.chassisPose(), mapRenderer_->leftHandTraffic(),
+                    queueSlot);
+            } else {
+                const auto scheduled = scheduledStopVehicles.find(vehicle);
+                if (scheduled == scheduledStopVehicles.end()) {
+                    return std::nullopt;
+                }
+                const auto& state = *scheduled->second;
+                auto busPose = openbus::map::sampleMapTrafficActorPose(
+                    state.actor, state.actor.distanceMeters);
+                if (!busPose) {
+                    throw std::runtime_error(
+                        "Cannot sample scheduled pedestrian approach bus pose");
+                }
+                busPose->position[2] += vehicle->aiDeltaHeight;
+                destination = passengerConfiguredDoorQueuePose(
+                    *vehicle, *busPose, mapRenderer_->leftHandTraffic(),
+                    vehicle->passengers->configuration().passengerEntryPathPoints,
+                    vehicle->passengers->entryDoor(), queueSlot);
+                if (!destination) {
+                    destination = passengerDoorQueuePose(
+                        *busPose, vehicle->trafficLengthMeters * 0.3,
+                        vehicle->trafficWidthMeters, mapRenderer_->leftHandTraffic(),
+                        queueSlot);
+                }
+            }
+            return destination;
+        };
+        const auto makeQueueRoadApproach =
+            [this](const openbus::map::MapTrafficPose& start,
+                   const openbus::map::MapTrafficPose& destination,
+                   std::size_t modelIndex)
+            -> std::optional<openbus::app::PassengerRoadApproach> {
+            if (!mapRenderer_ || !mapRenderer_->humanTrafficLaneNetworkReady()) {
+                return std::nullopt;
+            }
+            const auto journey = mapRenderer_->passengerPedestrianJourneyBetween(
+                start.position, destination.position, modelIndex);
+            return journey ? openbus::app::makePassengerRoadApproach(
+                                 *journey, start, destination)
+                           : std::nullopt;
+        };
+        const auto updateQueueRoadApproach =
+            [this, &queueDoorPose, &makeQueueRoadApproach](
+                Vehicle* vehicle, int stopId,
+                const openbus::app::WaitingPassenger& rider,
+                PassengerQueueApproachProgress& approach) {
+                const auto destination = queueDoorPose(vehicle, rider.queueSlot);
+                if (!destination) {
+                    return;
+                }
+                const auto rendered =
+                    passengerRenderedQueuePositions_.find({stopId, rider.modelIndex});
+                const auto currentRenderedPose = [&]() {
+                    if (rendered != passengerRenderedQueuePositions_.end()) {
+                        return rendered->second;
+                    }
+                    if (approach.roadApproach) {
+                        return openbus::app::passengerRoadApproachPose(
+                            *approach.roadApproach, approach.elapsedSeconds);
+                    }
+                    return openbus::app::passengerApproachPose(
+                        approach.originPose, approach.destinationPose,
+                        approach.elapsedSeconds);
+                };
+                if (!approach.posesInitialized) {
+                    const auto origin = passengerQueuePose(stopId, rider);
+                    if (!origin) {
+                        return;
+                    }
+                    approach.originPose = *origin;
+                    approach.destinationPose = *destination;
+                    approach.posesInitialized = true;
+                } else if (openbus::app::passengerApproachTargetChanged(
+                               approach.destinationPose, *destination)) {
+                    approach.originPose = currentRenderedPose();
+                    approach.destinationPose = *destination;
+                    approach.elapsedSeconds = 0.0;
+                    approach.roadApproach.reset();
+                    approach.roadApproachAttempted = false;
+                }
+                if (!approach.roadApproachAttempted && mapRenderer_ &&
+                    mapRenderer_->humanTrafficLaneNetworkReady()) {
+                    if (approach.elapsedSeconds > 0.0) {
+                        approach.originPose = currentRenderedPose();
+                        approach.elapsedSeconds = 0.0;
+                    }
+                    approach.roadApproach = makeQueueRoadApproach(
+                        approach.originPose, approach.destinationPose, rider.modelIndex);
+                    approach.roadApproachAttempted = true;
+                }
+            };
         if (playerVehicle_ != nullptr && activePlayerPassengerStop_) {
             sharedQueueStops.emplace(playerVehicle_, *activePlayerPassengerStop_);
         }
@@ -643,8 +745,10 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                     if (approach.stopId != activeStop->second ||
                         approach.routeIndex != *serviceRouteIndex ||
                         approach.stopCallIndex != *serviceStopIndex) {
-                        approach = {activeStop->second, *serviceRouteIndex, *serviceStopIndex, 0.0};
+                        approach = {activeStop->second, *serviceRouteIndex, *serviceStopIndex,
+                                    0.0, std::nullopt, false, {}, {}, false};
                     }
+                    updateQueueRoadApproach(vehicle.get(), activeStop->second, rider, approach);
                     approach.elapsedSeconds += passengerServiceTimeStep;
                     eligibleModels.insert(rider.modelIndex);
                 }
@@ -683,8 +787,10 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                             approach.routeIndex != nearbyPlayerPassengerStop.routeIndex ||
                             approach.stopCallIndex != nearbyPlayerPassengerStop.stopIndex) {
                             approach = {stopId, nearbyPlayerPassengerStop.routeIndex,
-                                        nearbyPlayerPassengerStop.stopIndex, 0.0};
+                                        nearbyPlayerPassengerStop.stopIndex, 0.0, std::nullopt,
+                                        false, {}, {}, false};
                         }
+                        updateQueueRoadApproach(playerVehicle_, stopId, rider, approach);
                         approach.elapsedSeconds += passengerServiceTimeStep;
                         eligibleModels.insert(rider.modelIndex);
                     }
@@ -801,7 +907,9 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                         throw std::logic_error("Cannot locate passenger entry queue poses");
                     }
                     const bool reachedEntry =
-                        approachSeconds >= passengerApproachDuration(*start, *destination);
+                        approachSeconds >= passengerQueueApproachDuration(
+                                              riderApproach->second.roadApproach, *start,
+                                              *destination);
                     passengerReady = reachedEntry;
                     const auto& cabin = vehicle->passengers->configuration();
                     if (entryOpen && reachedEntry && !approach.ticketSaleStarted) {
@@ -1152,6 +1260,17 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                 auto handoff = openbus::app::makePassengerPedestrianHandoff(
                     *passenger.pedestrianJourney, outside, busPose,
                     mapRenderer_->leftHandTraffic(), *passenger.modelIndex);
+                if (!handoff) {
+                    const auto alternateJourney =
+                        mapRenderer_->passengerPedestrianJourneyBetween(
+                            outside.position, passenger.pedestrianJourney->destination,
+                            *passenger.modelIndex, 0.5, 50.0);
+                    if (alternateJourney) {
+                        handoff = openbus::app::makePassengerPedestrianHandoff(
+                            *alternateJourney, outside, busPose,
+                            mapRenderer_->leftHandTraffic(), *passenger.modelIndex);
+                    }
+                }
                 if (handoff) {
                     alightedPassengers_.push_back(std::move(*handoff));
                 } else if (reportedPassengerHandoffStops_.insert(activeStop->second).second) {

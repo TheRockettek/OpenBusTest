@@ -8,6 +8,7 @@
 #include "config/HumanConfigLoader.h"
 #include "core/Utf8Path.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace openbus::rendering {
@@ -484,6 +485,40 @@ MapRenderer::passengerPedestrianJourneyNear(const std::array<double, 3>& stopPos
     }
     return impl_->humanTrafficLaneNetwork.passengerJourneyNear(
         impl_->humanTrafficRouteNetwork.splineIdsInTiles(tiles), stopPosition, seed, radius);
+}
+
+std::optional<openbus::map::MapPassengerPedestrianJourney>
+MapRenderer::passengerPedestrianJourneyBetween(
+    const std::array<double, 3>& startPosition,
+    const std::array<double, 3>& destinationPosition, std::size_t seed,
+    double maximumConnectorMeters, double maximumRouteMeters) const {
+    if (!humanTrafficLaneNetworkReady()) {
+        throw std::logic_error("Pedestrian lane network is not ready");
+    }
+    if (!std::ranges::all_of(startPosition,
+                             [](double value) { return std::isfinite(value); }) ||
+        !std::ranges::all_of(destinationPosition,
+                             [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Pedestrian journey positions must be finite");
+    }
+    constexpr double searchRadius = 25.0;
+    const int minX =
+        openbus::map::mapWorldTile(startPosition[0] - searchRadius, impl_->coordinates.tileSize);
+    const int maxX =
+        openbus::map::mapWorldTile(startPosition[0] + searchRadius, impl_->coordinates.tileSize);
+    const int minY =
+        openbus::map::mapWorldTile(startPosition[1] - searchRadius, impl_->coordinates.tileSize);
+    const int maxY =
+        openbus::map::mapWorldTile(startPosition[1] + searchRadius, impl_->coordinates.tileSize);
+    std::vector<std::pair<int, int>> tiles;
+    for (int x = minX; x <= maxX; ++x) {
+        for (int y = minY; y <= maxY; ++y) {
+            tiles.emplace_back(x, y);
+        }
+    }
+    return impl_->humanTrafficLaneNetwork.passengerJourneyBetween(
+        impl_->humanTrafficRouteNetwork.splineIdsInTiles(tiles), startPosition,
+        destinationPosition, seed, maximumConnectorMeters, maximumRouteMeters);
 }
 
 std::vector<int>

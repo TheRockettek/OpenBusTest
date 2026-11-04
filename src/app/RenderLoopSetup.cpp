@@ -7,6 +7,7 @@
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/Utf8Path.h"
+#include "physics/BusConfiguration.h"
 
 #include <imgui.h>
 
@@ -560,8 +561,10 @@ void RenderLoop::loadMapVehicleOptions() {
         TraceScope vehicleTrace("startup", "startup.loadMapSelectedVehicleConfig");
         const auto& configPath = vehicleCatalog_[selectedMapVehicleIndex_].configurationPath;
         mapVehicleConfig_ = loadVehicleConfig(configPath, VehicleFileKind::Bus, false);
+        const ModelConfig modelConfiguration = loadBusModelConfiguration(configPath);
         mapVehicleAppearances_ =
-            openbus::config::discoverVehicleAppearances(configPath, vehiclesDirectory_);
+            openbus::config::discoverVehicleAppearances(
+                configPath, vehiclesDirectory_, modelConfiguration.ctcTemplates);
         copyToInputBuffer(mapRegistrationInput_, mapVehicleConfig_->selectedRegistration);
         copyToInputBuffer(mapVehicleNumberInput_, mapVehicleConfig_->selectedVehicleNumber);
         restoreMapVehiclePreference();

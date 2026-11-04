@@ -141,6 +141,165 @@ inline openbus::map::MapTrafficPose passengerApproachPose(const openbus::map::Ma
     return result;
 }
 
+inline bool passengerApproachTargetChanged(const openbus::map::MapTrafficPose& previous,
+                                          const openbus::map::MapTrafficPose& current) {
+    constexpr double positionThresholdMeters = 0.75;
+    constexpr double heightThresholdMeters = 0.25;
+    constexpr double headingThresholdRadians = 0.15;
+    const double horizontalDistance =
+        std::hypot(current.position[0] - previous.position[0],
+                   current.position[1] - previous.position[1]);
+    const double headingDifference =
+        std::remainder(current.headingRadians - previous.headingRadians,
+                       2.0 * std::numbers::pi);
+    return horizontalDistance > positionThresholdMeters ||
+           std::abs(current.position[2] - previous.position[2]) > heightThresholdMeters ||
+           std::abs(headingDifference) > headingThresholdRadians;
+}
+
+struct PassengerRoadApproach {
+    std::shared_ptr<const openbus::map::MapTrafficRoute> route;
+    openbus::map::MapTrafficPose originPose;
+    openbus::map::MapTrafficPose destinationPose;
+    openbus::map::MapTrafficPose laneStartPose;
+    openbus::map::MapTrafficPose laneEndPose;
+    double startRouteDistanceMeters = 0.0;
+    double endRouteDistanceMeters = 0.0;
+    double startConnectorMeters = 0.0;
+    double endConnectorMeters = 0.0;
+};
+
+inline std::optional<PassengerRoadApproach>
+makePassengerRoadApproach(const openbus::map::MapPassengerPedestrianJourney& journey,
+                          const openbus::map::MapTrafficPose& origin,
+                          const openbus::map::MapTrafficPose& destination,
+                          double maximumConnectorMeters = 2.0,
+                          double maximumRouteMeters = 50.0) {
+    if (!journey.route || !std::isfinite(journey.startDistanceMeters) ||
+        journey.startDistanceMeters < 0.0 ||
+        journey.startDistanceMeters > journey.route->totalLength ||
+        !std::isfinite(maximumConnectorMeters) || maximumConnectorMeters < 0.0 ||
+        !std::isfinite(maximumRouteMeters) || maximumRouteMeters <= 0.0) {
+        return std::nullopt;
+    }
+
+    const auto laneStart = openbus::map::sampleMapTrafficRoute(
+        *journey.route, journey.startDistanceMeters, 0.0);
+    if (!laneStart ||
+        std::abs(laneStart->position[2] - origin.position[2]) > 0.5) {
+        return std::nullopt;
+    }
+    const double startConnector =
+        std::hypot(laneStart->position[0] - origin.position[0],
+                   laneStart->position[1] - origin.position[1]);
+    if (startConnector > maximumConnectorMeters) {
+        return std::nullopt;
+    }
+
+    const double lastRouteDistance =
+        std::min(journey.route->totalLength,
+                 journey.startDistanceMeters + maximumRouteMeters);
+    std::optional<double> endRouteDistance;
+    std::optional<openbus::map::MapTrafficPose> laneEnd;
+    double endConnector = maximumConnectorMeters;
+    const std::size_t sampleCount = std::max<std::size_t>(
+        1, static_cast<std::size_t>(
+               std::ceil((lastRouteDistance - journey.startDistanceMeters) / 0.5)));
+    for (std::size_t index = 0; index <= sampleCount; ++index) {
+        const double routeDistance =
+            journey.startDistanceMeters +
+            (lastRouteDistance - journey.startDistanceMeters) *
+                static_cast<double>(index) / static_cast<double>(sampleCount);
+        const auto candidate =
+            openbus::map::sampleMapTrafficRoute(*journey.route, routeDistance, 0.0);
+        if (!candidate) {
+            throw std::runtime_error("Cannot sample pedestrian approach route");
+        }
+        if (std::abs(candidate->position[2] - destination.position[2]) > 0.5) {
+            continue;
+        }
+        const double separation =
+            std::hypot(candidate->position[0] - destination.position[0],
+                       candidate->position[1] - destination.position[1]);
+        if (separation <= endConnector) {
+            endConnector = separation;
+            endRouteDistance = routeDistance;
+            laneEnd = candidate;
+        }
+    }
+    if (!endRouteDistance || !laneEnd) {
+        return std::nullopt;
+    }
+
+    return PassengerRoadApproach{journey.route,
+                                 origin,
+                                 destination,
+                                 *laneStart,
+                                 *laneEnd,
+                                 journey.startDistanceMeters,
+                                 *endRouteDistance,
+                                 startConnector,
+                                 endConnector};
+}
+
+inline double passengerRoadApproachDuration(const PassengerRoadApproach& approach) {
+    if (!approach.route || approach.endRouteDistanceMeters <
+                               approach.startRouteDistanceMeters) {
+        throw std::invalid_argument("Passenger road approach has an invalid route");
+    }
+    const double routeDistance =
+        approach.endRouteDistanceMeters - approach.startRouteDistanceMeters;
+    return (approach.startConnectorMeters + routeDistance + approach.endConnectorMeters) /
+           passengerApproachSpeedMetersPerSecond;
+}
+
+inline openbus::map::MapTrafficPose
+passengerRoadApproachPose(const PassengerRoadApproach& approach, double elapsedSeconds) {
+    if (!approach.route || !std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
+        throw std::invalid_argument("Passenger road approach progress is invalid");
+    }
+    const double travelledMeters =
+        std::min(elapsedSeconds * passengerApproachSpeedMetersPerSecond,
+                 passengerRoadApproachDuration(approach) *
+                     passengerApproachSpeedMetersPerSecond);
+    if (travelledMeters <= approach.startConnectorMeters) {
+        return passengerApproachPose(approach.originPose, approach.laneStartPose,
+                                     travelledMeters / passengerApproachSpeedMetersPerSecond);
+    }
+
+    const double routeDistance = approach.endRouteDistanceMeters -
+                                 approach.startRouteDistanceMeters;
+    const double travelledOnRoute =
+        travelledMeters - approach.startConnectorMeters;
+    if (travelledOnRoute <= routeDistance) {
+        const auto pose = openbus::map::sampleMapTrafficRoute(
+            *approach.route,
+            approach.startRouteDistanceMeters + travelledOnRoute, 0.0);
+        if (!pose) {
+            throw std::runtime_error("Cannot sample passenger road approach pose");
+        }
+        return *pose;
+    }
+    return passengerApproachPose(
+        approach.laneEndPose, approach.destinationPose,
+        (travelledOnRoute - routeDistance) / passengerApproachSpeedMetersPerSecond);
+}
+
+inline double passengerQueueApproachDuration(
+    const std::optional<PassengerRoadApproach>& roadApproach,
+    const openbus::map::MapTrafficPose& start, const openbus::map::MapTrafficPose& destination) {
+    return roadApproach ? passengerRoadApproachDuration(*roadApproach)
+                        : passengerApproachDuration(start, destination);
+}
+
+inline openbus::map::MapTrafficPose passengerQueueApproachPose(
+    const std::optional<PassengerRoadApproach>& roadApproach,
+    const openbus::map::MapTrafficPose& start, const openbus::map::MapTrafficPose& destination,
+    double elapsedSeconds) {
+    return roadApproach ? passengerRoadApproachPose(*roadApproach, elapsedSeconds)
+                        : passengerApproachPose(start, destination, elapsedSeconds);
+}
+
 struct PassengerStamperActorPose {
     openbus::map::MapTrafficPose pose;
     bool walking = false;

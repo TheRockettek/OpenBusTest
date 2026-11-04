@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/ModelConfigTypes.h"
+
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -30,7 +32,8 @@ std::vector<VehicleCatalogEntry>
 discoverVehicleCatalog(const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleAppearance>
 discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
-                           const std::filesystem::path& vehiclesDirectory);
+                           const std::filesystem::path& vehiclesDirectory,
+                           const std::vector<ModelCtcTemplate>& ctcTemplates = {});
 const VehicleAppearance*
 findVehicleAppearance(const std::vector<VehicleAppearance>& appearances,
                       const std::string& name);

@@ -584,6 +584,11 @@ class RenderLoop {
         std::size_t routeIndex = 0;
         std::size_t stopCallIndex = 0;
         double elapsedSeconds = 0.0;
+        std::optional<openbus::app::PassengerRoadApproach> roadApproach;
+        bool roadApproachAttempted = false;
+        openbus::map::MapTrafficPose originPose;
+        openbus::map::MapTrafficPose destinationPose;
+        bool posesInitialized = false;
     };
     std::unordered_map<Vehicle*,
                        std::unordered_map<std::size_t, PassengerQueueApproachProgress>>

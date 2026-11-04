@@ -159,9 +159,10 @@ change from their controlling variables without manual texture replacement.
   model `[CTCTexture]` entries to the mesh's base texture names; the bus
   `[friendlyname]` default paint uses its matching CTI item when present. CTI
   `[setvar]` overrides are applied before script initialization, covering
-  repaint-specific visibility variables. Probes cover slot-to-texture and
-  variable resolution, but full `[CTC]` template selection and E400
-  dashboard/body variant parity remain unverified.
+  repaint-specific visibility variables. CTI discovery is scoped to the
+  texture directories declared by model `[CTC]` templates when matching CTIs
+  are found; otherwise it retains broad discovery for compatibility. Template
+  index semantics and E400 dashboard/body variant parity remain unverified.
 - [~] Basic `[illumination_interior]`/`[interiorlight]` emission is active
   for assigned meshes, and `[light_enh_2]` renders a base bloom. `[spotlight]`
   remains storage-only with an unsupported-runtime warning. E400-specific
@@ -303,21 +304,30 @@ recognized but incomplete semantics.
     retain exact origin/destination call indices. Queue storage is still shared
     by stop ID, but repeated calls in one route now place riders beside their
     assigned call with regression coverage for call separation and queue spacing.
-    Shared counts/reservations across different route calls and courses sharing
-    one registered route remain indistinguishable.
+    New riders are assigned round-robin across service routes before destination
+    choices, so lines with more downstream stops do not claim a disproportionate
+    share of a shared stop's queue. The physical population and reservations
+    remain shared by stop ID.
   - [~] Waiting passengers on the player's line begin approaching the bus within
     20 m of any located stop, including calls outside the current service order.
     When stopped, service can activate at any matching line stop. Riders hold
     their last rendered positions when the bus leaves range; boarding remains
-    door/service-gated. Replace direct interpolation with road-aware walking and
-    validate movement alongside the bus in game.
+    door/service-gated. Queue-to-door movement follows a nearby directed human
+    path when both endpoints connect within 2 m and 0.5 m vertically; maps
+    search alternate nearby directed lanes when the nearest path cannot reach
+    the door. Maps without a compatible path retain direct interpolation as a
+    fallback.
+    Approaches replan from the rider's current rendered position if the bus door
+    target moves materially.
+    Validate movement alongside the bus in game.
   - [~] Eligible riders approach distinct entry queue slots concurrently once
     the bus stops; ticket handling and boarding remain serialized, and movement
     pauses while alighters use the exit. Riders retain their last rendered
     positions if the player departs before they board. Spawn points use
     authored waiting areas or nearby pedestrian splines; no road-side fallback
-    is used when neither is available. Proximity approaches still use direct
-    interpolation and need road-aware pedestrian routing and visual validation.
+    is used when neither is available. Approaches follow a compatible pedestrian
+    path and replan after material door movement, with direct interpolation as a
+    fallback when no connected path is available. Validate both behaviors in game.
   - [~] Ticket packs now retain purchase/stamping probabilities and ticket
     names, values, age limits and station limits. Eligible riders may buy the
     cheapest ticket and visibly walk to the first configured machine and any
@@ -352,9 +362,10 @@ recognized but incomplete semantics.
   - [~] After leaving the bus, alighters follow their assigned directed
     pedestrian spline when a short outward connector is available; connector
     search now spans the assigned forward route up to its generated destination
-    while retaining the 0.5 m distance, height and curb-side checks. Otherwise
-    they disappear. Validate this conservatively constrained handoff in game
-    and support additional safe sidewalk layouts.
+    while retaining the 0.5 m distance, height and curb-side checks. If that
+    route has no safe connector, alternate directed paths are searched to the
+    same destination with the same connector limit. Otherwise they disappear.
+    Validate this conservatively constrained handoff in game.
   - [~] Focused probes cover ticketing, the 200 m destination rule, concurrent
     door-gated alighting, and conservative spline handoffs. An integrated
     runtime regression now follows an assigned rider from boarding through the
@@ -545,9 +556,10 @@ for alignment is not mistaken for supporting it.
   default paints use their CTI item when available; the base model appearance
   remains the fallback. CTI `[setvar]` values are applied to vehicle variables
   before script initialization. Slot and variable substitution have focused
-  regression coverage, while full `[CTC]` template behavior and
-  representative-asset parity remain unverified. Template/mapping metadata is
-  also retained in model-config JSON.
+  regression coverage. CTI discovery uses declared `[CTC]` template texture
+  directories when those directories contain CTI files, but index semantics
+  and representative-asset parity remain unverified. Template/mapping
+  metadata is also retained in model-config JSON.
 - [~] `[texchanges]`, `[newtexchangemaster]`, and `[entries]` payloads are
   retained in source order and serialized in model-config JSON. Count
   validation and runtime replacement behavior remain unimplemented.

@@ -1526,13 +1526,22 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             const auto destination = playerPassengerDoorQueuePose(
                                 *playerVehicle_, chassis, mapRenderer_->leftHandTraffic(),
                                 queueSlot);
+                            const auto& approachStart = queueApproach->posesInitialized
+                                                            ? queueApproach->originPose
+                                                            : *passengerPose;
+                            const auto& approachDestination =
+                                queueApproach->posesInitialized
+                                    ? queueApproach->destinationPose
+                                    : destination;
                             gaitWeight = queueApproach->elapsedSeconds <
-                                                 passengerApproachDuration(*passengerPose,
-                                                                           destination)
+                                                 passengerQueueApproachDuration(
+                                                     queueApproach->roadApproach, approachStart,
+                                                     approachDestination)
                                              ? 1.0
                                              : waitingPassengerIdleGaitWeight;
-                            passengerPose = passengerApproachPose(
-                                *passengerPose, destination, queueApproach->elapsedSeconds);
+                            passengerPose = passengerQueueApproachPose(
+                                queueApproach->roadApproach, approachStart, approachDestination,
+                                queueApproach->elapsedSeconds);
                             if (hasSelectedApproach && approach->second.ticketBought) {
                                 const auto& cabin = playerVehicle_->passengers->configuration();
                                 openbus::map::MapTrafficPose busPose;
@@ -1607,13 +1616,22 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             const auto destination = playerPassengerDoorQueuePose(
                                 *playerVehicle_, chassis, mapRenderer_->leftHandTraffic(),
                                 queueSlot);
+                            const auto& approachStart = queueApproach->posesInitialized
+                                                            ? queueApproach->originPose
+                                                            : *passengerPose;
+                            const auto& approachDestination =
+                                queueApproach->posesInitialized
+                                    ? queueApproach->destinationPose
+                                    : destination;
                             gaitWeight = queueApproach->elapsedSeconds <
-                                                 passengerApproachDuration(*passengerPose,
-                                                                           destination)
+                                                 passengerQueueApproachDuration(
+                                                     queueApproach->roadApproach, approachStart,
+                                                     approachDestination)
                                              ? 1.0
                                              : waitingPassengerIdleGaitWeight;
-                            passengerPose = passengerApproachPose(
-                                *passengerPose, destination, queueApproach->elapsedSeconds);
+                            passengerPose = passengerQueueApproachPose(
+                                queueApproach->roadApproach, approachStart, approachDestination,
+                                queueApproach->elapsedSeconds);
                         } else if (activeAiVehicle && queueApproach &&
                                    passengerNetwork_.passengerMatchesService(
                                        passengers[passenger], candidate.routeIndex,
@@ -1641,13 +1659,23 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                     activeAiVehicle->vehicle->trafficWidthMeters,
                                     mapRenderer_->leftHandTraffic(), queueSlot);
                             }
+                            const auto& approachStart = queueApproach->posesInitialized
+                                                            ? queueApproach->originPose
+                                                            : *passengerPose;
+                            const auto& approachDestination =
+                                queueApproach->posesInitialized
+                                    ? queueApproach->destinationPose
+                                    : *destination;
                             gaitWeight = queueApproach->elapsedSeconds <
-                                                 passengerApproachDuration(*passengerPose,
-                                                                           *destination)
+                                                 passengerQueueApproachDuration(
+                                                     queueApproach->roadApproach, approachStart,
+                                                     approachDestination)
                                              ? 1.0
                                              : waitingPassengerIdleGaitWeight;
-                            passengerPose = passengerApproachPose(
-                                *passengerPose, *destination, queueApproach->elapsedSeconds);
+                            passengerPose = passengerQueueApproachPose(
+                                queueApproach->roadApproach, approachStart,
+                                approachDestination,
+                                queueApproach->elapsedSeconds);
                             if (hasSelectedApproach && approach->second.ticketBought) {
                                 const auto& cabin =
                                     activeAiVehicle->vehicle->passengers->configuration();

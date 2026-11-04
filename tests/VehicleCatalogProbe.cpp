@@ -90,8 +90,25 @@ int main() {
     } catch (const std::runtime_error&) {
         invalidSetvarRejected = true;
     }
+    const std::filesystem::path ctcDirectory =
+        busDirectory / "Texture" / "Repaints" / "Body";
+    std::filesystem::create_directories(ctcDirectory);
+    std::ofstream ctcTexture(ctcDirectory / "scoped.dds");
+    ctcTexture << "texture";
+    ctcTexture.close();
+    const std::filesystem::path ctcPath = ctcDirectory / "repaint.cti";
+    std::ofstream ctc(ctcPath);
+    ctc << "[item]\nCTC Repaint\nBody\nscoped.dds\n";
+    ctc.close();
+    const std::vector<ModelCtcTemplate> ctcTemplates = {
+        {"Body", "Texture\\Repaints\\Body", 0}};
+    const std::vector<openbus::config::VehicleAppearance> ctcAppearances =
+        openbus::config::discoverVehicleAppearances(busPath, vehiclesDirectory, ctcTemplates);
     const bool passed =
         invalidSetvarRejected &&
+        ctcAppearances.size() == 1 && ctcAppearances[0].name == "CTC Repaint" &&
+        ctcAppearances[0].textureReplacements.at("body") ==
+            std::filesystem::absolute(ctcDirectory / "scoped.dds").generic_string() &&
         vehicles.size() == 1 && vehicles[0].manufacturer == "Example Motors" &&
         vehicles[0].type == "City Bus" && vehicles[0].defaultAppearance == "Default Paint" &&
         appearances.size() == 3 && defaultAppearance != nullptr &&

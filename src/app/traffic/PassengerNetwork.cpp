@@ -344,10 +344,24 @@ const std::vector<WaitingPassenger>& PassengerNetwork::waitingPassengers(int sto
         state.candidateRouteCount = routes.size();
     }
     if (!state.candidates.empty()) {
+        std::vector<std::size_t> candidateRoutes;
+        std::unordered_map<std::size_t, std::vector<std::size_t>> candidatesByRoute;
+        for (std::size_t index = 0; index < state.candidates.size(); ++index) {
+            const std::size_t routeIndex = state.candidates[index].routeIndex;
+            auto& routeCandidates = candidatesByRoute[routeIndex];
+            if (routeCandidates.empty()) {
+                candidateRoutes.push_back(routeIndex);
+            }
+            routeCandidates.push_back(index);
+        }
         for (auto& passenger : passengers) {
             if (!passenger.journey) {
-                passenger.journey =
-                    state.candidates[passenger.modelIndex % state.candidates.size()];
+                const std::size_t routeOrdinal = passenger.modelIndex % candidateRoutes.size();
+                const std::size_t routeIndex = candidateRoutes[routeOrdinal];
+                const auto& routeCandidates = candidatesByRoute.at(routeIndex);
+                const std::size_t candidateOrdinal =
+                    (passenger.modelIndex / candidateRoutes.size()) % routeCandidates.size();
+                passenger.journey = state.candidates[routeCandidates[candidateOrdinal]];
             }
         }
     }

@@ -1,6 +1,8 @@
 #include "app/vehicle/VehicleMaterialSelection.h"
 
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -28,10 +30,28 @@ int main() {
         return 1;
     }
     Variables variables(ScriptObjectKind::Vehicle);
+    variables.declare("visibility_red");
+    variables.set("visibility_red", 0.0F);
+    variables.set("unrelated_variable", 7.0F);
     openbus::app::vehicle::applyCtiVariableReplacements(
         variables, {{"visibility_red", 1.0F}, {"paint_variant", 0.5F}});
-    if (variables.get("visibility_red") != 1.0F || variables.get("paint_variant") != 0.5F) {
-        std::cerr << "CTI setvar values were not applied to vehicle variables\n";
+    if (variables.get("visibility_red") != 1.0F || variables.get("paint_variant") != 0.5F ||
+        variables.get("unrelated_variable") != 7.0F) {
+        std::cerr << "CTI setvar values did not override the selected vehicle variables\n";
+        return 1;
+    }
+    bool invalidCtiValueRejected = false;
+    const std::unordered_map<std::string, float> invalidReplacements = {
+        {"visibility_red", 0.0F},
+        {"invalid_variable", std::numeric_limits<float>::infinity()}};
+    try {
+        openbus::app::vehicle::applyCtiVariableReplacements(variables, invalidReplacements);
+    } catch (const std::invalid_argument&) {
+        invalidCtiValueRejected = true;
+    }
+    if (!invalidCtiValueRejected || variables.has("invalid_variable") ||
+        variables.get("visibility_red") != 1.0F) {
+        std::cerr << "Invalid CTI setvar values were not rejected safely\n";
         return 1;
     }
 

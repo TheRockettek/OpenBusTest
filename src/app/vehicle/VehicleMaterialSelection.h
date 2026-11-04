@@ -54,6 +54,8 @@ inline void applyCtiVariableReplacements(
         if (name.empty() || !std::isfinite(value)) {
             throw std::invalid_argument("CTI variable replacements must be named and finite");
         }
+    }
+    for (const auto& [name, value] : replacements) {
         variables.set(name, value);
     }
 }
