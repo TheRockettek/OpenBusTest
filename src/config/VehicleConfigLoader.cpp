@@ -297,7 +297,8 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
                 result.passengerCabinStampers.push_back(stamper);
                 result.diagnostics.warning(
                     line.number, keyword,
-                    "stamper location retained; ticket-stamping interaction is not implemented");
+                    "stamper location retained; eligible passenger tickets can walk to the first "
+                    "configured stamper, but hand and ticket animations are not implemented");
             } else {
                 result.diagnostics.error(line.number, keyword,
                                          "expected a non-negative stamper index and xyz position");
@@ -351,7 +352,8 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
                 }
                 result.diagnostics.warning(
                     line.number, keyword,
-                    "interaction-point location retained; ticket-sale behavior is not implemented");
+                    "interaction-point location retained; ticket buyers visit configured money and "
+                    "change points, but physical payment and coin output are not implemented");
             } else {
                 result.diagnostics.error(
                     line.number, keyword,

@@ -290,6 +290,8 @@ class RenderLoop {
     void cancelMovingPlayerPassengerService(const BusSimulation& simulation);
     std::optional<openbus::map::MapTrafficPose> passengerQueuePose(int stopId,
                                                                   std::size_t queueSlot) const;
+    std::optional<openbus::map::MapTrafficPose>
+    passengerQueuePose(int stopId, const openbus::app::WaitingPassenger& passenger) const;
     void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
                                double newStartHour);
     void renderReflectionViews(const BusSimulation& simulation, const World& world);
@@ -536,7 +538,7 @@ class RenderLoop {
     std::unordered_set<int> reportedPassengerHandoffStops_;
     std::unordered_set<int> reportedPassengerDriftStops_;
     std::unordered_set<int> reportedPassengerTicketStops_;
-    std::map<std::pair<std::size_t, int>, openbus::map::MapPassengerPedestrianJourney>
+    std::map<std::pair<std::size_t, std::size_t>, openbus::map::MapPassengerPedestrianJourney>
         passengerPedestrianPaths_;
     std::optional<int> playerPassengerStopLatch_;
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
@@ -552,12 +554,22 @@ class RenderLoop {
         bool ticketBought = false;
         bool ticketSaleComplete = false;
         bool ticketPaymentStarted = false;
+        bool ticketPaymentRequired = false;
+        bool ticketMoneyPointReached = false;
+        bool ticketChangePointReached = false;
         bool ticketPrinted = false;
+        bool ticketStamped = false;
         std::optional<std::size_t> ticketMachineConfigurationIndex;
+        std::optional<std::size_t> ticketStamperConfigurationIndex;
         double changeDue = 0.0;
         double cashDispensedAtSaleStart = 0.0;
         double ticketMachineApproachSeconds = 0.0;
         double ticketMachineReturnSeconds = 0.0;
+        double ticketMoneyPointApproachSeconds = 0.0;
+        double ticketChangePointApproachSeconds = 0.0;
+        double ticketStamperApproachSeconds = 0.0;
+        double ticketStamperWaitSeconds = 0.0;
+        double ticketStamperReturnSeconds = 0.0;
         double ticketWaitSeconds = 0.0;
     };
     std::unordered_map<Vehicle*, PassengerApproachProgress> passengerApproachProgress_;
@@ -588,6 +600,14 @@ class RenderLoop {
     std::vector<std::optional<double>> scheduledPassengerHumanMassesKg_;
     openbus::map::MapTicketPackDefinition passengerTicketPack_;
     openbus::map::MapCurrencyDefinition passengerCurrency_;
+    struct PassengerCoinAnimation {
+        std::array<double, 3> position = {};
+        double headingRadians = 0.0;
+        double startedAtSeconds = 0.0;
+        std::size_t coinIndex = 0;
+    };
+    std::vector<PassengerCoinAnimation> passengerCoinAnimations_;
+    std::unordered_map<Vehicle*, std::vector<double>> observedPassengerCoinCounts_;
     std::mt19937 passengerTransactionRandom_{0x4f70656eU};
     std::size_t targetHumanTrafficCount_ = 0;
     Vehicle* playerVehicle_ = nullptr;

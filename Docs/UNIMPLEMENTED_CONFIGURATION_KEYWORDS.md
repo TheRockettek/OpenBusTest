@@ -59,11 +59,11 @@ also remain incomplete. See [BUS status](IMPLEMENTATION_STATUS_BUS.md).
 
 | Keyword(s) / behavior | Current gap |
 | --- | --- |
-| `[linkToNextVeh]`, `[linkToPrevVeh]`, `[stamper]`, `[noticketsale]` | No complete runtime behavior. |
+| `[linkToNextVeh]`, `[linkToPrevVeh]`, `[noticketsale]` | No complete runtime behavior. An eligible passenger ticket transaction can walk to the first configured `[stamper]` and back, but hand/ticket animation and native stamping behavior are absent. |
 | `[pathpnt]`, `[pathlink]` extended fields | Only basic paths and room-height transitions are loaded; complete cabin traversal is absent. |
 | `[stepsoundpack]` | The record is loaded, but complete step-sound playback and route use are absent. |
 | Passenger mass and seated-human rendering | Partial; seated riders render, and authored `.hum` mass values affect player-bus total mass and combined center of gravity at seat positions. Human inertia and live physics parity remain unverified. |
-| Ticket requests, cash/card transactions, ticket-selling UI, coin dispensing | Partial; ticket eligibility/selection and simulated cash/change gating are implemented, and ticket/coin records feed script macros. Physical money/change actions, ticket-selling UI, and animated/audible coin output remain absent. |
+| Ticket requests, cash/card transactions, ticket-selling UI, coin dispensing | Partial; ticket eligibility/selection, simulated cash/change gating, and passenger movement to configured sale/money/change/stamper points are implemented, and ticket/coin records feed script macros. Physical money transfer, ticket-selling UI, hand/ticket animation, and animated/audible coin output remain absent. |
 | HOF, stop-announcement, arrival-board integration | Not implemented; generic HOF and route lookup macros retain placeholder behavior. Scheduled AI bus scripts receive profile-based arrival/departure times and route-based delay. `GetTTTerminusIndex` returns the zero-based index of the last mapped stop on that bus's route, or `-1` when no stops are mapped. |
 
 See [BUS and passenger/path status](IMPLEMENTATION_STATUS_BUS.md#passenger-cabin-and-path-cfgs).

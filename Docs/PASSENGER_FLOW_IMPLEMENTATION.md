@@ -15,16 +15,22 @@ an open
 when the bus starts moving, service is cancelled before passengers advance and
 an interrupted boarder returns to the shared queue. Boarding riders receive a
 deterministic service and downstream stop from the located timetable routes
-available when their waiting record is first assigned. Only a bus on the
-matching route (or the same timetable key and line) that serves the selected
-stop near the rider's destination can board that rider. Cancellation returns the same journey to the shared
-queue; routes registered later do not change assigned journeys. Before boarding,
-a rider is assigned a destination 15–45 m forward on a nearby directed human
-spline where available. If no suitable spline exists, the mapped stop is used
-instead and the fallback is logged. When the human lane network is still being
-prepared, an eligible scheduled bus holds its dwell rather than departing solely
-because destination selection is pending. If no located mapped journey is
-available, the rider waits and the stop is reported in the log.
+available when their waiting record is first assigned. Only a bus with the
+same registered route identity that serves the selected stop near the rider's
+destination can board that rider; a matching timetable key and line alone do
+not make separate route registrations interchangeable. Cancellation returns
+the same journey to the shared queue; routes registered later do not change
+assigned journeys. Journey records retain exact origin and destination call
+indices, so repeated stop IDs do not match at the wrong call. Queue counts and
+reservations remain shared by stop ID, but riders on a route with repeated IDs
+are placed beside their assigned call. Before boarding, a rider is assigned a
+destination 15–45 m forward on a nearby directed human spline where available.
+If no suitable spline exists, the mapped stop is used instead and the fallback
+is logged.
+When the human lane network is still being prepared, an eligible scheduled bus
+holds its dwell rather than departing solely because destination selection is
+pending. If no located mapped journey is available, the rider waits and the
+stop is reported in the log.
 Any riders remaining at a route's final mapped call alight before the
 scheduled bus ends its trip. Waiting queues and boarding/alighting positions
 use the correct passenger side for left- and right-hand traffic maps, with
@@ -45,11 +51,12 @@ a rider waits aboard if the stopped bus drifts out of range. Forced unloading
 at terminal calls or on service cancellation can still override the limit;
 those cases need further work.
 After alighting, a separate pedestrian actor follows its assigned directed
-route if the exit is within 0.5 m horizontally and vertically of a forward
-route point and the short connector does not move toward the bus. Otherwise
-the rider disappears and a warning is logged. This conservative proximity
-check does not establish road safety or guarantee a handoff for every sidewalk;
-visual and end-to-end validation remain outstanding.
+route if the exit is within 0.5 m horizontally and vertically of a route point
+from up to 25 m behind the lane start through the generated destination. The
+short connector may not move toward the bus. Otherwise the rider disappears
+and a warning is logged. This conservative proximity check does not establish
+road safety or guarantee a handoff for every sidewalk; visual and end-to-end
+validation remain outstanding.
 Player stop discovery uses a timetable-route catalog registered independently
 of scheduled AI bus instances, so setting the AI bus population to zero does
 not disable player boarding. The catalog still requires a loadable bus
@@ -143,9 +150,12 @@ per-vehicle `Variables` convention:
   `cash_dispensed_total`, `cash_last_coin_value`, and
   `cash_dispensed_coin_count` on that vehicle, plus
   `cash_last_coin_index` and `cash_coin_dispensed_count_<index>`. Invalid
-  indices or denominations are ignored. This is script-visible accounting;
-  coin models are retained as `cash_coin_model_<index>` but not yet animated,
-  sounded, or physically dispensed.
+  indices or denominations are ignored. This is script-visible accounting.
+  `GiveChangeCoin` counter changes also trigger a short-lived generic coin
+  visual at the configured change point, falling back to the money point or
+  ticket machine. Configured coin models are retained as
+  `cash_coin_model_<index>` but are not loaded or rendered; coin sound and
+  physical dispensing are also absent.
 * When ticket sales are enabled, a waiting passenger may buy the cheapest
   ticket matching the rider's `[age]` value and downstream station count, with
   purchase and stamping chances from the ticket pack. A purchaser's approach,
@@ -168,10 +178,12 @@ per-vehicle `Variables` convention:
 The same macros are available to player and AI vehicle scripts because both
 use `ScriptRuntime` and fall back to map-shared ticket/currency values. Ticket
 selection and the change/ticket wait gate are implemented, but passenger cash
-is simulated, money/change points and stamper positions do not yet drive actor
-movement, coin output has no physical animation or sound, and scenery/world
-path-link occupancy remains unimplemented. Ticketing still needs in-game
-validation.
+is simulated, money is not physically transferred, configured coin models and
+sound are not used, and scenery/world path-link occupancy remains unimplemented.
+Passengers visit configured money points and, when change is due, change points
+before returning to the entry queue. When stamping is selected, they visit the
+first configured stamper, pause, and return. These actions do not animate the
+hand, cash, ticket, or coins. Ticketing still needs in-game validation.
 
 The player bus's physics mass includes seated passengers whose `.hum` files
 specify `[mass]`. OMSI human mass values are interpreted as tonnes and converted
@@ -238,5 +250,6 @@ waits, including for following traffic, and do not trigger stuck-bus removal.
 
 Queue demand is a fixed nominal count per mapped stop rather than a shared
 map-wide demand model. Waiting people use a subtle idle gait before boarding;
-boarding and alighting use the full movement animation. Ticket selection,
-payment transactions, and audible or physical coin output remain incomplete.
+boarding and alighting use the full movement animation. Ticket selection and
+payment transactions remain incomplete; configured coin models, audio, and
+native dispensing animation remain unimplemented.

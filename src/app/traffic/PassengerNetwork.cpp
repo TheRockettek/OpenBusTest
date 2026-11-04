@@ -5,6 +5,7 @@
 #include <numbers>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_set>
 #include <utility>
 
@@ -71,6 +72,43 @@ PassengerStopRouteState makePlayerTimetableRoute(const openbus::map::MapAiTimeta
             route.tripName,
             std::move(poses),
             route.profiles};
+}
+
+std::optional<std::size_t> PassengerNetwork::routeCallIndexForBusStop(
+    std::size_t routeIndex, const PassengerStops& busStops, std::size_t busStopIndex) const {
+    if (routeIndex >= routes.size() || busStopIndex >= busStops.size()) {
+        return std::nullopt;
+    }
+    const auto& routeStops = routes[routeIndex].stops.values();
+    const auto& busStop = busStops[busStopIndex];
+    if (routeStops == busStops.values()) {
+        return busStopIndex;
+    }
+    std::optional<std::size_t> matchedIndex;
+    for (std::size_t index = 0; index < routeStops.size(); ++index) {
+        const auto& routeStop = routeStops[index];
+        if (routeStop.stopId != busStop.stopId ||
+            routeStop.timetableStationIndex != busStop.timetableStationIndex) {
+            continue;
+        }
+        if (matchedIndex) {
+            return std::nullopt;
+        }
+        matchedIndex = index;
+    }
+    if (matchedIndex) {
+        return matchedIndex;
+    }
+    for (std::size_t index = 0; index < routeStops.size(); ++index) {
+        if (routeStops[index].stopId != busStop.stopId) {
+            continue;
+        }
+        if (matchedIndex) {
+            return std::nullopt;
+        }
+        matchedIndex = index;
+    }
+    return matchedIndex;
 }
 
 PassengerRouteRegistrationReport
@@ -282,7 +320,7 @@ const std::vector<WaitingPassenger>& PassengerNetwork::waitingPassengers(int sto
     }
     if (state.candidateRouteCount != routes.size()) {
         std::vector<WaitingPassengerJourney> candidates;
-        std::set<std::pair<std::size_t, int>> seen;
+        std::set<std::tuple<std::size_t, std::size_t, std::size_t>> seen;
         for (std::size_t routeIndex = 0; routeIndex < routes.size(); ++routeIndex) {
             const auto& route = routes[routeIndex];
             for (std::size_t origin = 0; origin < route.stops.size(); ++origin) {
@@ -293,10 +331,11 @@ const std::vector<WaitingPassenger>& PassengerNetwork::waitingPassengers(int sto
                      ++destination) {
                     const int destinationId = route.stops[destination].stopId;
                     const auto destinationPose = route.stopPose(destination);
-                    if (destinationId > 0 && destinationId != stopId && destinationPose &&
-                        seen.emplace(routeIndex, destinationId).second) {
+                    if (destinationId > 0 && destinationPose &&
+                        seen.emplace(routeIndex, origin, destination).second) {
                         candidates.push_back(
-                            {routeIndex, destinationId, destinationPose->position, false, std::nullopt});
+                            {routeIndex, destinationId, destinationPose->position, false,
+                             std::nullopt, origin, destination});
                     }
                 }
             }
@@ -317,45 +356,43 @@ const std::vector<WaitingPassenger>& PassengerNetwork::waitingPassengers(int sto
 
 bool PassengerNetwork::passengerMatchesService(
     const WaitingPassenger& passenger, std::size_t routeIndex,
-    const openbus::map::MapPassengerServiceRuntime& service) const {
+    const openbus::map::MapPassengerServiceRuntime& service,
+    std::optional<std::size_t> currentStopIndex) const {
     if (!service.acceptsBoarding() || !passenger.journey || routeIndex >= routes.size() ||
         passenger.journey->routeIndex >= routes.size()) {
         return false;
     }
-    const auto& expected = routes[passenger.journey->routeIndex];
     const auto& actual = routes[routeIndex];
-    const bool sameService =
-        passenger.journey->routeIndex == routeIndex ||
-        (!expected.timetableKey.empty() && expected.timetableKey == actual.timetableKey &&
-         expected.lineName == actual.lineName);
+    const bool sameService = passenger.journey->routeIndex == routeIndex;
     if (!sameService || !service.acceptsPassengerDestination(passenger.journey->destinationStopId)) {
+        return false;
+    }
+    const std::size_t originIndex = passenger.journey->originStopIndex;
+    const std::size_t destinationIndex = passenger.journey->destinationStopIndex;
+    if (originIndex >= actual.stops.size() || destinationIndex >= actual.stops.size() ||
+        destinationIndex <= originIndex ||
+        actual.stops[originIndex].stopId != service.currentStopId() ||
+        (currentStopIndex && *currentStopIndex != originIndex) ||
+        actual.stops[destinationIndex].stopId != passenger.journey->destinationStopId) {
         return false;
     }
     const auto& destination = passenger.journey->pedestrianJourney
                                   ? passenger.journey->pedestrianJourney->destination
                                   : passenger.journey->destinationPosition;
-    bool passedOrigin = false;
-    for (std::size_t index = 0; index < actual.stops.size(); ++index) {
-        if (passedOrigin && actual.stops[index].stopId == passenger.journey->destinationStopId) {
-            const auto pose = actual.stopPose(index);
-            if (pose && std::hypot(pose->position[0] - destination[0],
-                                   pose->position[1] - destination[1]) <=
-                            openbus::map::passengerStopRequestRadiusMeters) {
-                return true;
-            }
-        }
-        passedOrigin = passedOrigin || actual.stops[index].stopId == service.currentStopId();
-    }
-    return false;
+    const auto pose = actual.stopPose(destinationIndex);
+    return pose && std::hypot(pose->position[0] - destination[0],
+                              pose->position[1] - destination[1]) <=
+                       openbus::map::passengerStopRequestRadiusMeters;
 }
 
 std::optional<std::size_t>
 PassengerNetwork::nextPassenger(int stopId, std::size_t routeIndex,
-                                const openbus::map::MapPassengerServiceRuntime& service) {
+                                const openbus::map::MapPassengerServiceRuntime& service,
+                                std::optional<std::size_t> currentStopIndex) {
     const auto& passengers = waitingPassengers(stopId);
     std::optional<std::size_t> result;
     for (std::size_t index = 0; index < passengers.size(); ++index) {
-        if (passengerMatchesService(passengers[index], routeIndex, service) &&
+        if (passengerMatchesService(passengers[index], routeIndex, service, currentStopIndex) &&
             (!result || passengers[index].arrivalOrder < passengers[*result].arrivalOrder)) {
             result = index;
         }
@@ -379,7 +416,8 @@ void PassengerNetwork::advanceService(openbus::map::MapPassengerServiceRuntime& 
                                       std::size_t routeIndex,
                                       std::optional<std::size_t> passengerIndex,
                                       double elapsedSeconds, bool allowBoarding,
-                                      bool allowAlighting, bool holdAtStop, bool pauseDwellTimer) {
+                                      bool allowAlighting, bool holdAtStop, bool pauseDwellTimer,
+                                      std::optional<std::size_t> currentStopIndex) {
     const int stopId = service.currentStopId();
     const auto& passengers = waitingPassengers(stopId);
     auto& count = queues.at(stopId);
@@ -390,7 +428,8 @@ void PassengerNetwork::advanceService(openbus::map::MapPassengerServiceRuntime& 
     std::optional<openbus::map::MapPassengerBoardingSelection> selection;
     if (!wasBoarding && passengerIndex) {
         if (*passengerIndex >= passengers.size() ||
-            !passengerMatchesService(passengers[*passengerIndex], routeIndex, service)) {
+            !passengerMatchesService(passengers[*passengerIndex], routeIndex, service,
+                                     currentStopIndex)) {
             throw std::invalid_argument("Selected waiting passenger does not match the service");
         }
         const auto& passenger = passengers[*passengerIndex];
@@ -415,7 +454,7 @@ void PassengerNetwork::advanceService(openbus::map::MapPassengerServiceRuntime& 
     count = service.waitingPassengers(stopId);
     std::size_t eligible = 0;
     for (const auto& passenger : state.passengers) {
-        if (passengerMatchesService(passenger, routeIndex, service)) {
+        if (passengerMatchesService(passenger, routeIndex, service, currentStopIndex)) {
             ++eligible;
         }
     }

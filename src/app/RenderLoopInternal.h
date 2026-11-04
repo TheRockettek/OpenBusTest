@@ -66,6 +66,46 @@ passengerVehicleLocalPose(const openbus::map::MapTrafficPose& busPose,
     return pose;
 }
 
+inline openbus::map::MapTrafficPose passengerTicketSaleOriginPose(
+    const VehicleConfig& cabin, const openbus::map::MapTrafficPose& busPose,
+    const openbus::map::MapTrafficPose& entry,
+    std::optional<std::size_t> machineConfigurationIndex) {
+    if (!machineConfigurationIndex) {
+        return entry;
+    }
+    return passengerVehicleLocalPose(
+        busPose, cabin.passengerTicketSaleMachines.at(*machineConfigurationIndex).position);
+}
+
+inline openbus::map::MapTrafficPose passengerTicketMoneyPointPose(
+    const VehicleConfig& cabin, const openbus::map::MapTrafficPose& busPose,
+    const openbus::map::MapTrafficPose& origin) {
+    return cabin.passengerTicketMoneyPoint
+               ? passengerVehicleLocalPose(busPose, cabin.passengerTicketMoneyPoint->position)
+               : origin;
+}
+
+inline openbus::map::MapTrafficPose passengerTicketChangePointPose(
+    const VehicleConfig& cabin, const openbus::map::MapTrafficPose& busPose,
+    const openbus::map::MapTrafficPose& moneyPoint, double changeDue) {
+    return changeDue > 0.0 && cabin.passengerTicketChangePoint
+               ? passengerVehicleLocalPose(busPose, cabin.passengerTicketChangePoint->position)
+               : moneyPoint;
+}
+
+inline openbus::map::MapTrafficPose passengerTicketTransactionPose(
+    const VehicleConfig& cabin, const openbus::map::MapTrafficPose& busPose,
+    const openbus::map::MapTrafficPose& entry,
+    std::optional<std::size_t> machineConfigurationIndex, bool paymentRequired,
+    double changeDue) {
+    const auto origin =
+        passengerTicketSaleOriginPose(cabin, busPose, entry, machineConfigurationIndex);
+    const auto moneyPoint = paymentRequired
+                                ? passengerTicketMoneyPointPose(cabin, busPose, origin)
+                                : origin;
+    return passengerTicketChangePointPose(cabin, busPose, moneyPoint, changeDue);
+}
+
 inline openbus::map::MapTrafficPose
 playerPassengerDoorQueuePose(const Vehicle& bus, const BodyPose& chassis, bool leftHandTraffic,
                              std::size_t queueSlot) {

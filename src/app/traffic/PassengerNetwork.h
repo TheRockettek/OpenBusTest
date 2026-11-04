@@ -70,6 +70,8 @@ struct WaitingPassengerJourney {
     std::array<double, 3> destinationPosition{};
     bool pedestrianResolved = false;
     std::optional<openbus::map::MapPassengerPedestrianJourney> pedestrianJourney;
+    std::size_t originStopIndex = 0;
+    std::size_t destinationStopIndex = 0;
 };
 
 struct WaitingPassenger {
@@ -93,20 +95,26 @@ struct PassengerNetwork {
     registerTimetables(const openbus::map::MapAiTrafficData& traffic, std::size_t waitingPassengers,
                        const PlayerStopPoseResolver& resolvePose);
     [[nodiscard]] std::optional<std::size_t> findRouteIndex(const std::string& key) const;
+    [[nodiscard]] std::optional<std::size_t>
+    routeCallIndexForBusStop(std::size_t routeIndex, const PassengerStops& busStops,
+                             std::size_t busStopIndex) const;
     void initializeQueues(std::span<const openbus::map::MapTrafficPassengerStop> stops);
     const std::vector<WaitingPassenger>& waitingPassengers(int stopId);
     bool passengerMatchesService(const WaitingPassenger& passenger, std::size_t routeIndex,
-                                 const openbus::map::MapPassengerServiceRuntime& service) const;
+                                 const openbus::map::MapPassengerServiceRuntime& service,
+                                 std::optional<std::size_t> currentStopIndex = std::nullopt) const;
     std::optional<std::size_t>
     nextPassenger(int stopId, std::size_t routeIndex,
-                  const openbus::map::MapPassengerServiceRuntime& service);
+                  const openbus::map::MapPassengerServiceRuntime& service,
+                  std::optional<std::size_t> currentStopIndex = std::nullopt);
     void resolvePassengerPedestrianJourney(
         int stopId, std::size_t passengerIndex,
         std::optional<openbus::map::MapPassengerPedestrianJourney> pedestrianJourney);
     void advanceService(openbus::map::MapPassengerServiceRuntime& service, std::size_t routeIndex,
                         std::optional<std::size_t> passengerIndex, double elapsedSeconds,
                         bool allowBoarding, bool allowAlighting, bool holdAtStop,
-                        bool pauseDwellTimer = false);
+                        bool pauseDwellTimer = false,
+                        std::optional<std::size_t> currentStopIndex = std::nullopt);
     void departService(openbus::map::MapPassengerServiceRuntime& service);
     void endService(openbus::map::MapPassengerServiceRuntime& service);
     [[nodiscard]] NearbyPassengerStop

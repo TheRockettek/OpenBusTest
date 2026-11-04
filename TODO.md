@@ -276,9 +276,9 @@ recognized but incomplete semantics.
   samples of unavailable routes rather than repeating matching every frame.
   Passenger mass from authored `.hum` files now contributes to player-bus
   physics at each occupied seat's authored position. Physical fare transactions
-  and physical/audible coin output remain incomplete. Map
-  ticket-pack/currency records feed ticket and change-coin script macros for
-  player and AI buses.
+  and audible coin output remain incomplete. Generic, short-lived coin visuals
+  react to `GiveChangeCoin` calls. Map ticket-pack/currency records feed ticket
+  and change-coin script macros for player and AI buses.
 
   Passenger journey gaps to complete and validate:
 
@@ -290,8 +290,12 @@ recognized but incomplete semantics.
   - [~] Waiting riders retain an expected mapped service and downstream stop
     in the shared queue; buses board only matching riders. Nearby directed
     pedestrian splines now generate world destinations before boarding, with a
-    mapped-stop fallback. Validate service matching in game. Exact
-    repeated-stop calls and courses sharing a route remain indistinguishable.
+    mapped-stop fallback. Route identity now prevents a same-key, same-line
+    route variant from boarding a rider assigned elsewhere, and journey records
+    retain exact origin/destination call indices. Queue storage is still shared
+    by stop ID, but repeated calls in one route now place riders beside their
+    assigned call. Shared counts/reservations across different route calls and
+    courses sharing one registered route remain indistinguishable.
   - [ ] Have waiting passengers approach a nearby expected bus while it is
     moving without entering the road, and permit a safe road crossing only
     once it has stopped. Replace direct interpolation with road-aware walking
@@ -304,10 +308,14 @@ recognized but incomplete semantics.
     still needs road-aware pedestrian routing and crossing safety.
   - [~] Ticket packs now retain purchase/stamping probabilities and ticket
     names, values, age limits and station limits. Eligible riders may buy the
-    cheapest ticket and visibly walk to the first configured machine, then wait
-    for driver `GiveChangeCoin` calls to cover modeled
-    change before ticket issuance and boarding. Passenger cash is simulated;
-    stamper actor movement and physical coin output are not implemented. Validate
+    cheapest ticket and visibly walk to the first configured machine and any
+    configured money/change points, then wait for driver `GiveChangeCoin` calls
+    to cover modeled change. When selected for stamping, riders walk to the
+    first configured stamper, pause, and return before boarding. Passenger cash
+    is simulated; `GiveChangeCoin` emits a short-lived generic coin visual at
+    the configured change point, falling back to the money point or ticket
+    machine. Configured coin models, coin audio and native dispensing animation
+    remain incomplete. Validate
     purchase probability, change accounting, machine use and door gating in
     game.
   - [~] Cabin traversal now uses the connected or fallback path length and a
@@ -329,9 +337,11 @@ recognized but incomplete semantics.
     Runtime regression coverage verifies closed-door waiting and FIFO promotion;
     validate the visual queue and exit-door behavior in game.
   - [~] After leaving the bus, alighters follow their assigned directed
-    pedestrian spline when a short outward connector is available; otherwise
-    they disappear. Validate the conservative connector and road safety in
-    game, and support safe connectors for more real-world sidewalk layouts.
+    pedestrian spline when a short outward connector is available; connector
+    search now spans the assigned forward route up to its generated destination
+    while retaining the 0.5 m distance, height and curb-side checks. Otherwise
+    they disappear. Validate this conservatively constrained handoff in game
+    and support additional safe sidewalk layouts.
   - [ ] Add focused regression coverage and an in-game end-to-end validation
     for the journey, including moving-bus road safety, ticketing, the 200 m
     destination rule, concurrent alighting, and spline handoff.

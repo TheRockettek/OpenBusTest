@@ -19,6 +19,19 @@ inline constexpr double passengerSeatTransitionPortion = 0.2;
 inline constexpr double playerPassengerStopArrivalRadiusMeters = 20.0;
 inline constexpr double playerPassengerStopReleaseRadiusMeters = 25.0;
 
+inline std::size_t passengerCoinVisualBurstCount(double previousCount, double currentCount) {
+    if (!std::isfinite(previousCount) || !std::isfinite(currentCount) || previousCount < 0.0 ||
+        currentCount < 0.0) {
+        throw std::invalid_argument("Passenger coin counters must be finite and non-negative");
+    }
+    if (currentCount < previousCount) {
+        return 0;
+    }
+    constexpr double maximumVisualBurst = 4.0;
+    const double addedCoins = std::floor(currentCount) - std::floor(previousCount);
+    return static_cast<std::size_t>(std::min(addedCoins, maximumVisualBurst));
+}
+
 inline double passengerCabinHeading(double vehicleHeadingRadians, double seatRotationDegrees) {
     return vehicleHeadingRadians + seatRotationDegrees * std::numbers::pi / 180.0;
 }
@@ -89,6 +102,21 @@ passengerDoorQueuePose(const openbus::map::MapTrafficPose& busPose, double entry
     return result;
 }
 
+inline openbus::map::MapTrafficPose
+passengerStopCallQueuePose(openbus::map::MapTrafficPose stopPose, bool leftHandTraffic,
+                           std::size_t queueSlot, double vehicleWidth = 2.4) {
+    const double passengerSide = openbus::map::mapTrafficPassengerSideSign(leftHandTraffic);
+    const double curbOffset = openbus::map::mapTrafficPassengerCurbOffsetMeters(
+        leftHandTraffic, 0.0, vehicleWidth, 0.35);
+    const auto offset = openbus::map::mapTrafficPassengerWorldOffset(
+        leftHandTraffic, stopPose.headingRadians, curbOffset + passengerSide * 0.8,
+        -0.8 * static_cast<double>(queueSlot));
+    stopPose.position[0] += offset[0];
+    stopPose.position[1] += offset[1];
+    stopPose.headingRadians -= passengerSide * std::numbers::pi * 0.5;
+    return stopPose;
+}
+
 inline double passengerApproachDuration(const openbus::map::MapTrafficPose& start,
                                         const openbus::map::MapTrafficPose& end) {
     return std::hypot(end.position[0] - start.position[0], end.position[1] - start.position[1]) /
@@ -113,6 +141,45 @@ inline openbus::map::MapTrafficPose passengerApproachPose(const openbus::map::Ma
     return result;
 }
 
+struct PassengerStamperActorPose {
+    openbus::map::MapTrafficPose pose;
+    bool walking = false;
+};
+
+struct PassengerTicketTransactionActorPose {
+    openbus::map::MapTrafficPose pose;
+    bool walking = false;
+};
+
+inline PassengerTicketTransactionActorPose passengerTicketTransactionActorPose(
+    const openbus::map::MapTrafficPose& origin,
+    const openbus::map::MapTrafficPose& moneyPoint,
+    const openbus::map::MapTrafficPose& changePoint, bool paymentRequired, double changeDue,
+    bool moneyPointReached, bool changePointReached, double moneyPointApproachSeconds,
+    double changePointApproachSeconds) {
+    if (paymentRequired && !moneyPointReached) {
+        return {passengerApproachPose(origin, moneyPoint, moneyPointApproachSeconds), true};
+    }
+    if (changeDue > 0.0 && !changePointReached) {
+        return {passengerApproachPose(moneyPoint, changePoint, changePointApproachSeconds), true};
+    }
+    return {changePoint, false};
+}
+
+inline PassengerStamperActorPose passengerStamperActorPose(
+    const openbus::map::MapTrafficPose& start, const openbus::map::MapTrafficPose& stamper,
+    const openbus::map::MapTrafficPose& destination, double approachSeconds,
+    double waitSeconds, double returnSeconds) {
+    if (approachSeconds < passengerApproachDuration(start, stamper)) {
+        return {passengerApproachPose(start, stamper, approachSeconds), true};
+    }
+    if (waitSeconds < 0.5) {
+        return {stamper, false};
+    }
+    return {passengerApproachPose(stamper, destination, returnSeconds),
+            returnSeconds < passengerApproachDuration(stamper, destination)};
+}
+
 struct PassengerPedestrianHandoff {
     openbus::map::MapPassengerPedestrianJourney journey;
     openbus::map::MapTrafficPose exitPose;
@@ -126,14 +193,15 @@ inline std::optional<PassengerPedestrianHandoff> makePassengerPedestrianHandoff(
     const openbus::map::MapPassengerPedestrianJourney& journey,
     const openbus::map::MapTrafficPose& exitPose,
     const openbus::map::MapTrafficPose& busPose, bool leftHandTraffic, std::size_t modelIndex) {
-    if (!journey.route || journey.destinationDistanceMeters <= 0.0) {
+    if (!journey.route || journey.destinationDistanceMeters <= journey.startDistanceMeters) {
         return std::nullopt;
     }
-    constexpr double searchRangeMeters = 25.0;
+    constexpr double backwardSearchRangeMeters = 25.0;
     constexpr double maximumConnectorMeters = 0.5;
-    const double first = std::max(0.0, journey.startDistanceMeters - searchRangeMeters);
-    const double last = std::min(journey.destinationDistanceMeters - 0.01,
-                                 journey.startDistanceMeters + searchRangeMeters);
+    const double first =
+        std::max(0.0, journey.startDistanceMeters - backwardSearchRangeMeters);
+    const double last =
+        std::min(journey.destinationDistanceMeters - 0.01, journey.route->totalLength);
     if (last < first) {
         return std::nullopt;
     }

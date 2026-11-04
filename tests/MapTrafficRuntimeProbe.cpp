@@ -1225,6 +1225,21 @@ void verifyPassengerServiceBehavior() {
                 "handoff continues forward after the connector");
         require(!openbus::app::advancePassengerPedestrianHandoff(*handoff, 100.0),
                 "handoff completes at its destination");
+        const auto longJourney = lanes.passengerJourneyNear({9901}, {5.0, 0.0, 2.0}, 30);
+        require(longJourney.has_value(), "long handoff fixture has a pedestrian route");
+        const auto fartherLanePose = sampleMapTrafficRoute(
+            *longJourney->route, longJourney->startDistanceMeters + 30.0, 0.0);
+        require(fartherLanePose.has_value(), "farther handoff point can be sampled");
+        auto fartherBusPose = *fartherLanePose;
+        auto fartherExitPose = *fartherLanePose;
+        for (std::size_t axis = 0; axis < 2; ++axis) {
+            fartherBusPose.position[axis] -= 2.0 * side[axis];
+            fartherExitPose.position[axis] -= 0.25 * side[axis];
+        }
+        require(openbus::app::makePassengerPedestrianHandoff(
+                    *longJourney, fartherExitPose, fartherBusPose, false, 18)
+                    .has_value(),
+                "handoff can use a farther point along the assigned sidewalk route");
         auto unsafeExit = exitPose;
         unsafeExit.position[2] += 1.0;
         require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
@@ -1398,6 +1413,57 @@ void verifyPassengerServiceBehavior() {
     }
     {
         openbus::app::PassengerNetwork network;
+        openbus::app::PassengerStopRouteState route;
+        route.timetableKey = "repeated-calls";
+        route.stops = openbus::app::PassengerStops(
+            {{.stopId = 100, .waitingPassengers = 4, .timetableStationIndex = 0},
+             {.stopId = 200, .timetableStationIndex = 1},
+             {.stopId = 100, .timetableStationIndex = 2},
+             {.stopId = 200, .timetableStationIndex = 3}});
+        route.stopPoses = {MapTrafficPose{{0.0, 0.0, 0.0}, 0.0},
+                           MapTrafficPose{{10.0, 0.0, 0.0}, 0.0},
+                           MapTrafficPose{{20.0, 0.0, 0.0}, 0.0},
+                           MapTrafficPose{{30.0, 0.0, 0.0}, 0.0}};
+        network.routes.push_back(route);
+        network.initializeQueues(route.stops.values());
+        const openbus::app::PassengerStops sparseBusStops(
+            {route.stops.values()[0], route.stops.values()[2], route.stops.values()[3]});
+        require(network.routeCallIndexForBusStop(0, sparseBusStops, 1) == 2 &&
+                    network.routeCallIndexForBusStop(0, sparseBusStops, 2) == 3,
+                "scheduled call indices map through preserved timetable station indices");
+        const auto& passengers = network.waitingPassengers(100);
+        require(std::ranges::any_of(passengers, [](const auto& passenger) {
+                    return passenger.journey && passenger.journey->originStopIndex == 0 &&
+                           passenger.journey->destinationStopIndex == 1;
+                }) &&
+                    std::ranges::any_of(passengers, [](const auto& passenger) {
+                        return passenger.journey && passenger.journey->originStopIndex == 0 &&
+                               passenger.journey->destinationStopIndex == 3;
+                    }) &&
+                    std::ranges::any_of(passengers, [](const auto& passenger) {
+                        return passenger.journey && passenger.journey->originStopIndex == 2 &&
+                               passenger.journey->destinationStopIndex == 3;
+                    }),
+                "repeated stop IDs retain separate origin and destination call indices");
+        MapPassengerServiceRuntime firstCall(1);
+        MapPassengerServiceRuntime repeatedCall(1);
+        require(firstCall.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}) &&
+                    repeatedCall.arrive(
+                        {.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "both occurrences of a repeated stop can begin service");
+        const auto firstPassenger = network.nextPassenger(100, 0, firstCall, 0);
+        const auto repeatedPassenger = network.nextPassenger(100, 0, repeatedCall, 2);
+        require(firstPassenger &&
+                    passengers[*firstPassenger].journey->originStopIndex == 0 &&
+                    repeatedPassenger &&
+                    passengers[*repeatedPassenger].journey->originStopIndex == 2 &&
+                    network.passengerMatchesService(passengers[*firstPassenger], 0, firstCall, 0) &&
+                    network.passengerMatchesService(passengers[*repeatedPassenger], 0,
+                                                    repeatedCall, 2),
+                "boarding selects riders for the exact repeated origin call");
+    }
+    {
+        openbus::app::PassengerNetwork network;
         const auto route = [](const std::string& key, int destination) {
             openbus::app::PassengerStopRouteState result;
             result.timetableKey = key;
@@ -1475,6 +1541,12 @@ void verifyPassengerServiceBehavior() {
         network.routes.push_back(std::move(distantVariant));
         require(!network.passengerMatchesService(*riderA, 5, otherLineBus),
                 "a same-key service cannot board a rider for a distant stop with the same ID");
+        network.routes.push_back(route("line-a", 200));
+        MapPassengerServiceRuntime sameCourseDifferentRoute(1);
+        require(sameCourseDifferentRoute.arrive(
+                    {.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}) &&
+                    !network.nextPassenger(100, 6, sameCourseDifferentRoute),
+                "a route variant cannot board riders assigned to another route identity");
         MapPassengerServiceRuntime replacement(1);
         require(replacement.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
                 "replacement bus can serve returned passengers");
@@ -1712,9 +1784,29 @@ void verifyPassengerServiceBehavior() {
         requireNear(alightingLinks[1].first, 0.6, "alighting link timing follows walking progress");
         require(openbus::app::passengerSeatPathLinkProfile(links, true, false) == links,
                 "standing positions retain the original path timing");
+        require(openbus::app::passengerCoinVisualBurstCount(0.0, 0.0) == 0 &&
+                    openbus::app::passengerCoinVisualBurstCount(2.0, 5.0) == 3 &&
+                    openbus::app::passengerCoinVisualBurstCount(5.0, 2.0) == 0 &&
+                    openbus::app::passengerCoinVisualBurstCount(0.0, 20.0) == 4,
+                "coin visuals track increments, resets, and a bounded burst");
+        bool rejectedInvalidCoinCount = false;
+        try {
+            (void)openbus::app::passengerCoinVisualBurstCount(
+                0.0, std::numeric_limits<double>::quiet_NaN());
+        } catch (const std::invalid_argument&) {
+            rejectedInvalidCoinCount = true;
+        }
+        require(rejectedInvalidCoinCount, "invalid coin counters are rejected");
         const MapTrafficPose bus{{10.0, 20.0, 1.0}, 0.0};
         const auto right = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, false, 0);
         const auto left = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, true, 0);
+        const auto firstCallQueue = openbus::app::passengerStopCallQueuePose(
+            MapTrafficPose{{0.0, 0.0, 1.0}, 0.0}, false, 0);
+        const auto repeatedCallQueue = openbus::app::passengerStopCallQueuePose(
+            MapTrafficPose{{20.0, 0.0, 1.0}, 0.0}, false, 0);
+        requireNear(std::hypot(firstCallQueue.position[0] - repeatedCallQueue.position[0],
+                               firstCallQueue.position[1] - repeatedCallQueue.position[1]),
+                    20.0, "repeated stop calls keep separate world queue locations");
         requireNear(right.position[0], 11.9, "right-hand traffic queues at the right door");
         requireNear(left.position[0], 8.1, "left-hand traffic queues at the left door");
         requireNear(right.position[1], 23.0, "queue follows the actual front entry");
@@ -1740,6 +1832,48 @@ void verifyPassengerServiceBehavior() {
                     "waiting passengers walk halfway in half the travel time");
         requireNear(openbus::app::passengerApproachPose(start, right, 20.0).position[1], 23.0,
                     "waiting passengers stop at the entrance");
+        const MapTrafficPose stamper{{11.9, 26.0, 1.0}, 0.0};
+        const MapTrafficPose destination{{11.9, 29.0, 1.0}, 0.0};
+        const double stampApproachDuration =
+            openbus::app::passengerApproachDuration(right, stamper);
+        const auto walkingToStamper = openbus::app::passengerStamperActorPose(
+            right, stamper, destination, stampApproachDuration * 0.5, 0.0, 0.0);
+        require(walkingToStamper.walking,
+                "ticket passenger walks from the machine toward the configured stamper");
+        requireNear(walkingToStamper.pose.position[1], 24.5,
+                    "ticket passenger follows the timed stamper approach");
+        const auto waitingAtStamper = openbus::app::passengerStamperActorPose(
+            right, stamper, destination, stampApproachDuration, 0.2, 0.0);
+        require(!waitingAtStamper.walking,
+                "ticket passenger pauses at the stamper before returning");
+        requireNear(waitingAtStamper.pose.position[1], 26.0,
+                    "ticket passenger waits at the stamper position");
+        const auto returningFromStamper = openbus::app::passengerStamperActorPose(
+            right, stamper, destination, stampApproachDuration, 0.5, 1.0);
+        require(returningFromStamper.walking,
+                "ticket passenger returns to the entry after stamping");
+        const MapTrafficPose moneyPoint{{11.9, 24.0, 1.0}, 0.0};
+        const MapTrafficPose changePoint{{11.9, 27.0, 1.0}, 0.0};
+        const auto walkingToMoneyPoint = openbus::app::passengerTicketTransactionActorPose(
+            right, moneyPoint, changePoint, true, 0.25, false, false,
+            openbus::app::passengerApproachDuration(right, moneyPoint) * 0.5, 0.0);
+        require(walkingToMoneyPoint.walking,
+                "ticket passenger walks to the configured money point");
+        requireNear(walkingToMoneyPoint.pose.position[1], 23.5,
+                    "money-point movement follows the walking duration");
+        const auto walkingToChangePoint = openbus::app::passengerTicketTransactionActorPose(
+            right, moneyPoint, changePoint, true, 0.25, true, false, 1.0,
+            openbus::app::passengerApproachDuration(moneyPoint, changePoint) * 0.5);
+        require(walkingToChangePoint.walking,
+                "ticket passenger walks from the money point to the change point");
+        requireNear(walkingToChangePoint.pose.position[1], 25.5,
+                    "change-point movement follows the walking duration");
+        const auto waitingForChange = openbus::app::passengerTicketTransactionActorPose(
+            right, moneyPoint, changePoint, true, 0.25, true, true, 1.0, 2.0);
+        require(!waitingForChange.walking,
+                "ticket passenger waits at the change point for the transaction");
+        requireNear(waitingForChange.pose.position[1], 27.0,
+                    "ticket passenger waits at the configured change point");
     }
     {
         VehicleConfig cabin;

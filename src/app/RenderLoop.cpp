@@ -1118,6 +1118,8 @@ void RenderLoop::ResetForStartupMenu() {
     scheduledPassengerHumanMassesKg_.clear();
     passengerTicketPack_ = {};
     passengerCurrency_ = {};
+    passengerCoinAnimations_.clear();
+    observedPassengerCoinCounts_.clear();
     passengerNetwork_ = {};
     passengerTimetableCourses_.clear();
     playerTimetableCatalog_.invalidate();
@@ -1200,6 +1202,8 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     }
     passengerTicketPack_ = {};
     passengerCurrency_ = {};
+    passengerCoinAnimations_.clear();
+    observedPassengerCoinCounts_.clear();
     passengerApproachProgress_.clear();
     reportedPassengerTicketStops_.clear();
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
