@@ -1135,6 +1135,11 @@ void RenderLoop::ResetForStartupMenu() {
     reportedPassengerDriftStops_.clear();
     passengerPedestrianPaths_.clear();
     passengerApproachProgress_.clear();
+    passengerQueueApproachProgress_.clear();
+    passengerPedestrianQueuePositions_.clear();
+    passengerPedestrianQueuePositionsPrepared_ = false;
+    passengerHeldQueuePositions_.clear();
+    passengerRenderedQueuePositions_.clear();
     reportedPassengerTicketStops_.clear();
     playerPassengerStopLatch_.reset();
     playerPassengerStopLatchRouteIndex_.reset();
@@ -1144,7 +1149,7 @@ void RenderLoop::ResetForStartupMenu() {
     activePlayerPassengerStopIndex_.reset();
     playerPassengerServiceRouteIndex_.reset();
     playerPassengerServiceNextStopIndex_ = 0;
-    playerTimetableStopVisitLatchPosition_.reset();
+    playerTimetableStopVisitLatch_.reset();
     ++playerPassengerServiceGeneration_;
     mapRenderer_.reset();
     vehicleCameras_.clear();
@@ -1205,6 +1210,11 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     passengerCoinAnimations_.clear();
     observedPassengerCoinCounts_.clear();
     passengerApproachProgress_.clear();
+    passengerQueueApproachProgress_.clear();
+    passengerPedestrianQueuePositions_.clear();
+    passengerPedestrianQueuePositionsPrepared_ = false;
+    passengerHeldQueuePositions_.clear();
+    passengerRenderedQueuePositions_.clear();
     reportedPassengerTicketStops_.clear();
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");

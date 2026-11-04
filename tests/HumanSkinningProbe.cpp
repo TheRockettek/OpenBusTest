@@ -33,7 +33,7 @@ void runProbe() {
                   {"unbound", {{0, 1.0F}}}};
     const auto resolved = resolveHumanSkinWeights(mesh, {{"LEFT", -2}, {"right", -3}});
     require(resolved.hasWeights && resolved.invalidRecords == 3 && resolved.unboundBones == 1 &&
-                resolved.unweightedVertices == 1,
+                resolved.unweightedVertices == 1 && !hasCompleteHumanSkinWeights(resolved),
             "weight diagnostics did not report invalid and unweighted records");
     require(near(resolved.vertices[0][0], 0.5) && near(resolved.vertices[0][1], 0.5) &&
                 near(resolved.vertices[1][0], 1.0) && near(resolved.vertices[2][1], 1.0) &&
@@ -42,6 +42,12 @@ void runProbe() {
     const auto conflict = resolveHumanSkinWeights(mesh, {{"left", -2}, {"LEFT", -3}});
     require(conflict.invalidRecords > 0 && !conflict.hasWeights,
             "conflicting bone bindings were accepted");
+    ParsedObj completeMesh;
+    completeMesh.positions.resize(1);
+    completeMesh.bones = {{"root", {{0, 1.0F}}}};
+    const auto complete = resolveHumanSkinWeights(completeMesh, {{"root", -2}});
+    require(hasCompleteHumanSkinWeights(complete),
+            "complete skin weights remain eligible for bone animation");
 
     openbus::config::HumanConfig config;
     config.numericRecords.push_back({"links",

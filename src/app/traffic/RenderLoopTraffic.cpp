@@ -1495,6 +1495,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     auto& approach = passengerApproachProgress_[trafficVehicle.vehicle];
                     approach = {};
                     approach.stopId = stop.stopId;
+                    passengerQueueApproachProgress_.erase(trafficVehicle.vehicle);
                     trafficVehicle.vehicle->variables.set("ai_scheduled_atstation", 1.0F);
                     trafficVehicle.actor.scheduledStopDistanceMeters =
                         trafficVehicle.actor.distanceMeters;

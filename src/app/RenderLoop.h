@@ -538,6 +538,9 @@ class RenderLoop {
     std::unordered_set<int> reportedPassengerHandoffStops_;
     std::unordered_set<int> reportedPassengerDriftStops_;
     std::unordered_set<int> reportedPassengerTicketStops_;
+    std::map<int, std::vector<openbus::map::MapTrafficPose>>
+        passengerPedestrianQueuePositions_;
+    bool passengerPedestrianQueuePositionsPrepared_ = false;
     std::map<std::pair<std::size_t, std::size_t>, openbus::map::MapPassengerPedestrianJourney>
         passengerPedestrianPaths_;
     std::optional<int> playerPassengerStopLatch_;
@@ -549,6 +552,8 @@ class RenderLoop {
     struct PassengerApproachProgress {
         int stopId = 0;
         std::size_t modelIndex = 0;
+        std::size_t routeIndex = 0;
+        std::size_t stopCallIndex = 0;
         double elapsedSeconds = 0.0;
         bool ticketSaleStarted = false;
         bool ticketBought = false;
@@ -573,9 +578,23 @@ class RenderLoop {
         double ticketWaitSeconds = 0.0;
     };
     std::unordered_map<Vehicle*, PassengerApproachProgress> passengerApproachProgress_;
+    struct PassengerQueueApproachProgress {
+        int stopId = 0;
+        std::size_t routeIndex = 0;
+        std::size_t stopCallIndex = 0;
+        double elapsedSeconds = 0.0;
+    };
+    std::unordered_map<Vehicle*,
+                       std::unordered_map<std::size_t, PassengerQueueApproachProgress>>
+        passengerQueueApproachProgress_;
+    std::map<std::pair<int, std::size_t>, openbus::map::MapTrafficPose>
+        passengerHeldQueuePositions_;
+    std::map<std::pair<int, std::size_t>, openbus::map::MapTrafficPose>
+        passengerRenderedQueuePositions_;
     std::optional<std::size_t> playerPassengerServiceRouteIndex_;
     std::size_t playerPassengerServiceNextStopIndex_ = 0;
-    std::optional<std::array<double, 2>> playerTimetableStopVisitLatchPosition_;
+    std::optional<openbus::app::PlayerTimetableStopVisitLatch>
+        playerTimetableStopVisitLatch_;
     std::uint64_t playerPassengerServiceGeneration_ = 0;
     std::uint64_t activePlayerPassengerStopServiceGeneration_ = 0;
     void publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,

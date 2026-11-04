@@ -861,48 +861,21 @@ RenderLoop::passengerQueuePose(int stopId, std::size_t queueSlot) const {
     if (authored != authoredPassengerPositions_.end() && !authored->second.empty()) {
         return authored->second[queueSlot % authored->second.size()];
     }
-    for (const PassengerStopRouteState& route : passengerNetwork_.routes) {
-        for (std::size_t stopIndex = 0; stopIndex < route.stops.size(); ++stopIndex) {
-            if (route.stops[stopIndex].stopId != stopId) {
-                continue;
-            }
-            auto pose = route.stopPose(stopIndex);
-            if (!pose) {
-                continue;
-            }
-            if (const auto editorPosition = mapRenderer_->editorOnlyBusStopPosition(stopId)) {
-                pose->position = *editorPosition;
-            }
-            return openbus::app::passengerStopCallQueuePose(
-                *pose, mapRenderer_->leftHandTraffic(), queueSlot);
-        }
+    const auto pedestrian = passengerPedestrianQueuePositions_.find(stopId);
+    if (pedestrian != passengerPedestrianQueuePositions_.end() &&
+        !pedestrian->second.empty()) {
+        return pedestrian->second[queueSlot % pedestrian->second.size()];
     }
     return std::nullopt;
 }
 
 std::optional<openbus::map::MapTrafficPose>
 RenderLoop::passengerQueuePose(int stopId, const openbus::app::WaitingPassenger& passenger) const {
-    if (!passenger.journey || mapRenderer_ == nullptr ||
-        passenger.journey->routeIndex >= passengerNetwork_.routes.size()) {
-        return passengerQueuePose(stopId, passenger.queueSlot);
+    const auto held = passengerHeldQueuePositions_.find({stopId, passenger.modelIndex});
+    if (held != passengerHeldQueuePositions_.end()) {
+        return held->second;
     }
-    const auto& route = passengerNetwork_.routes[passenger.journey->routeIndex];
-    const std::size_t originIndex = passenger.journey->originStopIndex;
-    if (originIndex >= route.stops.size()) {
-        return passengerQueuePose(stopId, passenger.queueSlot);
-    }
-    auto callPose = route.stopPose(originIndex);
-    if (!callPose) {
-        return passengerQueuePose(stopId, passenger.queueSlot);
-    }
-    const auto sharedPose = passengerQueuePose(stopId, passenger.queueSlot);
-    if (sharedPose &&
-        std::hypot(sharedPose->position[0] - callPose->position[0],
-                   sharedPose->position[1] - callPose->position[1]) <= 5.0) {
-        return sharedPose;
-    }
-    return openbus::app::passengerStopCallQueuePose(
-        *callPose, mapRenderer_->leftHandTraffic(), passenger.queueSlot);
+    return passengerQueuePose(stopId, passenger.queueSlot);
 }
 
 void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
@@ -1325,6 +1298,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     const auto queuePose = [this](int stopId, std::size_t queueSlot) {
         return passengerQueuePose(stopId, queueSlot);
     };
+    if (!renderingReflection_) {
+        passengerRenderedQueuePositions_.clear();
+    }
+    std::map<std::pair<int, std::size_t>, openbus::map::MapTrafficPose>
+        renderedWaitingPassengerPoses;
     struct ScheduledStopRenderCandidate {
         const openbus::map::MapTrafficPassengerStop* stop = nullptr;
         double cameraDistance = std::numeric_limits<double>::infinity();
@@ -1379,12 +1357,22 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                               activePlayerPassengerStopRouteIndex_ == routeIndex &&
                                               activePlayerPassengerStopIndex_ == stopIndex;
                 const bool activelyServed = activeAiCall || activePlayerCall;
+                const bool playerLineCall =
+                    playerPassengerServiceRouteIndex_ == routeIndex ||
+                    activePlayerPassengerStopRouteIndex_ == routeIndex;
                 const auto candidate = stopCandidates.find(stop.stopId);
-                if (candidate != stopCandidates.end() &&
-                    (candidate->second.activelyServed > activelyServed ||
-                     (candidate->second.activelyServed == activelyServed &&
-                      candidate->second.cameraDistance <= cameraDistance))) {
-                    continue;
+                if (candidate != stopCandidates.end()) {
+                    const bool existingPlayerLineCall =
+                        playerPassengerServiceRouteIndex_ == candidate->second.routeIndex ||
+                        activePlayerPassengerStopRouteIndex_ == candidate->second.routeIndex;
+                    if (candidate->second.activelyServed > activelyServed ||
+                        (candidate->second.activelyServed == activelyServed &&
+                         existingPlayerLineCall > playerLineCall) ||
+                        (candidate->second.activelyServed == activelyServed &&
+                         existingPlayerLineCall == playerLineCall &&
+                         candidate->second.cameraDistance <= cameraDistance)) {
+                        continue;
+                    }
                 }
                 stopCandidates[stop.stopId] = {&stop, cameraDistance, activelyServed,
                                                routeIndex, stopIndex};
@@ -1487,31 +1475,65 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         if (!passengerPose) {
                             continue;
                         }
+                        const PassengerQueueApproachProgress* playerQueueApproach = nullptr;
+                        if (playerVehicle_ && passengers[passenger].journey &&
+                            passengers[passenger].journey->routeIndex == candidate.routeIndex &&
+                            passengers[passenger].journey->originStopIndex ==
+                                candidate.stopIndex) {
+                            const auto approaches =
+                                passengerQueueApproachProgress_.find(playerVehicle_);
+                            if (approaches != passengerQueueApproachProgress_.end()) {
+                                const auto riderApproach =
+                                    approaches->second.find(passengers[passenger].modelIndex);
+                                if (riderApproach != approaches->second.end() &&
+                                    riderApproach->second.stopId == stopId &&
+                                    riderApproach->second.routeIndex == candidate.routeIndex &&
+                                    riderApproach->second.stopCallIndex == candidate.stopIndex) {
+                                    playerQueueApproach = &riderApproach->second;
+                                }
+                            }
+                        }
                         double gaitWeight = waitingPassengerIdleGaitWeight;
                         Vehicle* approachVehicle =
                             activePlayerCall
                                 ? playerVehicle_
-                                : activeAiVehicle ? activeAiVehicle->vehicle : nullptr;
+                                : activeAiVehicle ? activeAiVehicle->vehicle
+                                                  : playerQueueApproach ? playerVehicle_ : nullptr;
                         const auto approach = passengerApproachProgress_.find(approachVehicle);
-                        const bool isApproaching =
+                        const auto queueApproaches =
+                            passengerQueueApproachProgress_.find(approachVehicle);
+                        const PassengerQueueApproachProgress* queueApproach = nullptr;
+                        if (queueApproaches != passengerQueueApproachProgress_.end()) {
+                            const auto riderApproach =
+                                queueApproaches->second.find(passengers[passenger].modelIndex);
+                            if (riderApproach != queueApproaches->second.end() &&
+                                riderApproach->second.stopId == stopId &&
+                                riderApproach->second.routeIndex == candidate.routeIndex &&
+                                riderApproach->second.stopCallIndex == candidate.stopIndex) {
+                                queueApproach = &riderApproach->second;
+                            }
+                        }
+                        const bool hasSelectedApproach =
                             approach != passengerApproachProgress_.end() &&
                             approach->second.stopId == stopId &&
-                            approach->second.modelIndex == passengers[passenger].modelIndex;
-                        if (activePlayerCall && isApproaching &&
+                            approach->second.modelIndex == passengers[passenger].modelIndex &&
+                            approach->second.routeIndex == candidate.routeIndex &&
+                            approach->second.stopCallIndex == candidate.stopIndex;
+                        if (activePlayerCall && queueApproach &&
                             passengerNetwork_.passengerMatchesService(
                                 passengers[passenger], *activePlayerPassengerStopRouteIndex_,
                                 playerVehicle_->passengers->service, candidate.stopIndex)) {
                             const auto destination = playerPassengerDoorQueuePose(
                                 *playerVehicle_, chassis, mapRenderer_->leftHandTraffic(),
                                 queueSlot);
-                            gaitWeight = approach->second.elapsedSeconds <
+                            gaitWeight = queueApproach->elapsedSeconds <
                                                  passengerApproachDuration(*passengerPose,
                                                                            destination)
                                              ? 1.0
                                              : waitingPassengerIdleGaitWeight;
                             passengerPose = passengerApproachPose(
-                                *passengerPose, destination, approach->second.elapsedSeconds);
-                            if (approach->second.ticketBought) {
+                                *passengerPose, destination, queueApproach->elapsedSeconds);
+                            if (hasSelectedApproach && approach->second.ticketBought) {
                                 const auto& cabin = playerVehicle_->passengers->configuration();
                                 openbus::map::MapTrafficPose busPose;
                                 busPose.position = transformLocalPoint(
@@ -1581,7 +1603,18 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                         approach->second.ticketMachineReturnSeconds);
                                 }
                             }
-                        } else if (activeAiVehicle && isApproaching &&
+                        } else if (playerQueueApproach && queueApproach) {
+                            const auto destination = playerPassengerDoorQueuePose(
+                                *playerVehicle_, chassis, mapRenderer_->leftHandTraffic(),
+                                queueSlot);
+                            gaitWeight = queueApproach->elapsedSeconds <
+                                                 passengerApproachDuration(*passengerPose,
+                                                                           destination)
+                                             ? 1.0
+                                             : waitingPassengerIdleGaitWeight;
+                            passengerPose = passengerApproachPose(
+                                *passengerPose, destination, queueApproach->elapsedSeconds);
+                        } else if (activeAiVehicle && queueApproach &&
                                    passengerNetwork_.passengerMatchesService(
                                        passengers[passenger], candidate.routeIndex,
                                        activeAiVehicle->vehicle->passengers->service,
@@ -1608,14 +1641,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                     activeAiVehicle->vehicle->trafficWidthMeters,
                                     mapRenderer_->leftHandTraffic(), queueSlot);
                             }
-                            gaitWeight = approach->second.elapsedSeconds <
+                            gaitWeight = queueApproach->elapsedSeconds <
                                                  passengerApproachDuration(*passengerPose,
                                                                            *destination)
                                              ? 1.0
                                              : waitingPassengerIdleGaitWeight;
                             passengerPose = passengerApproachPose(
-                                *passengerPose, *destination, approach->second.elapsedSeconds);
-                            if (approach->second.ticketBought) {
+                                *passengerPose, *destination, queueApproach->elapsedSeconds);
+                            if (hasSelectedApproach && approach->second.ticketBought) {
                                 const auto& cabin =
                                     activeAiVehicle->vehicle->passengers->configuration();
                                 const auto origin = passengerTicketSaleOriginPose(
@@ -1686,6 +1719,16 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         }
                         const std::size_t modelIndex = passengers[passenger].modelIndex %
                                                        scheduledPassengerHumanModels_.size();
+                        if (!renderingReflection_) {
+                            passengerRenderedQueuePositions_[{stopId,
+                                                              passengers[passenger].modelIndex}] =
+                                *passengerPose;
+                        }
+                        if (!renderingReflection_ && trafficSplineDebugOverlay_) {
+                            renderedWaitingPassengerPoses[{stopId,
+                                                           passengers[passenger].modelIndex}] =
+                                *passengerPose;
+                        }
                         mapRenderer_->drawHumanTrafficActor(
                             scheduledPassengerHumanModels_[modelIndex], *passengerPose,
                             simulation.simulationTime() *
@@ -2373,27 +2416,25 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
         }
         for (const auto& [stopId, candidate] : stopCandidates) {
-            const auto authored = authoredPassengerPositions_.find(stopId);
-            if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
+            const auto& waitingPassengers = passengerNetwork_.waitingPassengers(stopId);
+            if (waitingPassengers.empty()) {
+                if (const auto pose = passengerQueuePose(stopId, 0)) {
+                    appendTrafficBehaviorBox(behaviorVertices, *pose, 0.4, 0.4, 1.8,
+                                             {0.25F, 1.0F, 0.45F}, trafficDebugOrigin);
+                }
                 continue;
             }
-            const std::size_t waiting = passengerNetwork_.queues.at(stopId);
-            const auto initialQueue = passengerNetwork_.initialQueues.find(stopId);
-            const std::size_t initialCount = initialQueue == passengerNetwork_.initialQueues.end()
-                                                 ? waiting
-                                                 : std::max(initialQueue->second, waiting);
-            const std::size_t markerCount = std::max<std::size_t>(waiting, 1);
-            for (std::size_t passenger = 0; passenger < markerCount; ++passenger) {
-                const std::size_t queueSlot =
-                    waiting == 0
-                        ? 0
-                        : openbus::map::mapScheduledPassengerQueueSlot(initialCount, passenger);
-                const auto pose = queuePose(stopId, queueSlot);
-                if (!pose) {
-                    continue;
+            for (const auto& passenger : waitingPassengers) {
+                const auto rendered =
+                    renderedWaitingPassengerPoses.find({stopId, passenger.modelIndex});
+                const auto pose =
+                    rendered != renderedWaitingPassengerPoses.end()
+                        ? std::optional{rendered->second}
+                        : passengerQueuePose(stopId, passenger);
+                if (pose) {
+                    appendTrafficBehaviorBox(behaviorVertices, *pose, 0.4, 0.4, 1.8,
+                                             {0.25F, 1.0F, 0.45F}, trafficDebugOrigin);
                 }
-                appendTrafficBehaviorBox(behaviorVertices, *pose, 0.4, 0.4, 1.8,
-                                         {0.25F, 1.0F, 0.45F}, trafficDebugOrigin);
             }
         }
         for (const ActiveSceneryTrafficSegment& activeSegment : activeSceneryTrafficSegments) {
@@ -3207,7 +3248,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 }
                 ImGui::NewLine();
                 ImGui::TextUnformatted("Path arrows = travel direction; white arrows = AI facing");
-                ImGui::TextUnformatted("Green boxes = passenger queue slots (within 75 m)");
+                ImGui::TextUnformatted("Green boxes = passenger positions (within 75 m)");
                 ImGui::TextUnformatted("Amber = editor bus stop; cyan = editor passenger area");
                 ImGui::End();
             }
@@ -3617,20 +3658,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 drawWorldLabel(labelPosition, label, phaseColor, IM_COL32(20, 24, 28, 230));
             }
             for (const auto& [stopId, candidate] : stopCandidates) {
-                const auto authored = authoredPassengerPositions_.find(stopId);
-                if (authored == authoredPassengerPositions_.end() || authored->second.empty()) {
-                    continue;
-                }
                 const std::size_t waiting = passengerNetwork_.queues.at(stopId);
-                const auto initialQueue = passengerNetwork_.initialQueues.find(stopId);
-                const std::size_t initialCount =
-                    initialQueue == passengerNetwork_.initialQueues.end()
-                        ? waiting
-                        : std::max(initialQueue->second, waiting);
-                const auto pose =
-                    queuePose(stopId, waiting == 0 ? 0
-                                                   : openbus::map::mapScheduledPassengerQueueSlot(
-                                                         initialCount, waiting - 1));
+                const auto& waitingPassengers = passengerNetwork_.waitingPassengers(stopId);
+                std::optional<openbus::map::MapTrafficPose> pose;
+                if (waitingPassengers.empty()) {
+                    pose = passengerQueuePose(stopId, 0);
+                } else {
+                    const auto& passenger = waitingPassengers.back();
+                    const auto rendered = renderedWaitingPassengerPoses.find(
+                        {stopId, passenger.modelIndex});
+                    pose = rendered != renderedWaitingPassengerPoses.end()
+                               ? std::optional{rendered->second}
+                               : passengerQueuePose(stopId, passenger);
+                }
                 if (!pose) {
                     continue;
                 }

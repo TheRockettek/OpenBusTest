@@ -21,6 +21,11 @@ struct HumanSkinWeights {
     bool hasWeights = false;
 };
 
+inline bool hasCompleteHumanSkinWeights(const HumanSkinWeights& skin) noexcept {
+    return skin.hasWeights && skin.invalidRecords == 0 && skin.unboundBones == 0 &&
+           skin.unweightedVertices == 0;
+}
+
 struct HumanJoints {
     std::array<double, 3> hip = {};
     std::array<double, 3> knee = {};

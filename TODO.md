@@ -223,9 +223,13 @@ recognized but incomplete semantics.
   ambient AI pedestrian cap. Scheduled AI departures replenish depleted
   queues to their initial size, and player buses replenish the served stop
   after departing; both preserve larger queues when demand remains. Reserved
-  boarders animate from the roadside flank queue position through the configured
-  cabin path into their assigned seat on
-  both scheduled AI and player buses; the same passenger model identity is
+  riders spawn at their assigned authored waiting-area positions, even when
+  those positions are set back from the route; F2 markers follow their live
+  positions. Riders stay at their last rendered positions if the player
+  departs before they board. Boarders animate from the roadside flank queue
+  position through the configured cabin path into their assigned seat on both
+  scheduled AI and player buses; the same passenger model identity is
+  AI and player buses; the same passenger model identity is
   retained from the queue through boarding, the occupied seat, and alighting.
   Queue display and service reservation share stable rider and slot records;
   each bus selects its oldest matching rider without moving other riders.
@@ -294,18 +298,22 @@ recognized but incomplete semantics.
     route variant from boarding a rider assigned elsewhere, and journey records
     retain exact origin/destination call indices. Queue storage is still shared
     by stop ID, but repeated calls in one route now place riders beside their
-    assigned call. Shared counts/reservations across different route calls and
-    courses sharing one registered route remain indistinguishable.
-  - [ ] Have waiting passengers approach a nearby expected bus while it is
-    moving without entering the road, and permit a safe road crossing only
-    once it has stopped. Replace direct interpolation with road-aware walking
-    for player and scheduled AI buses.
-  - [~] Player-bus waiting positions form a single line beside the entry.
-    Scheduled AI passengers now approach the entry queue only after their bus
-    has stopped; player and AI approaches retain a single active rider and
-    wait outside the door for it to open. Validate spacing, queue ordering and
-    single-passenger, door-gated boarding in game. Approaching a moving bus
-    still needs road-aware pedestrian routing and crossing safety.
+    assigned call with regression coverage for call separation and queue spacing.
+    Shared counts/reservations across different route calls and courses sharing
+    one registered route remain indistinguishable.
+  - [~] Waiting passengers on the player's line begin approaching the bus within
+    20 m of any located stop, including calls outside the current service order.
+    When stopped, service can activate at any matching line stop. Riders hold
+    their last rendered positions when the bus leaves range; boarding remains
+    door/service-gated. Replace direct interpolation with road-aware walking and
+    validate movement alongside the bus in game.
+  - [~] Eligible riders approach distinct entry queue slots concurrently once
+    the bus stops; ticket handling and boarding remain serialized, and movement
+    pauses while alighters use the exit. Riders retain their last rendered
+    positions if the player departs before they board. Spawn points use
+    authored waiting areas or nearby pedestrian splines; no road-side fallback
+    is used when neither is available. Proximity approaches still use direct
+    interpolation and need road-aware pedestrian routing and visual validation.
   - [~] Ticket packs now retain purchase/stamping probabilities and ticket
     names, values, age limits and station limits. Eligible riders may buy the
     cheapest ticket and visibly walk to the first configured machine and any
@@ -328,8 +336,9 @@ recognized but incomplete semantics.
     and fallback destinations retain their originally assigned world position.
     Equivalent services must have a nearby matching destination stop, and
     player-bus exits are rechecked during alighting if the bus drifts. Resolve
-    forced terminal or cancelled-service unloading outside the limit; validate
-    this in game.
+    terminal and cancelled-service unloading is forced even outside the normal
+    destination radius; a runtime regression covers a cancelled rider whose
+    destination is 1 km away. Validate forced exits in game.
   - [~] The active alighter can stand and approach a connected exit while it
     is closed, stopping up to 0.5 m short of the door along the path. Queued
     alighters now walk toward spaced waiting positions concurrently; only the
@@ -342,9 +351,11 @@ recognized but incomplete semantics.
     while retaining the 0.5 m distance, height and curb-side checks. Otherwise
     they disappear. Validate this conservatively constrained handoff in game
     and support additional safe sidewalk layouts.
-  - [ ] Add focused regression coverage and an in-game end-to-end validation
-    for the journey, including moving-bus road safety, ticketing, the 200 m
-    destination rule, concurrent alighting, and spline handoff.
+  - [~] Focused probes cover ticketing, the 200 m destination rule, concurrent
+    door-gated alighting, and conservative spline handoffs. An integrated
+    runtime regression now follows an assigned rider from boarding through the
+    destination request, alighting, and pedestrian handoff. Validate the full
+    journey and proximity approaches in game.
 
 - [~] The on-foot panel now selects a mapped line, ordered `.ttl` course,
   course trip, and first passenger-service stop. Player service follows that

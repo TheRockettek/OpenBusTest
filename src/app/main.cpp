@@ -31,6 +31,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -2085,6 +2086,27 @@ int main() {
             bool captureOnStartup = openbus::rendering::parseEnabledFlag(
                 openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS"));
             bool pendingCaptureRequest = captureOnStartup;
+            const auto waitForMapGeometry = [&](double worldX, double worldY) {
+                const int tileX =
+                    openbus::map::mapWorldTile(worldX, mapDefinition.coordinates.tileSize);
+                const int tileY =
+                    openbus::map::mapWorldTile(worldY, mapDefinition.coordinates.tileSize);
+                const std::pair<int, int> targetTile{tileX, tileY};
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::seconds(60);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    renderer.updateMapStreaming(worldX, worldY);
+                    auto loadedTiles = renderer.loadedMapTiles();
+                    if (std::find(loadedTiles.begin(), loadedTiles.end(), targetTile) !=
+                        loadedTiles.end()) {
+                        return loadedTiles;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                throw std::runtime_error(
+                    "Map geometry did not become resident for tile (" +
+                    std::to_string(tileX) + "," + std::to_string(tileY) + ")");
+            };
 
             while (!renderer.shouldClose()) {
                 openbus::rendering::TraceScope frameTrace("frame", "main");
@@ -2112,10 +2134,9 @@ int main() {
                             modelConfigurationPathForBusFromConfig(playerBusConfigPath);
                         BusConfiguration replacementConfiguration =
                             loadBusConfiguration(playerBusConfigPath, busModelConfig);
-                        renderer.updateMapStreaming(teleportRequest->position[0],
-                                                    teleportRequest->position[1]);
                         const std::vector<std::pair<int, int>> teleportGeometryTiles =
-                            renderer.loadedMapTiles();
+                            waitForMapGeometry(teleportRequest->position[0],
+                                               teleportRequest->position[1]);
                         collisionStreamer->update(teleportRequest->position[0],
                                                   teleportRequest->position[1],
                                                   teleportGeometryTiles);
@@ -2177,9 +2198,8 @@ int main() {
                         modelConfigurationPathForBusFromConfig(playerBusConfigPath);
                     BusConfiguration replacementConfiguration =
                         loadBusConfiguration(playerBusConfigPath, playerModelConfig);
-                    renderer.updateMapStreaming(placement.position[0], placement.position[1]);
                     const std::vector<std::pair<int, int>> removalGeometryTiles =
-                        renderer.loadedMapTiles();
+                        waitForMapGeometry(placement.position[0], placement.position[1]);
                     collisionStreamer->update(placement.position[0], placement.position[1],
                                               removalGeometryTiles);
                     collisionStreamer->waitForTileCollision(
@@ -2208,10 +2228,9 @@ int main() {
                     openbus::rendering::TraceScope spawnTrace("startup",
                                                               "main.spawnSelectedMapBus");
                     try {
-                        renderer.updateMapStreaming(spawnRequest->placement.position[0],
-                                                    spawnRequest->placement.position[1]);
                         const std::vector<std::pair<int, int>> spawnGeometryTiles =
-                            renderer.loadedMapTiles();
+                            waitForMapGeometry(spawnRequest->placement.position[0],
+                                               spawnRequest->placement.position[1]);
                         collisionStreamer->update(spawnRequest->placement.position[0],
                                                   spawnRequest->placement.position[1],
                                                   spawnGeometryTiles);

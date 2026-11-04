@@ -177,7 +177,9 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             }
             const GLuint weightBuffer = canSit && batch.seatedSkinWeightBuffer != 0
                                             ? batch.seatedSkinWeightBuffer
-                                            : batch.skinWeightBuffer;
+                                        : model->second.standingSkinningReliable
+                                            ? batch.skinWeightBuffer
+                                            : 0;
             const HumanSkinDraw skin{weightBuffer, palette ? &*palette : nullptr};
             drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
                            batch.alpha, batch.alphaMode, batch.cullBackFaces, gait, 1.0,

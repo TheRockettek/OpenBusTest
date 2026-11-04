@@ -26,7 +26,7 @@ void RenderLoop::SetPlayerTimetableSelection(
         throw std::invalid_argument("Player timetable route does not match the spawned bus's HOF");
     }
     clearPlayerTripAiPolicy();
-    playerTimetableStopVisitLatchPosition_.reset();
+    playerTimetableStopVisitLatch_.reset();
     if (playerVehicle_ && playerVehicle_->passengers && activePlayerPassengerStop_) {
         auto& service = playerVehicle_->passengers->service;
         const auto queue = passengerNetwork_.queues.find(*activePlayerPassengerStop_);

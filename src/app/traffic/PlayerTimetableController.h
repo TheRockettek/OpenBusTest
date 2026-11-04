@@ -4,6 +4,7 @@
 #include "map/MapConfigLoader.h"
 #include "config/HofData.h"
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -87,6 +88,16 @@ struct PlayerTimetableState {
     std::string lineName;
     bool stopAfterCurrentTrip = false;
 };
+
+struct PlayerTimetableStopVisitLatch {
+    std::size_t stopIndex = 0;
+    std::array<double, 2> position{};
+};
+
+// Returns the visited stop only after the bus leaves its arrival-radius latch.
+std::optional<std::size_t> releasePlayerTimetableStopVisit(
+    std::optional<PlayerTimetableStopVisitLatch>& latch, std::size_t nextStopIndex,
+    const std::array<double, 3>& busPosition, double releaseRadiusMeters);
 
 class PlayerTimetableController {
   public:

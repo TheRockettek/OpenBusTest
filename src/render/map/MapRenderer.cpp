@@ -796,6 +796,7 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     std::vector<Impl::ModelBatch> batches;
     std::vector<std::filesystem::path> texturePaths;
     std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
+    bool standingSkinningReliable = joints.has_value();
     const auto drainGlErrors = [] {
         GLenum firstError = GL_NO_ERROR;
         for (;;) {
@@ -826,10 +827,21 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                 ", unbound bones=" + std::to_string(skin.unboundBones) +
                                 ", unweighted vertices=" + std::to_string(skin.unweightedVertices));
             }
+            if (!hasCompleteHumanSkinWeights(skin)) {
+                standingSkinningReliable = false;
+            }
+            if (skin.hasWeights && !hasCompleteHumanSkinWeights(skin)) {
+                gameLog.Warning("Using procedural gait instead of incomplete bone skinning for " +
+                                openbus::pathToUtf8(part.objPath));
+                skin.hasWeights = false;
+            }
         } else if (!parsedPart.mesh->bones.empty() || !part.boneBindings.empty()) {
+            standingSkinningReliable = false;
             gameLog.Warning("Human mesh cannot use bone skinning without valid [links] and bone "
                             "bindings: " +
                             openbus::pathToUtf8(part.objPath));
+        } else {
+            standingSkinningReliable = false;
         }
         const bool inferSeatedWeights = !skin.hasWeights || skin.unweightedVertices != 0;
         if (inferSeatedWeights) {
@@ -1057,6 +1069,7 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     asset.textureImages = std::move(textureImages);
     asset.gait = gait;
     asset.joints = joints;
+    asset.standingSkinningReliable = standingSkinningReliable;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {
         asset.batchIndexes.push_back(impl_->sceneryBatches.size());

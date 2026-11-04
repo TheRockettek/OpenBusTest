@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -152,6 +153,31 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
                                                    const PreparedHof& hof);
 
 } // namespace
+
+std::optional<std::size_t> releasePlayerTimetableStopVisit(
+    std::optional<PlayerTimetableStopVisitLatch>& latch, std::size_t nextStopIndex,
+    const std::array<double, 3>& busPosition, double releaseRadiusMeters) {
+    if (!std::ranges::all_of(busPosition, [](double value) { return std::isfinite(value); }) ||
+        !std::isfinite(releaseRadiusMeters) || releaseRadiusMeters < 0.0 ||
+        (latch && !std::ranges::all_of(latch->position,
+                                       [](double value) { return std::isfinite(value); }))) {
+        throw std::invalid_argument("Player timetable stop visit requires finite positions");
+    }
+    if (!latch) {
+        return std::nullopt;
+    }
+    if (latch->stopIndex != nextStopIndex) {
+        latch.reset();
+        return std::nullopt;
+    }
+    if (std::hypot(latch->position[0] - busPosition[0],
+                   latch->position[1] - busPosition[1]) <= releaseRadiusMeters) {
+        return std::nullopt;
+    }
+    const std::size_t completedStopIndex = latch->stopIndex;
+    latch.reset();
+    return completedStopIndex;
+}
 
 bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
                               const openbus::config::HofData& hof) {

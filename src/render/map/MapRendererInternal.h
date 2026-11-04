@@ -281,6 +281,7 @@ struct MapRenderer::Impl {
         std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
         HumanGaitParameters gait;
         std::optional<HumanJoints> joints;
+        bool standingSkinningReliable = false;
     };
 
     struct HumanModelConfiguration {
