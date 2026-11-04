@@ -2,6 +2,7 @@
 
 #include "app/vehicle/Vehicle.h"
 #include "app/vehicle/PassengerRequestVariables.h"
+#include "app/vehicle/VehicleMaterialSelection.h"
 
 #include <numbers>
 
@@ -307,13 +308,8 @@ void Vehicle::load(const SharedVehicleDefinition& definition) {
             {parsedEnd != light.controller.c_str() && *parsedEnd == '\0', numericValue});
     }
     lodThresholds = result.lodThresholds;
-    ctcTextureReplacements.clear();
-    for (const ModelCtcTexture& texture : result.ctcTextures) {
-        ctcTextureReplacements[lower(texture.slot)] = texture.textureName;
-    }
-    for (const auto& [slot, textureName] : setupOptions.ctcTextureReplacements) {
-        ctcTextureReplacements[lower(slot)] = textureName;
-    }
+    ctcTextureReplacements = openbus::app::vehicle::buildCtcTextureReplacements(
+        result.ctcTextures, setupOptions.ctcTextureReplacements);
     if (loadSharedDisplayLists()) {
         return;
     }

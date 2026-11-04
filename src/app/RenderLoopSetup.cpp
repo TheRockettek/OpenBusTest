@@ -433,13 +433,25 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
         std::min(selectedMapSpawnEntryPointIndex_, mapEntryPoints_.size() - 1);
     request.placement = mapEntryPoints_[selectedMapSpawnEntryPointIndex_].placement;
     request.spawnInBus = mapSpawnInBus_;
-    if (selectedMapAppearanceIndex_ > 0) {
-        const auto& appearance = mapVehicleAppearances_[selectedMapAppearanceIndex_ - 1];
+    const auto applyAppearance = [&](const openbus::config::VehicleAppearance& appearance) {
         request.setupOptions.ctcTextureReplacements = appearance.textureReplacements;
         request.setupOptions.appearanceKey =
             appearance.sourcePath.generic_string() + "|" + appearance.name;
+    };
+    if (selectedMapAppearanceIndex_ > 0) {
+        applyAppearance(mapVehicleAppearances_[selectedMapAppearanceIndex_ - 1]);
     } else {
-        request.setupOptions.appearanceKey = "default";
+        const std::string defaultAppearance =
+            !mapVehicleConfig_->friendlyDefaultPaint.empty()
+                ? mapVehicleConfig_->friendlyDefaultPaint
+                : vehicleCatalog_[selectedMapVehicleIndex_].defaultAppearance;
+        const openbus::config::VehicleAppearance* appearance =
+            openbus::config::findVehicleAppearance(mapVehicleAppearances_, defaultAppearance);
+        if (appearance != nullptr) {
+            applyAppearance(*appearance);
+        } else {
+            request.setupOptions.appearanceKey = "default";
+        }
     }
     const openbus::config::VehicleDepot* depot = nullptr;
     if (mapHofSelectionMode_ == MapHofSelectionMode::Automatic && autoMapDepotIndex_ &&

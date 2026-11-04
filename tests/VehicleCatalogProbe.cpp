@@ -22,10 +22,14 @@ int main() {
     std::ofstream alternativeTexture(textureDirectory / "red.dds");
     alternativeTexture << "texture";
     alternativeTexture.close();
+    std::ofstream defaultTexture(textureDirectory / "default.dds");
+    defaultTexture << "texture";
+    defaultTexture.close();
 
     const std::filesystem::path ctiPath = textureDirectory / "paint.cti";
     std::ofstream cti(ctiPath);
-    cti << "[item]\nRed Livery\nBody\nred.dds\n"
+    cti << "[item]\nDefault Paint\nBody\ndefault.dds\n"
+           "[item]\nRed Livery\nBody\nred.dds\n"
            "[item]\nRed Livery\nInterior\nred.dds\n";
     cti.close();
 
@@ -70,10 +74,15 @@ int main() {
                      [](const openbus::config::VehicleAppearance& appearance) {
                          return appearance.name == "Blue Livery";
                      });
+    const auto* defaultAppearance =
+        openbus::config::findVehicleAppearance(appearances, "default paint");
     const bool passed =
         vehicles.size() == 1 && vehicles[0].manufacturer == "Example Motors" &&
         vehicles[0].type == "City Bus" && vehicles[0].defaultAppearance == "Default Paint" &&
-        appearances.size() == 2 && redAppearance != appearances.end() &&
+        appearances.size() == 3 && defaultAppearance != nullptr &&
+        defaultAppearance->textureReplacements.at("body") ==
+            std::filesystem::absolute(textureDirectory / "default.dds").generic_string() &&
+        redAppearance != appearances.end() &&
         redAppearance->textureReplacements.size() == 2 &&
         redAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(textureDirectory / "red.dds").generic_string() &&

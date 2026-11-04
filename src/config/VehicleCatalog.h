@@ -30,6 +30,9 @@ discoverVehicleCatalog(const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleAppearance>
 discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
                            const std::filesystem::path& vehiclesDirectory);
+const VehicleAppearance*
+findVehicleAppearance(const std::vector<VehicleAppearance>& appearances,
+                      const std::string& name);
 std::vector<VehicleDepot> discoverVehicleDepots(const std::filesystem::path& vehicleConfigPath,
                                                 const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleDepot>

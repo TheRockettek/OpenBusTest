@@ -247,6 +247,17 @@ discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
     return appearances;
 }
 
+const VehicleAppearance*
+findVehicleAppearance(const std::vector<VehicleAppearance>& appearances,
+                      const std::string& name) {
+    const std::string requested = lower(trim(name));
+    const auto appearance = std::find_if(
+        appearances.begin(), appearances.end(), [&](const VehicleAppearance& candidate) {
+            return lower(candidate.name) == requested;
+        });
+    return appearance == appearances.end() ? nullptr : &*appearance;
+}
+
 std::vector<VehicleDepot> discoverVehicleDepots(const std::filesystem::path& vehicleConfigPath,
                                                 const std::filesystem::path& vehiclesDirectory) {
     std::vector<VehicleDepot> depots;

@@ -2,8 +2,23 @@
 
 #include <iostream>
 #include <unordered_map>
+#include <vector>
 
 int main() {
+    const std::vector<ModelCtcTexture> modelTextures = {
+        {"Body", "body.dds"}, {"Interior", "window.bmp"}};
+    const std::unordered_map<std::string, std::string> appearanceReplacements = {
+        {"BODY", "C:/Vehicles/Bus/Texture/Paints/red_body.dds"}};
+    const auto ctcReplacements = openbus::app::vehicle::buildCtcTextureReplacements(
+        modelTextures, appearanceReplacements);
+    if (openbus::app::vehicle::resolveCtcTextureName("BODY.DDS", ctcReplacements) !=
+            "C:/Vehicles/Bus/Texture/Paints/red_body.dds" ||
+        openbus::app::vehicle::resolveCtcTextureName("window.bmp", ctcReplacements) !=
+            "window.bmp") {
+        std::cerr << "CTI slots were not mapped to model CTC texture names\n";
+        return 1;
+    }
+
     const std::unordered_map<std::string, std::string> replacements = {
         {"body.dds", "custom_body.dds"}, {"window.bmp", "custom_window.bmp"}};
     if (openbus::app::vehicle::resolveCtcTextureName("BODY.DDS", replacements) !=

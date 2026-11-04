@@ -19,7 +19,7 @@ These are the known bus-model keyword gaps:
 | `[matl_bumpmap]`, `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]` | Partial | Material loading and shader paths exist, but some controller, blending, binding, or visual-parity behavior remains incomplete. |
 | `[matl_transmap]`, `[matl_alpha]` | Partial | Transmap sampling and alpha mode 2 depth writes work; remaining native visual parity is unverified. |
 | `[matl_item]` | Partial | Controller-based item selection works; independent texture replacement and full native item scope do not. |
-| `[CTC]`, `[CTCTexture]` | Partial | Base-texture substitutions work and template/mapping metadata is serialized; paint-scheme selection and full runtime replacement do not. |
+| `[CTC]`, `[CTCTexture]` | Partial | Startup paint selection maps CTI slots through model default texture names to mesh textures, including a matching default paint when available. Full `[CTC]` template semantics and representative asset parity remain unverified; metadata is serialized. |
 | `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Partial | Variable-length payloads are retained in source order and serialized; count validation and replacement selection are not implemented. |
 | `[rendertype]` | Unsupported in bus models | The keyword is restricted to scenery-object model contexts. |
 | `[fixed]`, `[absheight]` | Partial | Only documented subsets of their model-family transform behavior are active. |

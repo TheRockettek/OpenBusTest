@@ -47,7 +47,8 @@ Interactive startup opens an ImGui setup screen. It lists maps with a
 `Vehicles`. Choose a vehicle by its `[friendlyname]` manufacturer and type, then
 choose its default appearance or a discovered `.cti` livery, a timetable HOF
 source, and a configured number/registration. CTI texture replacements apply to
-the selected vehicle. The **Timetable HOF** setting can automatically choose the
+the selected vehicle, and the default paint uses a matching CTI item when one is
+available. The **Timetable HOF** setting can automatically choose the
 installed HOF that matches the most map timetable routes, including HOFs shipped
 with other bus models; a manual override can select any installed HOF or disable
 HOF loading. The selected HOF path and name are exposed to vehicle scripts as
