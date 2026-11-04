@@ -5,8 +5,13 @@ service runtime. Legacy timetable `[station]` calls that match a scheduled AI
 bus route now constrain its speed, stop the bus, and run the service dwell and
 boarding flow. Station-ID-only trips can form scheduled bus routes when every
 directed station link has a complete ordered path. Player buses can board and
-alight at mapped calls when stationary and aligned with their approach
-direction. Passengers board with the next stop as their destination and alight
+alight at mapped calls when stationary, aligned with their approach direction,
+and within 20 metres of the stop. Waiting passengers walk from their authored
+waiting positions to the actual front entry and remain there until the entry
+door's `pax_entryN_open` variable is set. Exiting similarly requires an open
+`pax_exitN_open` door. The player stop remains active until the bus moves away;
+an interrupted boarder returns to the shared queue. Passengers board with the
+next stop as their destination and alight
 there; any riders remaining at a route's final mapped call alight before the
 scheduled bus ends its trip. Waiting queues and boarding/alighting positions
 use the correct passenger side for left- and right-hand traffic maps, with
@@ -17,7 +22,10 @@ of scheduled AI bus instances, so setting the AI bus population to zero does
 not disable player boarding. The catalog still requires a loadable bus
 configuration and a routable, matched timetable route.
 
-Waiting passengers render as stationary humans using the configured models.
+Waiting passengers render using the configured human models.
+Cabin positions use the vehicle model's coordinate convention and model-root
+height. Until seated human animation is supported, occupied seats use standing
+models with their feet at the authored seat position minus its seat height.
 Queues are shared by stop ID across registered scheduled routes and replenished
 to at least their initial size when a scheduled AI bus departs or the player bus
 leaves a served stop. When multiple calls share an ID, their queue renders at

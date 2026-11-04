@@ -305,9 +305,11 @@ class MapPassengerServiceRuntime {
     void setWaitingPassengers(int stopId, std::size_t count);
     bool arrive(const MapPassengerStopService& stop);
     void endServiceAtCurrentStop();
+    void depart();
     // Reserves a waiting passenger at the start of a boarding interval and seats them at
     // completion.
-    void advance(double elapsedSeconds, bool allowBoarding = true, bool allowAlighting = true);
+    void advance(double elapsedSeconds, bool allowBoarding = true, bool allowAlighting = true,
+                 bool holdAtStop = false);
     bool dwelling() const noexcept;
     int currentStopId() const noexcept;
     bool boardingPassenger() const noexcept;
@@ -353,7 +355,8 @@ class MapPassengerServiceRuntime {
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
                                                std::size_t& sharedWaitingPassengers,
                                                double elapsedSeconds, bool allowBoarding = true,
-                                               bool allowAlighting = true);
+                                               bool allowAlighting = true,
+                                               bool holdAtStop = false);
 
 enum class MapTrafficPassengerStopDepartureAction {
     None,

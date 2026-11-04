@@ -82,7 +82,9 @@ struct PassengerNetwork {
     [[nodiscard]] NearbyPassengerStop
     findNearestStop(const std::array<double, 3>& position, double headingRadians,
                     std::optional<std::size_t> routeIndex = std::nullopt,
-                    std::size_t firstStopIndex = 0) const;
+                    std::size_t firstStopIndex = 0,
+                    const std::function<std::optional<std::array<double, 3>>(
+                        const openbus::map::MapTrafficPassengerStop&)>& resolvePosition = {}) const;
 };
 
 std::optional<std::size_t> nextLocatedPassengerStop(const PassengerStopRouteState& route,

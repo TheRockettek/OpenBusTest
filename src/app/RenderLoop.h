@@ -282,6 +282,8 @@ class RenderLoop {
     void logDrivetrainDiagnosticVariables() const;
     double currentFieldOfView() const;
     double mapTrafficElapsedSeconds(double simulationTime) const;
+    std::optional<openbus::map::MapTrafficPose> passengerQueuePose(int stopId,
+                                                                  std::size_t queueSlot) const;
     void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
                                double newStartHour);
     void renderReflectionViews(const BusSimulation& simulation, const World& world);
@@ -529,6 +531,7 @@ class RenderLoop {
     std::optional<int> activePlayerPassengerStop_;
     std::optional<std::size_t> activePlayerPassengerStopRouteIndex_;
     std::optional<std::size_t> activePlayerPassengerStopIndex_;
+    double playerPassengerApproachSeconds_ = 0.0;
     std::optional<std::size_t> playerPassengerServiceRouteIndex_;
     std::size_t playerPassengerServiceNextStopIndex_ = 0;
     std::optional<std::array<double, 2>> playerTimetableStopVisitLatchPosition_;

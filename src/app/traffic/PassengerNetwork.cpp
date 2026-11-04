@@ -262,7 +262,10 @@ PassengerStops::Container mapPassengerStopsToTrafficRoute(
 NearbyPassengerStop PassengerNetwork::findNearestStop(const std::array<double, 3>& position,
                                                       double headingRadians,
                                                       std::optional<std::size_t> selectedRouteIndex,
-                                                      std::size_t firstStopIndex) const {
+                                                      std::size_t firstStopIndex,
+                                                      const std::function<std::optional<std::array<double, 3>>(
+                                                          const openbus::map::MapTrafficPassengerStop&)>&
+                                                          resolvePosition) const {
     NearbyPassengerStop nearest;
     for (std::size_t routeIndex = 0; routeIndex < routes.size(); ++routeIndex) {
         if (selectedRouteIndex && routeIndex != *selectedRouteIndex) {
@@ -277,8 +280,11 @@ NearbyPassengerStop PassengerNetwork::findNearestStop(const std::array<double, 3
             if (!pose) {
                 continue;
             }
+            const auto resolved = resolvePosition ? resolvePosition(route.stops[stopIndex])
+                                                  : std::nullopt;
+            const auto& stopPosition = resolved ? *resolved : pose->position;
             const double distance =
-                std::hypot(pose->position[0] - position[0], pose->position[1] - position[1]);
+                std::hypot(stopPosition[0] - position[0], stopPosition[1] - position[1]);
             const double difference =
                 std::remainder(headingRadians - pose->headingRadians, 2.0 * std::numbers::pi);
             if (std::abs(difference) > std::numbers::pi / 3.0) {

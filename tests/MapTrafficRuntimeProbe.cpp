@@ -3,6 +3,7 @@
 #include "app/traffic/ScheduledBusState.h"
 #include "app/traffic/PlayerTripPolicy.h"
 #include "app/traffic/PassengerNetwork.h"
+#include "app/traffic/PassengerApproach.h"
 #include "app/traffic/ScheduledBusTiming.h"
 #include "app/traffic/PlayerTimetableController.h"
 #include "app/vehicle/PassengerState.h"
@@ -879,6 +880,14 @@ void verifyPlayerTimetableController() {
     const auto nearby = network.findNearestStop({0.0, 0.0, 0.0}, 0.0, 0, 0);
     require(nearby.routeIndex == 0 && nearby.stopIndex == 0 && nearby.distanceMeters == 0.0,
             "nearest stop honors route and heading");
+    const auto editorNearby = network.findNearestStop(
+        {10.0, 0.0, 0.0}, 0.0, std::nullopt, 0,
+        [](const auto& stop) -> std::optional<std::array<double, 3>> {
+            return stop.stopId == 1 ? std::optional{std::array<double, 3>{10.0, 0.0, 0.0}}
+                                    : std::nullopt;
+        });
+    require(editorNearby.stopIndex == 0 && editorNearby.distanceMeters == 0.0,
+            "nearest stop uses the editor position when available");
     require(!std::isfinite(network.findNearestStop({0.0, 0.0, 0.0}, std::numbers::pi, 0, 0)
                                .distanceMeters) &&
                 !std::isfinite(network.findNearestStop({0.0, 0.0, 0.0}, 0.0, 0, 1)
@@ -1124,6 +1133,58 @@ void verifyPlayerTimetableController() {
 
 void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
+    {
+        require(openbus::app::playerPassengerStopArrivalRadiusMeters == 20.0 &&
+                    openbus::app::playerPassengerStopReleaseRadiusMeters >
+                        openbus::app::playerPassengerStopArrivalRadiusMeters,
+                "player stop allows a 20-metre approach with a larger release radius");
+        const auto floor = openbus::app::passengerCabinStandingPoint(
+            {-0.8875, 4.3534, 3.0557}, 0.45);
+        const auto modelPoint = openbus::app::passengerCabinModelPoint(floor);
+        requireNear(modelPoint[0], 4.3534, "seat forward coordinate follows the vehicle mesh");
+        requireNear(modelPoint[1], 0.8875, "seat lateral coordinate follows the vehicle mesh");
+        requireNear(modelPoint[2], 2.6057, "standing model feet are at the cabin floor");
+        const MapTrafficPose bus{{10.0, 20.0, 1.0}, 0.0};
+        const auto right = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, false, 0);
+        const auto left = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, true, 0);
+        requireNear(right.position[0], 11.9, "right-hand traffic queues at the right door");
+        requireNear(left.position[0], 8.1, "left-hand traffic queues at the left door");
+        requireNear(right.position[1], 23.0, "queue follows the actual front entry");
+        const MapTrafficPose start{{11.9, 9.0, 1.0}, 0.0};
+        const double duration = openbus::app::passengerApproachDuration(start, right);
+        requireNear(duration, 10.0, "approach time follows walking distance");
+        requireNear(openbus::app::passengerApproachPose(start, right, 5.0).position[1], 16.0,
+                    "waiting passengers walk halfway in half the travel time");
+        requireNear(openbus::app::passengerApproachPose(start, right, 20.0).position[1], 23.0,
+                    "waiting passengers stop at the entrance");
+    }
+    {
+        MapPassengerServiceRuntime player(1);
+        std::size_t queue = 1;
+        require(player.arrive({.stopId = 50, .dwellSeconds = 1.0, .nextStopId = 51}),
+                "player stop starts");
+        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, 10.0, false, false, true);
+        require(player.dwelling() && queue == 1 && player.onboardPassengerCount() == 0,
+                "closed doors keep a player stop open without boarding past its nominal dwell");
+        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, 0.25, true, true, true);
+        require(player.boardingPassenger() && queue == 0,
+                "an open door reserves a passenger after the wait");
+        const double progress = player.boardingProgress();
+        advanceMapPassengerServiceWithSharedQueue(player, 50, queue, 2.0, false, false, true);
+        require(player.boardingPassenger() && player.boardingProgress() == progress,
+                "closing the door pauses an in-progress boarding passenger");
+        player.depart();
+        require(!player.dwelling() && player.waitingPassengers(50) == 1 &&
+                    player.onboardPassengerCount() == 0,
+                "pulling away returns an unfinished boarder to the queue");
+        require(player.arrive({.stopId = 50, .dwellSeconds = 1.0, .nextStopId = 51}),
+                "a departed service can arrive again");
+        player.advance(0.75, true, true, true);
+        require(player.onboardPassengerCount() == 1, "boarding completes while a stop is held");
+        player.depart();
+        require(player.onboardPassengerCount() == 1,
+                "pulling away preserves passengers already on board");
+    }
     for (const std::size_t waiting : {1U, 3U, 7U, 10U}) {
         constexpr std::size_t initial = 10;
         constexpr std::size_t capacity = 3;

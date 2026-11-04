@@ -546,14 +546,37 @@ void MapPassengerServiceRuntime::endServiceAtCurrentStop() {
     dwelling_ = dwelling_ || alightingSeat_.has_value();
 }
 
+void MapPassengerServiceRuntime::depart() {
+    if (!dwelling_) {
+        return;
+    }
+    if (boardingSeat_) {
+        auto& waiting = waitingByStop_[currentStopId_];
+        if (waiting == (std::numeric_limits<std::size_t>::max)()) {
+            throw std::overflow_error("Cannot return a boarding passenger to a full queue");
+        }
+        ++waiting;
+    }
+    boardingSeat_.reset();
+    boardingPassengerModelIndex_.reset();
+    boardingAccumulatorSeconds_ = 0.0;
+    alightingSeat_.reset();
+    queuedAlightingSeats_.clear();
+    alightingAccumulatorSeconds_ = 0.0;
+    dwellRemainingSeconds_ = 0.0;
+    dwelling_ = false;
+    clearPassengerPathLinkProgressProfile();
+}
+
 void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoarding,
-                                         bool allowAlighting) {
+                                         bool allowAlighting, bool holdAtStop) {
     if (!dwelling_ || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) {
         return;
     }
     constexpr double boardingIntervalSeconds = 0.75;
     constexpr double passengerAnimationSeconds = 0.75;
-    const double dwellAtStartSeconds = dwellRemainingSeconds_;
+    const double dwellAtStartSeconds =
+        holdAtStop ? std::max(dwellRemainingSeconds_, elapsedSeconds) : dwellRemainingSeconds_;
     double elapsedForAlightingSeconds = 0.0;
     double alightingSeconds = elapsedSeconds;
     while (allowAlighting && alightingSeconds > 1.0e-9 && alightingSeat_) {
@@ -633,7 +656,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             clearPassengerPathLinkProgressProfile();
         }
     }
-    if (dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_) {
+    if (!holdAtStop && dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_) {
         dwellRemainingSeconds_ = 0.0;
         dwelling_ = false;
     }
@@ -756,14 +779,14 @@ std::size_t MapPassengerServiceRuntime::seatCount() const noexcept {
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
                                                std::size_t& sharedWaitingPassengers,
                                                double elapsedSeconds, bool allowBoarding,
-                                               bool allowAlighting) {
+                                               bool allowAlighting, bool holdAtStop) {
     if (stopId == 0) {
         throw std::invalid_argument(trafficInputError(
             "Shared passenger queue requires a valid stop ID", "stopId=", stopId,
             "waitingPassengers=", sharedWaitingPassengers, "elapsedSeconds=", elapsedSeconds));
     }
     service.setWaitingPassengers(stopId, sharedWaitingPassengers);
-    service.advance(elapsedSeconds, allowBoarding, allowAlighting);
+    service.advance(elapsedSeconds, allowBoarding, allowAlighting, holdAtStop);
     sharedWaitingPassengers = service.waitingPassengers(stopId);
 }
 

@@ -227,18 +227,41 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
             const auto activeStop = sharedQueueStops.find(vehicle.get());
             const bool playerServiceActive =
                 vehicle.get() == playerVehicle_ && activeStop != sharedQueueStops.end();
-            const bool entryOpen = playerServiceActive || hasOpenPassengerDoor(
+            const bool entryOpen = hasOpenPassengerDoor(
                 *vehicle, vehicle->passengers->configuration().passengerEntryPathPoints,
                 "pax_entry");
-            const bool exitOpen = playerServiceActive || hasOpenPassengerDoor(
+            const bool exitOpen = hasOpenPassengerDoor(
                 *vehicle, vehicle->passengers->configuration().passengerExitPathPoints, "pax_exit");
             auto queue = activeStop != sharedQueueStops.end()
                              ? passengerNetwork_.queues.find(activeStop->second)
                              : passengerNetwork_.queues.end();
+            bool passengerReady = true;
+            if (playerServiceActive && queue != passengerNetwork_.queues.end()) {
+                playerPassengerApproachSeconds_ += passengerServiceTimeStep;
+                if (queue->second > 0 && !vehicle->passengers->service.boardingPassenger()) {
+                    const auto initialQueue = passengerNetwork_.initialQueues.find(activeStop->second);
+                    const std::size_t initialCount =
+                        initialQueue == passengerNetwork_.initialQueues.end()
+                            ? queue->second
+                            : std::max(initialQueue->second, queue->second);
+                    const std::size_t slot = openbus::map::mapScheduledPassengerQueueSlot(
+                        initialCount, queue->second - 1);
+                    const auto start = passengerQueuePose(activeStop->second, slot);
+                    if (!start || mapRenderer_ == nullptr) {
+                        throw std::logic_error("Cannot locate waiting player bus passengers");
+                    }
+                    const auto destination = playerPassengerDoorQueuePose(
+                        *vehicle, simulation.chassisPose(), mapRenderer_->leftHandTraffic(), slot);
+                    passengerReady = playerPassengerApproachSeconds_ >=
+                                     passengerApproachDuration(*start, destination);
+                }
+            }
             if (queue != passengerNetwork_.queues.end()) {
                 advanceMapPassengerServiceWithSharedQueue(
                     vehicle->passengers->service, activeStop->second, queue->second,
-                    passengerServiceTimeStep, entryOpen, exitOpen);
+                    passengerServiceTimeStep, entryOpen && passengerReady, exitOpen,
+                    playerServiceActive && activePlayerPassengerStopServiceGeneration_ ==
+                                               playerPassengerServiceGeneration_);
             } else {
                 vehicle->passengers->service.advance(passengerServiceTimeStep, entryOpen, exitOpen);
             }
@@ -315,6 +338,9 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             if (playerVehicle_->scripts) {
                 playerVehicle_->scripts->invokeSystemTrigger("collision");
             }
+        }
+        if (activePlayerPassengerStop_ && std::abs(simulation.speed()) > 0.35) {
+            playerVehicle_->passengers->service.depart();
         }
         if (activePlayerPassengerStop_) {
             const auto queue = passengerNetwork_.queues.find(*activePlayerPassengerStop_);
@@ -424,7 +450,12 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                     }
                 }
             } else if (!playerTimetable_.state) {
-                nearestStop = passengerNetwork_.findNearestStop(chassis.position, chassisHeading);
+                nearestStop = passengerNetwork_.findNearestStop(
+                    chassis.position, chassisHeading, std::nullopt, 0,
+                    [this](const auto& stop) {
+                        return mapRenderer_ ? mapRenderer_->editorOnlyBusStopPosition(stop.stopId)
+                                            : std::nullopt;
+                    });
             }
         }
         double latchedStopDistance = std::numeric_limits<double>::infinity();
@@ -447,7 +478,14 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                                                  latchPosition[1] - chassis.position[1]);
             }
         }
-        if (playerPassengerStopLatch_ && latchedStopDistance > 5.0) {
+        const bool reachedDifferentStop =
+            playerPassengerStopLatch_ &&
+            nearestStop.distanceMeters <= PLAYER_PASSENGER_STOP_ARRIVAL_RADIUS_METERS &&
+            passengerNetwork_.routes[nearestStop.routeIndex].stops[nearestStop.stopIndex].stopId !=
+                *playerPassengerStopLatch_;
+        if (playerPassengerStopLatch_ && !activePlayerPassengerStop_ &&
+            (latchedStopDistance > PLAYER_PASSENGER_STOP_RELEASE_RADIUS_METERS ||
+             reachedDifferentStop)) {
             const auto queue = passengerNetwork_.queues.find(*playerPassengerStopLatch_);
             const auto initialQueue =
                 passengerNetwork_.initialQueues.find(*playerPassengerStopLatch_);
@@ -487,6 +525,7 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                                            "dwelling");
                 }
                 activePlayerPassengerStop_ = stop.stopId;
+                playerPassengerApproachSeconds_ = 0.0;
                 activePlayerPassengerStopRouteIndex_ = nearestStop.routeIndex;
                 activePlayerPassengerStopIndex_ = nearestStop.stopIndex;
                 activePlayerPassengerStopServiceGeneration_ = playerPassengerServiceGeneration_;
