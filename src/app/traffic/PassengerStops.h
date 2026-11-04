@@ -2,7 +2,11 @@
 
 #include "map/MapTrafficRuntime.h"
 
+#include <array>
+#include <cmath>
 #include <memory>
+#include <stdexcept>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -59,5 +63,45 @@ class PassengerStops {
     }
     std::shared_ptr<const Container> stops_;
 };
+
+template <typename IncludeStop>
+std::vector<int> onwardPassengerStopIds(const PassengerStops& stops, std::size_t firstIndex,
+                                        int originStopId, IncludeStop includeStop) {
+    std::vector<int> result;
+    std::unordered_set<int> seen;
+    for (std::size_t index = firstIndex; index < stops.size(); ++index) {
+        if (!includeStop(index)) {
+            continue;
+        }
+        const int stopId = stops[index].stopId;
+        if (stopId <= 0) {
+            throw std::invalid_argument("Passenger destination stop must have a positive ID");
+        }
+        if (stopId != originStopId && seen.insert(stopId).second) {
+            result.push_back(stopId);
+        }
+    }
+    return result;
+}
+
+template <typename ResolvePosition>
+void requestPassengerStopsOnRoute(openbus::map::MapPassengerServiceRuntime& service,
+                                  const PassengerStops& stops, std::size_t firstIndex,
+                                  const std::array<double, 3>& busPosition,
+                                  ResolvePosition resolvePosition) {
+    if (firstIndex > stops.size()) {
+        throw std::invalid_argument("Passenger stop request index is outside the route");
+    }
+    for (std::size_t index = firstIndex; index < stops.size(); ++index) {
+        const int stopId = stops[index].stopId;
+        if (!service.hasUnrequestedPassengerStop(stopId)) {
+            continue;
+        }
+        const auto position = resolvePosition(index);
+        if (position) {
+            service.requestStopForPassengers(stopId, busPosition, *position);
+        }
+    }
+}
 
 } // namespace openbus::app

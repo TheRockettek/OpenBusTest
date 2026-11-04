@@ -82,6 +82,23 @@ inline openbus::map::MapTrafficPose passengerCurbPose(const openbus::map::MapTra
     return pose;
 }
 
+inline std::vector<std::array<double, 3>>
+passengerAlightingPositions(const Vehicle& bus, const openbus::map::MapTrafficPose& busPose,
+                            const openbus::map::MapTrafficPose& stopPose, bool leftHandTraffic,
+                            double laneOffset, double vehicleWidth) {
+    const auto fallback = passengerCurbPose(stopPose, leftHandTraffic, laneOffset, vehicleWidth);
+    std::vector<std::array<double, 3>> positions;
+    positions.reserve(bus.passengers->exitDoorsBySeat.size());
+    for (const auto door : bus.passengers->exitDoorsBySeat) {
+        positions.push_back(passengerConfiguredDoorQueuePose(
+                                bus, busPose, leftHandTraffic,
+                                bus.passengers->configuration().passengerExitPathPoints, door, 0)
+                                .value_or(fallback)
+                                .position);
+    }
+    return positions;
+}
+
 inline double mapTrafficSignalClockSeconds(double elapsedSeconds, double startHour) noexcept {
     return startHour * 3600.0 + elapsedSeconds;
 }

@@ -31,8 +31,7 @@ void RenderLoop::SetPlayerTimetableSelection(
         auto& service = playerVehicle_->passengers->service;
         const auto queue = passengerNetwork_.queues.find(*activePlayerPassengerStop_);
         if (queue != passengerNetwork_.queues.end()) {
-            openbus::map::endMapPassengerServiceWithSharedQueue(
-                service, queue->second, passengerNetwork_.queueIdentities);
+            passengerNetwork_.endService(service);
         } else {
             service.endServiceAtCurrentStop();
         }

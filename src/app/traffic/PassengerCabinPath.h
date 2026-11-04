@@ -9,6 +9,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 namespace openbus::app {
@@ -47,9 +48,25 @@ passengerCabinLocalPoint(const openbus::map::MapTrafficPose& vehiclePose,
             worldPosition[2] - vehiclePose.position[2]};
 }
 
+inline std::array<double, 3>
+passengerCabinWorldPoint(const openbus::map::MapTrafficPose& vehiclePose,
+                         const std::array<double, 3>& localPosition) {
+    constexpr double degreesToRadians = std::numbers::pi / 180.0;
+    const double yaw =
+        openbus::map::mapTrafficHeadingToVehicleYawDegrees(vehiclePose.headingRadians) *
+        degreesToRadians;
+    const double cosine = std::cos(yaw);
+    const double sine = std::sin(yaw);
+    const auto modelPoint = passengerCabinModelPoint(localPosition);
+    return {vehiclePose.position[0] + modelPoint[0] * cosine - modelPoint[1] * sine,
+            vehiclePose.position[1] + modelPoint[0] * sine + modelPoint[1] * cosine,
+            vehiclePose.position[2] + modelPoint[2]};
+}
+
 struct PassengerCabinTravelPathData {
     std::vector<std::array<double, 3>> positions;
     std::vector<std::optional<std::size_t>> segmentLinkIndices;
+    std::optional<std::size_t> doorPointIndex;
 };
 
 inline PassengerCabinTravelPathData passengerCabinTravelPath(
@@ -128,36 +145,97 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
         }
         appendPoint(cabin.passengerPathPoints[*index].position,
                     previousPoint < 0 ? std::nullopt : linkIndex(previousPoint, id));
+        if (id == doors[*doorIndex]) {
+            path.doorPointIndex = path.positions.size() - 1;
+        }
         previousPoint = id;
     }
     appendPoint(endLocal, std::nullopt);
-    constexpr double degreesToRadians = std::numbers::pi / 180.0;
-    const double yaw =
-        openbus::map::mapTrafficHeadingToVehicleYawDegrees(vehiclePose.headingRadians) *
-        degreesToRadians;
-    const double cosine = std::cos(yaw);
-    const double sine = std::sin(yaw);
     for (auto& point : path.positions) {
-        const auto modelPoint = passengerCabinModelPoint(point);
-        point = {vehiclePose.position[0] + modelPoint[0] * cosine - modelPoint[1] * sine,
-                 vehiclePose.position[1] + modelPoint[0] * sine + modelPoint[1] * cosine,
-                 vehiclePose.position[2] + modelPoint[2]};
+        point = passengerCabinWorldPoint(vehiclePose, point);
     }
     return path;
 }
 
-inline void updatePassengerCabinPathOccupancy(openbus::map::MapPassengerServiceRuntime& service,
-                                              const VehicleConfig& cabin,
-                                              const openbus::map::MapTrafficPose& vehiclePose,
-                                              const std::array<double, 3>& startWorld,
-                                              const std::array<double, 3>& endLocal, bool boarding,
-                                              std::size_t seatIndex,
-                                              std::optional<std::size_t> doorIndex) {
-    const auto path =
+inline double passengerCabinTravelDuration(const PassengerCabinTravelPathData& path,
+                                           const std::array<double, 3>& startWorld,
+                                           const std::array<double, 3>& endWorld, bool hasSeat) {
+    double length = 0.0;
+    const auto addSegment = [&](const auto& from, const auto& to) {
+        const double segment = std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        if (!std::isfinite(segment) || !std::isfinite(length + segment)) {
+            throw std::invalid_argument("Passenger cabin path length must be finite");
+        }
+        length += segment;
+    };
+    if (path.positions.size() < 2) {
+        addSegment(startWorld, endWorld);
+    } else {
+        for (std::size_t index = 1; index < path.positions.size(); ++index) {
+            addSegment(path.positions[index - 1], path.positions[index]);
+        }
+    }
+    const double walkingPortion = hasSeat ? 1.0 - passengerSeatTransitionPortion : 1.0;
+    const double duration = length / (passengerApproachSpeedMetersPerSecond * walkingPortion);
+    if (!std::isfinite(duration)) {
+        throw std::invalid_argument("Passenger cabin travel duration must be finite");
+    }
+    return std::max(0.75, duration);
+}
+
+inline std::optional<double>
+passengerAlightingDoorWaitProgress(const PassengerCabinTravelPathData& path, bool hasSeat) {
+    if (!path.doorPointIndex || *path.doorPointIndex >= path.positions.size() ||
+        path.positions.size() < 2) {
+        return std::nullopt;
+    }
+    double length = 0.0;
+    double distanceToDoor = 0.0;
+    for (std::size_t index = 1; index < path.positions.size(); ++index) {
+        const auto& from = path.positions[index - 1];
+        const auto& to = path.positions[index];
+        const double segment = std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        if (!std::isfinite(segment) || !std::isfinite(length + segment)) {
+            throw std::invalid_argument("Passenger cabin path length must be finite");
+        }
+        length += segment;
+        if (index <= *path.doorPointIndex) {
+            distanceToDoor = length;
+        }
+    }
+    if (length <= 1.0e-9) {
+        return std::nullopt;
+    }
+    constexpr double clearanceMeters = 0.5;
+    const double walkingProgress = std::max(0.0, distanceToDoor - clearanceMeters) / length;
+    const double progress = hasSeat ? passengerSeatTransitionPortion +
+                                          (1.0 - passengerSeatTransitionPortion) * walkingProgress
+                                    : walkingProgress;
+    return std::min(progress, std::nextafter(1.0, 0.0));
+}
+
+inline void updatePassengerCabinPathOccupancy(
+    openbus::map::MapPassengerServiceRuntime& service, const VehicleConfig& cabin,
+    const openbus::map::MapTrafficPose& vehiclePose, const std::array<double, 3>& startWorld,
+    const std::array<double, 3>& endLocal, bool boarding, std::size_t seatIndex,
+    std::optional<std::size_t> doorIndex,
+    std::optional<std::array<double, 3>> fallbackVia = std::nullopt) {
+    auto path =
         passengerCabinTravelPath(cabin, vehiclePose, startWorld, endLocal, boarding, doorIndex);
+    const bool hasSeat = cabin.passengerPositions.at(seatIndex).seatHeight > 0.0;
+    if (path.positions.empty() && fallbackVia) {
+        path.positions = {startWorld, *fallbackVia,
+                          passengerCabinWorldPoint(vehiclePose, endLocal)};
+        path.segmentLinkIndices = {std::nullopt, std::nullopt};
+    }
+    service.setPassengerAnimationDuration(passengerCabinTravelDuration(
+        path, startWorld, passengerCabinWorldPoint(vehiclePose, endLocal), hasSeat));
+    if (!boarding) {
+        service.setAlightingDoorWaitProgress(passengerAlightingDoorWaitProgress(path, hasSeat));
+    }
     service.setPassengerPathLinkProgressProfile(passengerSeatPathLinkProfile(
         passengerPathLinkProgressProfile(path.positions, path.segmentLinkIndices), boarding,
-        cabin.passengerPositions.at(seatIndex).seatHeight > 0.0));
+        hasSeat));
 }
 
 } // namespace openbus::app

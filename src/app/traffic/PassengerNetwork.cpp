@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <set>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 namespace openbus::app {
@@ -211,6 +213,247 @@ void PassengerNetwork::initializeQueues(
             initialQueues.emplace(stop.stopId, queue->second);
         }
     }
+}
+
+void PassengerNetwork::syncQueue(int stopId) {
+    const auto queue = queues.find(stopId);
+    if (queue == queues.end()) {
+        throw std::invalid_argument("Passenger queue stop is not registered");
+    }
+    auto& state = queueStates_[stopId];
+    if (!state.initialized) {
+        const auto initial = initialQueues.find(stopId);
+        state.capacity = initial == initialQueues.end() ? queue->second
+                                                        : std::max(queue->second, initial->second);
+        state.passengers.reserve(queue->second);
+        for (std::size_t index = 0; index < queue->second; ++index) {
+            const std::size_t slot = state.capacity - index - 1;
+            state.passengers.push_back(
+                {openbus::map::mapScheduledPassengerModelIdentity(stopId, index), slot, slot, {}});
+        }
+        state.nextArrivalOrder = state.capacity;
+        state.nextModelIndex = queue->second;
+        state.initialized = true;
+    }
+    if (state.passengers.size() > queue->second) {
+        throw std::logic_error("Passenger queue count is smaller than its waiting records");
+    }
+    if (state.passengers.size() == queue->second) {
+        return;
+    }
+    std::unordered_set<std::size_t> occupied;
+    for (const auto& passenger : state.passengers) {
+        occupied.insert(passenger.queueSlot);
+    }
+    for (const auto& [service, reservation] : reservations_) {
+        (void)service;
+        if (reservation.stopId == stopId) {
+            occupied.insert(reservation.passenger.queueSlot);
+        }
+    }
+    std::size_t slot = 0;
+    while (state.passengers.size() < queue->second) {
+        while (slot < state.capacity && occupied.contains(slot)) {
+            ++slot;
+        }
+        if (slot == state.capacity) {
+            break;
+        }
+        if (state.nextArrivalOrder == (std::numeric_limits<std::size_t>::max)() ||
+            state.nextModelIndex == (std::numeric_limits<std::size_t>::max)()) {
+            throw std::overflow_error("Passenger queue identity space exhausted");
+        }
+        const auto model =
+            openbus::map::mapScheduledPassengerModelIdentity(stopId, state.nextModelIndex);
+        state.passengers.push_back({model, slot, state.nextArrivalOrder, {}});
+        occupied.insert(slot);
+        ++state.nextArrivalOrder;
+        ++state.nextModelIndex;
+    }
+}
+
+const std::vector<WaitingPassenger>& PassengerNetwork::waitingPassengers(int stopId) {
+    syncQueue(stopId);
+    auto& state = queueStates_.at(stopId);
+    auto& passengers = state.passengers;
+    if (std::ranges::all_of(passengers,
+                            [](const auto& passenger) { return passenger.journey.has_value(); })) {
+        return passengers;
+    }
+    if (state.candidateRouteCount != routes.size()) {
+        std::vector<WaitingPassengerJourney> candidates;
+        std::set<std::pair<std::size_t, int>> seen;
+        for (std::size_t routeIndex = 0; routeIndex < routes.size(); ++routeIndex) {
+            const auto& route = routes[routeIndex];
+            for (std::size_t origin = 0; origin < route.stops.size(); ++origin) {
+                if (route.stops[origin].stopId != stopId || !route.stopPose(origin)) {
+                    continue;
+                }
+                for (std::size_t destination = origin + 1; destination < route.stops.size();
+                     ++destination) {
+                    const int destinationId = route.stops[destination].stopId;
+                    const auto destinationPose = route.stopPose(destination);
+                    if (destinationId > 0 && destinationId != stopId && destinationPose &&
+                        seen.emplace(routeIndex, destinationId).second) {
+                        candidates.push_back(
+                            {routeIndex, destinationId, destinationPose->position, false, std::nullopt});
+                    }
+                }
+            }
+        }
+        state.candidates = std::move(candidates);
+        state.candidateRouteCount = routes.size();
+    }
+    if (!state.candidates.empty()) {
+        for (auto& passenger : passengers) {
+            if (!passenger.journey) {
+                passenger.journey =
+                    state.candidates[passenger.modelIndex % state.candidates.size()];
+            }
+        }
+    }
+    return passengers;
+}
+
+bool PassengerNetwork::passengerMatchesService(
+    const WaitingPassenger& passenger, std::size_t routeIndex,
+    const openbus::map::MapPassengerServiceRuntime& service) const {
+    if (!service.acceptsBoarding() || !passenger.journey || routeIndex >= routes.size() ||
+        passenger.journey->routeIndex >= routes.size()) {
+        return false;
+    }
+    const auto& expected = routes[passenger.journey->routeIndex];
+    const auto& actual = routes[routeIndex];
+    const bool sameService =
+        passenger.journey->routeIndex == routeIndex ||
+        (!expected.timetableKey.empty() && expected.timetableKey == actual.timetableKey &&
+         expected.lineName == actual.lineName);
+    if (!sameService || !service.acceptsPassengerDestination(passenger.journey->destinationStopId)) {
+        return false;
+    }
+    const auto& destination = passenger.journey->pedestrianJourney
+                                  ? passenger.journey->pedestrianJourney->destination
+                                  : passenger.journey->destinationPosition;
+    bool passedOrigin = false;
+    for (std::size_t index = 0; index < actual.stops.size(); ++index) {
+        if (passedOrigin && actual.stops[index].stopId == passenger.journey->destinationStopId) {
+            const auto pose = actual.stopPose(index);
+            if (pose && std::hypot(pose->position[0] - destination[0],
+                                   pose->position[1] - destination[1]) <=
+                            openbus::map::passengerStopRequestRadiusMeters) {
+                return true;
+            }
+        }
+        passedOrigin = passedOrigin || actual.stops[index].stopId == service.currentStopId();
+    }
+    return false;
+}
+
+std::optional<std::size_t>
+PassengerNetwork::nextPassenger(int stopId, std::size_t routeIndex,
+                                const openbus::map::MapPassengerServiceRuntime& service) {
+    const auto& passengers = waitingPassengers(stopId);
+    std::optional<std::size_t> result;
+    for (std::size_t index = 0; index < passengers.size(); ++index) {
+        if (passengerMatchesService(passengers[index], routeIndex, service) &&
+            (!result || passengers[index].arrivalOrder < passengers[*result].arrivalOrder)) {
+            result = index;
+        }
+    }
+    return result;
+}
+
+void PassengerNetwork::resolvePassengerPedestrianJourney(
+    int stopId, std::size_t passengerIndex,
+    std::optional<openbus::map::MapPassengerPedestrianJourney> pedestrianJourney) {
+    syncQueue(stopId);
+    auto& passenger = queueStates_.at(stopId).passengers.at(passengerIndex);
+    if (!passenger.journey || passenger.journey->pedestrianResolved) {
+        throw std::logic_error("Passenger pedestrian journey is missing or already resolved");
+    }
+    passenger.journey->pedestrianJourney = std::move(pedestrianJourney);
+    passenger.journey->pedestrianResolved = true;
+}
+
+void PassengerNetwork::advanceService(openbus::map::MapPassengerServiceRuntime& service,
+                                      std::size_t routeIndex,
+                                      std::optional<std::size_t> passengerIndex,
+                                      double elapsedSeconds, bool allowBoarding,
+                                      bool allowAlighting, bool holdAtStop, bool pauseDwellTimer) {
+    const int stopId = service.currentStopId();
+    const auto& passengers = waitingPassengers(stopId);
+    auto& count = queues.at(stopId);
+    const bool wasBoarding = service.boardingPassenger();
+    if (wasBoarding != reservations_.contains(&service)) {
+        throw std::logic_error("Passenger boarding reservation does not match the service");
+    }
+    std::optional<openbus::map::MapPassengerBoardingSelection> selection;
+    if (!wasBoarding && passengerIndex) {
+        if (*passengerIndex >= passengers.size() ||
+            !passengerMatchesService(passengers[*passengerIndex], routeIndex, service)) {
+            throw std::invalid_argument("Selected waiting passenger does not match the service");
+        }
+        const auto& passenger = passengers[*passengerIndex];
+        selection = openbus::map::MapPassengerBoardingSelection{
+            passenger.modelIndex, passenger.queueSlot, passenger.journey->destinationStopId,
+            passenger.journey->pedestrianJourney, passenger.journey->destinationPosition};
+    }
+    service.setWaitingPassengers(stopId, count);
+    service.advance(elapsedSeconds, allowBoarding, allowAlighting, holdAtStop, true, nullptr, true,
+                    selection ? &*selection : nullptr, true, pauseDwellTimer);
+    auto& state = queueStates_.at(stopId);
+    if (!wasBoarding && service.boardingPassenger()) {
+        if (!passengerIndex || !selection) {
+            throw std::logic_error("Passenger boarded without a journey reservation");
+        }
+        reservations_.emplace(&service, Reservation{stopId, state.passengers[*passengerIndex]});
+        state.passengers.erase(state.passengers.begin() +
+                               static_cast<std::ptrdiff_t>(*passengerIndex));
+    } else if (wasBoarding && !service.boardingPassenger()) {
+        reservations_.erase(&service);
+    }
+    count = service.waitingPassengers(stopId);
+    std::size_t eligible = 0;
+    for (const auto& passenger : state.passengers) {
+        if (passengerMatchesService(passenger, routeIndex, service)) {
+            ++eligible;
+        }
+    }
+    service.setEligibleWaitingPassengers(eligible);
+}
+
+void PassengerNetwork::restoreReservation(openbus::map::MapPassengerServiceRuntime& service,
+                                          bool endService) {
+    const int stopId = service.currentStopId();
+    syncQueue(stopId);
+    auto& count = queues.at(stopId);
+    const auto reservation = reservations_.find(&service);
+    if (service.boardingPassenger() != (reservation != reservations_.end())) {
+        throw std::logic_error("Passenger cancellation has no matching reservation");
+    }
+    service.setWaitingPassengers(stopId, count);
+    if (endService) {
+        service.endServiceAtCurrentStop();
+    } else {
+        service.depart();
+    }
+    if (reservation != reservations_.end()) {
+        if (reservation->second.stopId != stopId ||
+            service.waitingPassengers(stopId) != count + 1) {
+            throw std::logic_error("Passenger cancellation did not return its reserved rider");
+        }
+        queueStates_.at(stopId).passengers.push_back(reservation->second.passenger);
+        reservations_.erase(reservation);
+    }
+    count = service.waitingPassengers(stopId);
+}
+
+void PassengerNetwork::departService(openbus::map::MapPassengerServiceRuntime& service) {
+    restoreReservation(service, false);
+}
+
+void PassengerNetwork::endService(openbus::map::MapPassengerServiceRuntime& service) {
+    restoreReservation(service, true);
 }
 
 PassengerStops::Container mapPassengerStopsToTrafficRoute(

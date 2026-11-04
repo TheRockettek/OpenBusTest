@@ -1105,6 +1105,7 @@ void RenderLoop::ResetForStartupMenu() {
     SetPlayerVehicle(nullptr);
     vehicles_.clear();
     humanTrafficActors_.clear();
+    alightedPassengers_.clear();
     scheduledPassengerHumanModels_.clear();
     passengerNetwork_ = {};
     passengerTimetableCourses_.clear();
@@ -1115,6 +1116,11 @@ void RenderLoop::ResetForStartupMenu() {
     authoredPassengerPositions_.clear();
     authoredPassengerQueueCounts_.clear();
     reportedPassengerAreaStops_.clear();
+    reportedPassengerJourneyStops_.clear();
+    reportedPassengerPedestrianStops_.clear();
+    reportedPassengerHandoffStops_.clear();
+    reportedPassengerDriftStops_.clear();
+    passengerPedestrianPaths_.clear();
     playerPassengerStopLatch_.reset();
     playerPassengerStopLatchRouteIndex_.reset();
     playerPassengerStopLatchIndex_.reset();
@@ -1188,6 +1194,10 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         authoredPassengerQueueCounts_.clear();
         authoredPassengerObjectCount_ = 0;
         reportedPassengerAreaStops_.clear();
+        reportedPassengerPedestrianStops_.clear();
+        reportedPassengerHandoffStops_.clear();
+        reportedPassengerDriftStops_.clear();
+        passengerPedestrianPaths_.clear();
         mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
             map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
             map.entryPoints[spawnEntryPointIndex].placement.position[0],

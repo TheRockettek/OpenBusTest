@@ -461,6 +461,31 @@ std::vector<int> MapRenderer::trafficSplineIds(int pathTypeCode) const {
     return {};
 }
 
+bool MapRenderer::humanTrafficLaneNetworkReady() const noexcept {
+    return sceneLoader_ && sceneLoader_->humanTrafficLaneNetworkReady();
+}
+
+std::optional<openbus::map::MapPassengerPedestrianJourney>
+MapRenderer::passengerPedestrianJourneyNear(const std::array<double, 3>& stopPosition,
+                                            std::size_t seed) const {
+    if (!humanTrafficLaneNetworkReady()) {
+        throw std::logic_error("Pedestrian lane network is not ready");
+    }
+    constexpr double radius = 25.0;
+    const int minX = openbus::map::mapWorldTile(stopPosition[0] - radius, impl_->coordinates.tileSize);
+    const int maxX = openbus::map::mapWorldTile(stopPosition[0] + radius, impl_->coordinates.tileSize);
+    const int minY = openbus::map::mapWorldTile(stopPosition[1] - radius, impl_->coordinates.tileSize);
+    const int maxY = openbus::map::mapWorldTile(stopPosition[1] + radius, impl_->coordinates.tileSize);
+    std::vector<std::pair<int, int>> tiles;
+    for (int x = minX; x <= maxX; ++x) {
+        for (int y = minY; y <= maxY; ++y) {
+            tiles.emplace_back(x, y);
+        }
+    }
+    return impl_->humanTrafficLaneNetwork.passengerJourneyNear(
+        impl_->humanTrafficRouteNetwork.splineIdsInTiles(tiles), stopPosition, seed, radius);
+}
+
 std::vector<int>
 MapRenderer::trafficSplineIdsInTiles(int pathTypeCode,
                                      const std::vector<std::pair<int, int>>& tiles) const {

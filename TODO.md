@@ -12,6 +12,16 @@ configuration behavior, and regression evidence all exist.
 - `[ ]` Not implemented, or currently only parsed/consumed for compatibility.
 - `[o]` Explicitly outside the currently supported scope.
 
+## Contents
+
+1. [Physics and wheel stability](#1-lock-down-physics-and-wheel-stability)
+2. [Live wheel contract](#2-complete-the-live-wheel-contract)
+3. [Material and texture behavior](#3-finish-material-and-texture-behavior)
+4. [Dynamic displays and lighting](#4-implement-dynamic-displays-and-lighting)
+5. [Vehicle/model configuration](#5-complete-vehiclemodel-configuration-coverage)
+6. [Rendering and platform completeness](#6-rendering-and-platform-completeness)
+7. [Final release gate](#7-final-release-gate)
+
 ## 1. Lock down physics and wheel stability
 
 - [~] High-speed bump stability: local-axis damping, softened contact response,
@@ -142,29 +152,36 @@ change from their controlling variables without manual texture replacement.
 
 ### E400 OMSI/OpenBus comparison gaps
 
-  of consuming them only for parser alignment; verify the dashboard LCD,
-  odometer, and center display against the OMSI reference capture.
-  substitution. The active E400 configuration uses these records for dashboard
-  and body variants, so retaining their payloads is not sufficient for visual
-  parity.
-  assigned meshes; `[light_enh_2]` now renders a base bloom, while `[spotlight]`
-  remains storage-only with an explicit unsupported-runtime warning.
-  E400-specific behavior and dashboard-lighting parity gaps still require the
-  external model assets.
-  semantics, including strength and lighting interaction, then compare the
-  dashboard binnacle and cab surfaces again.
-  OMSI fonts, layout, and display-background/alpha semantics. Enhanced
-  horizontal alignments 0–5, authored grid spacing, and
-  `Refresh_Strings`-gated changed-string
-  updates are implemented; the fallback rasterizer and remaining format details
-  still differ from OMSI.
+- [~] Implement rendering semantics for retained `[VFDmaxmin]` display limits
+  and `[tex_detail_factor]`; verify the dashboard LCD, odometer, and center
+  display against the OMSI reference capture.
+- [~] Complete `[CTC]` paint-scheme selection and `[CTCTexture]` substitution.
+  Base-texture replacements are supported, but full replacement and E400
+  dashboard/body variant parity remain incomplete.
+- [~] Basic `[illumination_interior]`/`[interiorlight]` emission is active
+  for assigned meshes, and `[light_enh_2]` renders a base bloom. `[spotlight]`
+  remains storage-only with an unsupported-runtime warning. E400-specific
+  behavior and dashboard-lighting parity require the external model assets.
+- [~] Complete `[matl_bumpmap]` and `[matl_envmap]` semantics, including
+  strength and lighting interaction, then compare the dashboard binnacle and
+  cab surfaces again. Basic shader paths and generated probes exist.
+- [~] Complete `[texttexture]`/`[texttexture_enh]` compatibility with authored
+  OMSI fonts, layout, and display-background/alpha semantics. Horizontal
+  alignments 0–5, grid spacing, and `Refresh_Strings`-gated updates are
+  implemented; fallback rasterization and remaining format details still differ.
+- [x] Pair the selected number-list entry with `[registration_list]`, expose
   the plate as `ident`, and rasterize its text texture on initialization; the
-  default E400 plate is visible on the real model capture.
-  odometer parity against the reference capture.
-  that checks the dashboard LCD, odometer, warning lamps, illumination, and
-  text surfaces independently of camera framing.
-for the current parser. The remaining visual differences are therefore mostly
-recognized-but-incomplete semantics, not missing keyword dispatch entries.
+  default E400 plate was visible in the real-model capture.
+- [~] Validate registration selection against installed vehicle files, complete
+  full OMSI selection UI parity, and verify odometer behavior against the
+  reference capture. Selection and odometer state persist.
+- [ ] Add a repeatable OMSI/OpenBus E400 cockpit screenshot comparison covering
+  the dashboard LCD, odometer, warning lamps, illumination, and text surfaces
+  independently of camera framing.
+
+The keyword audit for the active E400 CFG found no completely unknown keywords
+for the parser at the time. The remaining visual differences primarily involve
+recognized but incomplete semantics.
 
 ## 5. Complete vehicle/model configuration coverage
 
@@ -172,8 +189,8 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   vehicle key bindings are dispatched to the player script runtime as key
   state and optional key-specific entry points. Exact transformed triangle
   picking is active, including hand-cursor hover feedback, captured
-  `trigger_<event>` /
-  `trigger_<event>_drag` callbacks, matching `trigger_<event>_off` release
+  `trigger_<event>` / `trigger_<event>_drag` callbacks, matching
+  `trigger_<event>_off` release
   callbacks, and the `I`-key clickable wireframe overlay. Scenery-object
   mouse-event dispatch is not connected; configurable key maps remain
   incomplete.
@@ -190,7 +207,8 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   `[kmcounter_init]` now seed runtime registration and split odometer state.
   Explicit registration/index overrides and deterministic automatic numbers
   are available; the spawn UI now preserves automatic plates when fleet-number
-  lists exist, while persistence and full OMSI selection UI remain incomplete.
+  lists exist. Selection and odometer state persist; full OMSI selection UI
+  parity remains incomplete.
 - [~] Bus-model `[collision_mesh]` records now build an ODE triangle collider;
   model `[boundingbox]` overrides the BUS box, `[nocollision]` filters a
   mesh-scoped collider, and the BUS box remains the fallback. Scenery
@@ -200,21 +218,20 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   runtime now cover waiting counts, timed boarding/alighting, dwell state, and
   seat occupancy. Legacy TTP calls and station-ID-only trips with complete
   directed StnLink paths can trigger scheduled AI-bus stops and boarding;
-  passengers are assigned their next stop as a destination. Scheduled queues
-  are shared by stop ID and render as scheduled humans independently of the
+  waiting passengers are assigned an expected route and downstream mapped stop.
+  Scheduled queues are shared by stop ID and render independently of the
   ambient AI pedestrian cap. Scheduled AI departures replenish depleted
   queues to their initial size, and player buses replenish the served stop
   after departing; both preserve larger queues when demand remains. Reserved
-  boarders animate from the roadside flank
-  queue position through the configured cabin path into their assigned seat on
+  boarders animate from the roadside flank queue position through the configured
+  cabin path into their assigned seat on
   both scheduled AI and player buses; the same passenger model identity is
   retained from the queue through boarding, the occupied seat, and alighting.
-  Queue display and service reservation share one stop/queue-position identity
-  mapping so the nearest visible rider is the one reserved to board.
+  Queue display and service reservation share stable rider and slot records;
+  each bus selects its oldest matching rider without moving other riders.
   Terminal calls without an onward stop do not board riders or consume the
-  shared stop queue.
-  At destination stops, seated
-  passengers now animate from their assigned seat to the roadside before the
+  shared stop queue. At destination stops, seated passengers animate from
+  their assigned seat to the roadside before the
   seat is freed; when cabin path links are connected, boarders and alighters
   follow the directed passenger-path graph between the configured entry/exit
   and their seat. Shared queue consumption gives simultaneous buses distinct
@@ -224,8 +241,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   departures or service cancellation update the current shared count rather
   than restoring a stale per-bus snapshot. Returned riders retain their model
   identity in the shared queue, including when another bus has reserved a
-  passenger, and keep it through reboarding and alighting. A
-  scheduled AI bus now remains in service at its route end until its final-stop
+  passenger, and keep their expected service and destination through reboarding.
+  Demand exceeding the available waiting slots remains pending until a slot
+  opens. A scheduled AI bus remains in service at its route end until final-stop
   passenger alighting completes.
   Boarding animations retain the exact timetable call index, avoiding a
   mismatched stop position when a route repeats a stop ID or shares it with
@@ -237,9 +255,8 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   call when a bus is boarding, or otherwise at the nearest visible call,
   independently of asynchronous AI bus model loading. Waiting passengers have
   a subtle idle gait before boarding; active boarders and alighters use the
-  full movement animation.
-  Disconnected
-  or incomplete cabin graphs fall back to direct seat-to-curb animation.
+  full movement animation. Disconnected or incomplete cabin graphs fall back
+  to direct seat-to-curb animation.
   Walking passengers now face the active path segment during cabin movement
   and use the authored endpoint orientation when movement completes.
   Waiting queues and boarding/alighting positions use the correct passenger
@@ -257,41 +274,50 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   HOF matching and course/trip choices until the player, map, or registered
   routes change. Catalog diagnostics report HOF data, rejection counts, and
   samples of unavailable routes rather than repeating matching every frame.
-  Passenger mass,
-  passenger ticket purchase, fare
-  transactions, and physical/audible coin output remain incomplete. Map
-  ticket-pack/currency records now feed ticket and
+  Passenger mass, ticket purchase, fare transactions, and physical/audible coin
+  output remain incomplete. Map ticket-pack/currency records feed ticket and
   change-coin script macros for player and AI buses.
 
   Passenger journey gaps to complete and validate:
-  - [ ] Give waiting passengers an expected service and destination so a
-    shared stop queue only boards an appropriate bus instead of assigning
-    every rider to its next stop.
+
+  - [~] Waiting riders retain an expected mapped service and downstream stop
+    in the shared queue; buses board only matching riders. Nearby directed
+    pedestrian splines now generate world destinations before boarding, with a
+    mapped-stop fallback. Validate service matching in game. Exact
+    repeated-stop calls and courses sharing a route remain indistinguishable.
   - [ ] Have waiting passengers approach a nearby expected bus while it is
     moving without entering the road, and permit a safe road crossing only
     once it has stopped. Replace direct interpolation with road-aware walking
     for player and scheduled AI buses.
-  - [~] Form a physical queue outside the entry and maintain single-passenger
-    boarding after the bus stops and the selected door opens. Validate queue
-    ordering and door gating for both player and scheduled AI buses.
+  - [~] Player-bus waiting positions now form a single line beside the entry;
+    validate its in-game spacing and road safety. Add the same approach and
+    physical queue for scheduled AI buses, and validate queue ordering and
+    single-passenger, door-gated boarding for both.
   - [ ] When ticket selling is enabled, implement the passenger transaction:
     payment, change when owed, waiting for a ticket, and use of an applicable
     ticket machine. Parsed locations and script accounting alone are not a
     completed transaction.
-  - [~] Validate walking to the assigned seat and sitting in game, including
-    disconnected cabin-path fallback. Replace the fixed 0.75-second traversal
-    with movement appropriate to the path length and seating transition.
-  - [ ] Select an alighting stop within 200 m of each passenger's destination
-    and trigger the appropriate stop-request and bus-stop script behavior at
-    the relevant point in the journey; the current request at boarding and
-    next-stop assignment do not provide destination-based behavior.
-  - [~] Have alighters move to their predetermined exit and queue behind one
-    another, including while waiting for the door to open. Support multiple
-    alighters progressing concurrently while preserving queue order and the
-    existing single-boarder constraint.
-  - [ ] After leaving the bus, transfer each alighter to a nearby passenger
-    spline leading toward their destination; if no suitable spline can be
-    found, remove the passenger.
+  - [~] Cabin traversal now uses the connected or fallback path length and a
+    walking-speed-based duration, including the seating transition. Validate
+    walking and sitting in game, including disconnected cabin-path fallback.
+  - [~] Riders request their assigned stop within 200 m of their generated
+    pedestrian destination, or the mapped stop if no spline was found,
+    including later calls beyond an intervening stop. Normal destination-based
+    alighting now checks each seat's actual exterior exit position on arrival,
+    and fallback destinations retain their originally assigned world position.
+    Equivalent services must have a nearby matching destination stop, and
+    player-bus exits are rechecked during alighting if the bus drifts. Resolve
+    forced terminal or cancelled-service unloading outside the limit; validate
+    this in game.
+  - [~] The active alighter can stand and approach a connected exit while it
+    is closed, stopping up to 0.5 m short of the door along the path. If its
+    path is unknown, the alighter waits in its seat. Support multiple alighters
+    progressing concurrently and queuing behind each other, preserving queue order
+    and the existing single-boarder constraint; validate the approach in game.
+  - [~] After leaving the bus, alighters follow their assigned directed
+    pedestrian spline when a short outward connector is available; otherwise
+    they disappear. Validate the conservative connector and road safety in
+    game, and support safe connectors for more real-world sidewalk layouts.
   - [ ] Add focused regression coverage and an in-game end-to-end validation
     for the journey, including moving-bus road safety, ticketing, the 200 m
     destination rule, concurrent alighting, and spline handoff.
@@ -311,10 +337,12 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   unverified end to end.
 - [~] The spawn UI supports fleet number/registration selection and free-form
   overrides; the player’s choices persist in `OpenBus_vehicle_preferences.txt`
-  in the launch working directory. The player odometer is restored per bus
-  identity and checkpointed atomically every 30 seconds and at shutdown in
-  `OpenBus_odometer_preferences.txt`; at most the interval since the last
-  checkpoint can be lost on abrupt process termination.
+  in the launch working directory. Odometer state is persisted in
+  `OpenBus_odometer_preferences.txt`; `OPENBUS_ODOMETER_MODE` selects a shared
+  global counter or a per-model counter, with an optional configured initial
+  value. Writes are checkpointed atomically every 30 seconds and at shutdown;
+  at most the interval since the last checkpoint can be lost on abrupt
+  termination.
   AI/network sections, remaining route/timetable/HOF behavior, and
   native schedule/ticket panel behavior still need implementation or explicit
   scoping; configured driver-camera selection is now available.
@@ -328,31 +356,31 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 - [ ] Add diagnostics that distinguish "recognized and active" from
   "recognized but ignored" for every parsed configuration record.
 
-### Bus features still absent from the runtime
+### Bus features requiring further work
 
-The following OMSI BUS/model features are currently absent or only represented
-by parser alignment and should not be described as supported:
+The following OMSI BUS/model features are absent or only partially implemented.
+The implemented portions should not be mistaken for full native behavior:
 
 - Passenger mass and native cabin/door semantics. Timed boarding/alighting is
-  connected to live scheduled
-  AI/player bus stops, with movement following configured entry/exit path links
+  connected to live scheduled AI/player bus stops, with movement following
+  configured entry/exit path links
   when a connected cabin graph is available, fallback boarding/alighting
   animations between the roadside and assigned cabin seats, and occupied seats
   rendered. Basic `[passengercabin]` seat positions, illumination groups,
-  entries/exits, and
-  path links are loaded and covered by `OpenBusVehicleConfigProbe`. When a
+  entries/exits, and path links are loaded and covered by
+  `OpenBusVehicleConfigProbe`. When a
   connected graph exists, pathfinding follows one-way and bidirectional cabin
   links, and timetable offsets position stops within their mapped spline
   segments; detailed native door/aisle semantics and passenger mass remain
   unverified.
-- HOF-backed route/path selection, timetable macros beyond the map player-trip
-  workflow, stop announcements, and arrival-board data used by the script
-  system. Basic `[paths]` point/link graphs and step metadata are loaded and
-  covered by `OpenBusVehicleConfigProbe`.
-- Registration-number persistence and full selection UI. Ordered number/plate
-  pairing, runtime automatic/free selection, the distinct `number`/`ident`
-  strings, initial plate-text rendering, and live odometer publication are
-  active; parser coverage remains in
+- Native HOF route/path selection and timetable behavior beyond the current
+  map player-trip workflow, plus stop announcements and arrival-board data.
+  Basic `[paths]` point/link graphs and step metadata are loaded and covered by
+  `OpenBusVehicleConfigProbe`.
+- Native registration-selection UI parity and odometer behavior. Ordered
+  number/plate pairing, automatic/free selection, persisted choices, the
+  distinct `number`/`ident` strings, initial plate-text rendering, and live
+  odometer publication are active; parser coverage remains in
   `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections and coupling/cable behavior remain absent.
   Articulated multi-body vehicles are explicitly outside the currently
@@ -376,14 +404,14 @@ by parser alignment and should not be described as supported:
   boarding/alighting passenger on authored vehicle-cabin path links. The
   simulation updates occupancy independently of rendering; map/scenery
   path-link occupancy remains unsupported.
-- System trigger dispatch now reports chassis contacts and scheduled AI target
-  and bus-stop changes. Passenger stop-request, rail-joint, repair, and
+- System trigger dispatch reports chassis contacts, passenger stop requests,
+  and scheduled AI target and bus-stop changes. Rail-joint, repair, and
   refueling event sources remain unsupported.
 - Predefined local variables now expose live ODE wheel/brake data, odometer and
   passenger counts, weather, collision details, and scheduled-map-bus values.
-  Environmental lighting, surface IDs, fuel, door requests, train state, and
-  other listed variables without a host simulation remain defaults or
-  script-owned.
+  Passenger door requests are published for the selected doors. Environmental
+  lighting, surface IDs, fuel, train state, and other listed variables without
+  a host simulation remain defaults or script-owned.
 
 Done when unsupported configuration is visible in diagnostics and the README
 claims only behavior that is active in the runtime.
@@ -536,8 +564,9 @@ for alignment is not mistaken for supporting it.
 - [ ] Complete sound spatialization and control semantics for `[loopsound]`
   and `[3d]` beyond the current player sound loading/trigger path. Ambient
   definitions sharing a file retain independent positions and controls.
-- [ ] Add AI/network configuration support for `[ailist]`, `[aigroup_2]`,
-  `[aigroup_depot]`, `[busstop]`, `[signalroute]`, and `[StnLink]`.
+- [~] Map AI lists, depot groups, bus stops, and station links are parsed and
+  partially used for traffic and scheduled passenger service. Complete their
+  remaining native semantics and `signalroutes.cfg` routing.
 - [ ] Add environment configuration support for `[sky_textures]`,
   `[cloudtype]`, and `[startdate]`.
 - [~] Map-referenced `[currency]` and `[coin]` records provide coin values to
@@ -607,9 +636,10 @@ for alignment is not mistaken for supporting it.
 - [ ] Arrival-board lookups: `GetArrBusLine`, `GetArrBusTerminus`, and
   `GetArrBusTimeDiff` need the parent bus-stop association and arrival queue,
   which scenery script runtimes do not currently receive.
-- [~] `int_haltewunsch` is dispatched when a simulated passenger completes
-  boarding with the next stop assigned as their destination. Native-independent
-  passenger request timing is not simulated.
+- [~] `int_haltewunsch` is dispatched when the bus comes within 200 m of the
+  rider's generated pedestrian destination, or the originally assigned mapped
+  stop when no pedestrian route was found. Requests can be rearmed after an
+  intermediate stop; native timing remains unverified.
 - [~] Native and converted Lua backends now preserve the top string on chained
   `(S.$...)` stores, and native system-macro dispatch enforces object-kind
   availability like Lua registration. A cross-backend probe covers chained
@@ -673,12 +703,13 @@ diagnostic before it can be moved to the implemented baseline.
 ### Map support
 
 Implemented foundation: `global.cfg` and tile/terrain parsing, configurable
-entrypoint spawn, synchronous full-map terrain/scenery/road construction with
-distance/frustum culling and a two-tile bus-centered draw/script active window;
-supported O3D scenery (including external SCO `[model]` CFGs, transmaps, and
-O3D material alpha), tree preview cards, and a subset of `.sli` road profiles.
-These are not equivalent to full OMSI map support; see the README's map scope
-for the explicit boundary.
+entrypoint spawn, map-wide traffic/lane indexes, and active-window loading of
+terrain, scenery, and roads. Cached render assets remain loaded after leaving
+the window; collision preparation runs on a worker and ODE publication is
+limited per update. Supported scenery includes O3D models, external SCO
+`[model]` CFGs, transmaps, and material alpha; tree preview cards and a subset
+of `.sli` road profiles also render. These are not equivalent to full OMSI map
+support; see the [README map scope](README.md#map-runtime-scope) for details.
 
 #### Keyword support audit (current implementation)
 
@@ -704,10 +735,9 @@ for the explicit boundary.
   ordered SCO/model `[new_attachment]` definitions, and child rotations; missing
   parents/anchors and cycles are skipped. `[water]` markers and binary
   sidecars are parsed/validated and rendered as provisional translucent tile
-  quads. Their
-  inferred SW/SE/NE/NW height ordering, appearance, and multiple-surface
-  behavior
-  still need comparison against OMSI; water remains visual-only, not collision.
+  quads. Their inferred SW/SE/NE/NW height ordering, appearance, and
+  multiple-surface behavior still need comparison against OMSI; water remains
+  visual-only, not collision.
   `[variable_terrain]` and `[variable_terrainlightmap]` marker presence is
   parsed and reported, but dynamic terrain/lightmap rendering is unsupported.
   `[varparent]` editor ordinals are retained separately from placement IDs and
@@ -715,8 +745,8 @@ for the explicit boundary.
   association is consumed at runtime. `[rule]`/`[kill_rule]` apply the supported
   group-specific speed, density, priority, and vehicle-access fields; their
   remaining native semantics are not implemented. `[spline_terrain_align]`
-  provisionally tilts marked ordinary,
-  attached, and spline-row scenery to the sampled terrain normal without
+  provisionally tilts marked ordinary, attached, and spline-row scenery to the
+  sampled terrain normal without
   changing placement height; OMSI parity is not yet verified.
   `[spline_terrain_align_2]` spline data remains preserved but unsupported.
 - Chrono tile parsing retains the complete source lines and comment/version,
@@ -724,13 +754,12 @@ for the explicit boundary.
   payload, and preserves selector override lines as opaque data. Date-ranged
   scenario tile files are now selected at startup by inclusive
   `[startdate]`/`[enddate]`; selector edits, `[delete]`, `[typ]`, and
-  `[relabel]`
-  still have no independent runtime semantics.
+  `[relabel]` still have no independent runtime semantics.
   Global identity/description, version, background/map-camera data, marker
-  flags,
-  seasons, and traffic-density records are retained as metadata, but fields such
-  as `[worldcoordinates]` have no runtime effect; timetable/HOF and AI-list map
-  state remain out of scope. Unsupported `global.cfg` and tile sections retain
+  flags, seasons, and traffic-density records are retained as metadata, but
+  fields such as `[worldcoordinates]` have no runtime effect. Timetable/HOF and
+  AI-list state have partial runtime support, as described below. Unsupported
+  `global.cfg` and tile sections retain
   their raw payload lines with source line numbers; their runtime semantics
   remain unimplemented.
   `.map.water` presence and count-plus-four-float records are decoded and
@@ -761,21 +790,20 @@ for the explicit boundary.
   candidate tiles are derived from sampled world positions rather than the
   owning spline tile, so splines and point-backed scenery paths crossing tile
   boundaries can use the active tile containing the candidate. Initial pool
-  construction prioritizes
-  routes with candidates in the current active tiles, verifies candidate
-  positions against the active window before local-priority admission, then
-  fills remaining capacity with map-wide routes. Candidate positions keep a
-  vehicle-sized
-  margin from spline endpoints, remain over 50 m plus vehicle radius from the
-  camera, and preserve collision clearance. Scheduled buses remain restricted
-  to connected endpoints or their authored timetable origins. Population
-  changes unload vehicles off-screen; route-complete
-  actors are recycled from the bounded pool, resetting route progress, speed,
-  and junction-wait state. Road actors outside active tiles release their
-  population slots, and inactive pool vehicles can rebuild routes from local
-  connected lanes as tiles stream in. Scheduled buses retain their timetable
-  routes and pause outside active tiles. The startup pool remains the hard
-  capacity; validate long-distance streaming and population refill in-game.
+  construction prioritizes routes with candidates in the current active tiles,
+  verifies candidate positions against the active window before local-priority
+  admission, then fills remaining capacity with map-wide routes. Candidate
+  positions keep a vehicle-sized margin from spline endpoints, remain over
+  50 m plus vehicle radius from the camera, and preserve collision clearance.
+  Scheduled buses remain restricted to connected endpoints or their authored
+  timetable origins. Population changes unload vehicles off-screen;
+  route-complete actors are recycled from the bounded pool, resetting route
+  progress, speed, and junction-wait state. Road actors outside active tiles
+  release their population slots, and inactive pool vehicles can rebuild
+  routes from local connected lanes as tiles stream in. Scheduled buses retain
+  their timetable routes and pause outside active tiles. The startup pool
+  remains the hard capacity; validate long-distance streaming and population
+  refill in-game.
   When no complete timetable match exists, a route following at least two
   consecutive entries from the timetable's first checkpoint may use an
   explicitly logged, itinerary-inaccurate prefix fallback. It stops at the
@@ -789,36 +817,31 @@ for the explicit boundary.
   splines, while retaining authored junction-path curves; rendered yaw follows
   the sampled path tangent. Vehicles make seeded straight/left/right choices
   filtered by minimum turn radius. Normal acceleration/braking limits are
-  1.6/3 m/s^2, bend speeds
-  target at most 1.8 m/s^2 lateral acceleration, and curve speed has a 2 m/s
+  1.6/3 m/s^2, bend speeds target at most 1.8 m/s^2 lateral acceleration, and
+  curve speed has a 2 m/s
   floor (capped by cruise speed); routes beyond the minimum turn radius remain
   rejected at route selection. Following uses a speed-dependent
   1.5 s time headway and 2 m standstill buffer. Oriented swept footprints
-  prevent advancement
-  through player/AI/static vehicles. Same-route following respects route order
-  across spline boundaries so a rear vehicle's reservation cannot block a
-  leader on a curve. A gap- and relative-speed-based following target and a
-  gentler signal approach envelope damp speed changes while retaining swept
+  prevent advancement through player/AI/static vehicles. Same-route following
+  respects route order across spline boundaries so a rear vehicle's reservation
+  cannot block a leader on a curve. A gap- and relative-speed-based following
+  target and a gentler signal approach envelope damp speed changes while retaining swept
   collision and stop-line safeguards. Conservative crossing reservations
   age blocked junction movements at 8 priority points per second (capped at
-  255);
-  stopped actors queued at a signal or behind the player/AI bus reset their
+  255). Stopped actors queued at a signal or behind the player/AI bus reset their
   stuck timer, and pending removals are canceled while that wait remains valid.
-  any vehicle part (front, center, or rear) inside a junction counts as
+  Any vehicle part (front, center, or rear) inside a junction counts as
   committed. Approaches check the full junction connector and exit clearance
   before entry, preventing a queued merge exit from leaving a vehicle stopped
   across the main road. Committed vehicles use physical swept clearance within
   the junction instead of the larger approach headway, and accrued wait
   survives approach movement while a junction path is in lookahead. Regressions
   cover queued T-junction exits, right-turn wait aging, clearance, and
-  no-overlap.
-  Vehicles return to endpoint queues only after
-  an unconnected endpoint is off-screen; population reductions happen
-  off-screen.
-  Regressions exercise actual
-  left/right turns below 4.5 m/s on 10 m curves, radius rejection, following
-  gaps at different speeds,
-  stopped-player-bus avoidance, crossing progress/separation, long-frame
+  no-overlap. Vehicles return to endpoint queues only after an unconnected
+  endpoint is off-screen; population reductions happen off-screen.
+  Regressions exercise actual left/right turns below 4.5 m/s on 10 m curves,
+  radius rejection, following gaps at different speeds, stopped-player-bus
+  avoidance, crossing progress/separation, long-frame
   blockage, crossing wait-age priority, right-turn merge clearance, and
   four-approach no-overlap/progress. Crossing reservations distinguish
   same-direction traffic on a curved shared path from conflicting movements.
@@ -827,8 +850,7 @@ for the explicit boundary.
   permissive; regressions cover route-start, loop-wrap, conditional stops,
   jumps, and player approach-distance requests. Native stop-line fidelity,
   sign-specific controls, right-of-way parity and deadlock recovery at live
-  junctions,
-  same-direction overtaking/lane changes, and physical player-to-AI
+  junctions, same-direction overtaking/lane changes, and physical player-to-AI
   collision response are listed in the remaining-work checklist below.
 - [~] Match timetable bus paths against the complete ordered `.ttr` track-entry
   sequence, including repeated scenery-object IDs and their path selectors, and
@@ -849,9 +871,9 @@ for the explicit boundary.
   does not register player passenger stops for the incomplete itinerary.
   Complete timetable matches are preferred over these fallbacks, so a partial
   match cannot hide a later complete route. Road traffic paths authored inside
-  placed scenery
-  objects retain the parent object's map ID and path index, allowing repeated
-  timetable `.ttr` entries for junction paths to match the directed lane graph.
+  placed scenery objects retain the parent object's map ID and path index,
+  allowing repeated timetable `.ttr` entries for junction paths to match the
+  directed lane graph.
   Repeated checkpoints on ordinary map splines are collapsed to one route
   segment; distinct placed-scenery paths retain their individual selectors.
   A live Cotterell run still reports three complete routes and seven partial
@@ -863,10 +885,10 @@ for the explicit boundary.
   progress at 100 m intervals
   through 700 m, and reached its open route end after 785.68 m. Full OMSI
   schedule parity and the remaining partial map routes still need validation.
-  The current seven fallback candidates match only timetable suffixes, omitting
-  121 or 146 earlier checkpoints; startup diagnostics now report the matched
-  offset, omitted prefix, and next expected spline/path rather than implying
-  those are complete. A bounded authored-origin graph check now reports the
+  An earlier diagnostic found seven suffix-only candidates omitting 121 or 146
+  earlier checkpoints; the current prefix fallback instead starts at the
+  timetable origin and reports incomplete itineraries explicitly. A bounded
+  authored-origin graph check reports the
   longest ordered timetable prefix reachable from each unmatched trip's
   starting checkpoint. A live Cotterell startup found one X18 trip matching
   73/205 checkpoints from spline 10433, lane 5, before the graph disconnects
@@ -899,8 +921,8 @@ for the explicit boundary.
   until it is off-screen; increases admit preallocated actors only at clear
   off-screen path positions, advancing inactive actors invisibly until a safe
   admission point is available. Startup retries a bounded number of route
-  candidates and wraps
-  looping spawn distances before open-route endpoints; routes with no usable
+  candidates and wraps looping spawn distances before open-route endpoints;
+  routes with no usable
   distance after the endpoint margin are rejected instead of stacking actors
   at the route start. The traffic runtime probe exercises repeated in-range AI
   and human placement, fills requested four-actor AI and human populations
@@ -1017,13 +1039,12 @@ the outstanding implementation and validation tasks:
   with wait aging fairly ordering equal-priority movements except for the
   provisional right-before-left preference at straight crossings. Before
   claiming a junction, a vehicle on a lower-priority approach spline gives way
-  to
-  higher-priority traffic only when predicted arrival times overlap at a
+  to higher-priority traffic only when predicted arrival times overlap at a
   crossing or merge, and releases an unused claim if such traffic appears;
   priority traffic ignores that unused claim. Deadlock exemptions follow
-  actual blocker chains instead of bus proximity. Synthetic
-  regressions cover separation, progress, junction clearing, priority-over-
-  wait, default straight-crossing right-of-way, main-road priority at
+  actual blocker chains instead of bus proximity. Synthetic regressions cover
+  separation, progress, junction clearing, priority over wait age, default
+  straight-crossing right-of-way, main-road priority at
   T-junctions, unobstructed turn transitions, and approach stop distance.
   Validate native turning/right-of-way behavior and deadlock recovery at
   representative live junctions.
@@ -1052,13 +1073,11 @@ the outstanding implementation and validation tasks:
   native OMSI parity.
 
 - [ ] Implement or explicitly scope out the remaining runtime effects of
-  retained
-  `global.cfg` settings: `[description]`, `[NextIDCode]`,
+  retained `global.cfg` settings: `[description]`, `[NextIDCode]`,
   `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]`, `[LHT]`,
   `[backgroundimage]`, `[mapcam]`, `[moneysystem]`, `[ticketpack]`,
   `[repair_time_min]`, `[years]`, `[realyearoffset]`, `[standarddepot]`,
-  `[addseason]`,
-  `[trafficdensity_road]`, and `[trafficdensity_passenger]` beyond the
+  `[addseason]`, `[trafficdensity_road]`, and `[trafficdensity_passenger]` beyond the
   provisional population multiplier above.
 - [~] Spline `skewStart`/`skewEnd` fields now drive a provisional longitudinal
   shear in rendered/collision road geometry. Verify the assumed units and
@@ -1067,15 +1086,16 @@ the outstanding implementation and validation tasks:
   `[heightprofile]` lateral extents for cant clamping; native visual parity and
   full authored height-profile behavior remain unresolved. The Cotterell log
   reports 951 profile strips with fewer than two points (including
-  `pavement_a.sli`).
-  Two currently installed `pavement_a.sli` copies each parse as two renderable
-  strips with two points apiece and no invalid texture indices. This does not
+  `pavement_a.sli`). Two currently installed `pavement_a.sli` copies each parse
+  as two renderable strips with two points apiece and no invalid texture
+  indices. This does not
   reproduce the retained log or identify its exact source asset/version; rerun
   a representative map and investigate any remaining short strips.
 - [~] Provisional `[water]` tile quads are decoded, validated, rendered, and
   covered by `OpenBusMapWaterGeometryProbe`; OMSI parity and water collision
-  remain incomplete. `[variable_terrain]` and `[variable_terrainlightmap]`,
-  `[rule]`, `[kill_rule]`, and `[spline_terrain_align_2]` remain unsupported.
+  remain incomplete. `[variable_terrain]`, `[variable_terrainlightmap]`, and
+  `[spline_terrain_align_2]` remain unsupported; `[rule]` and `[kill_rule]`
+  have partial traffic-rule support.
   Decode/render `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where
   applicable. The Cotterell run skipped 27 variable-terrain tiles, 27
   variable-terrain-lightmap tiles, 2,212 `[rule]` records, and 1 `[kill_rule]`.
@@ -1084,8 +1104,7 @@ the outstanding implementation and validation tasks:
   or have no independent runtime effect.
 - [ ] Investigate the 7 spline attachments with no local placement in the
   Cotterell run (examples reference `splineIndex=154`, `102`, and `5`);
-  determine
-  whether they are unresolved repeater-master references, invalid local spline
+  determine whether they are unresolved repeater-master references, invalid local spline
   records, ambiguous IDs, or bad source placements. Unique reciprocal spline
   chains now resolve across tile boundaries for ordinary attachment rows.
   Cotterell is not present in the current Linux installation's map directory,
@@ -1095,10 +1114,9 @@ the outstanding implementation and validation tasks:
   parity with representative installed scenery; 9 parts were skipped in the
   Cotterell run, including Streetobjects_RUE light models.
 - [~] An empty-name/empty-path texture request is now treated as an
-  intentionally
-  untextured batch instead of a decode failure, and decode failures include the
-  source mesh path. The parked Opel Manta DDS remains unverified because its
-  model asset is not present in this checkout.
+  intentionally untextured batch instead of a decode failure, and decode
+  failures include the source mesh path. The parked Opel Manta DDS remains
+  unverified because its model asset is not present in this checkout.
 
 - [ ] Add targeted, repeatable in-context screenshot evidence for curved-road
   geometry, sidewalks, markings, texture phase, and seams at linked spline
@@ -1179,9 +1197,9 @@ the outstanding implementation and validation tasks:
   script-variable inheritance remains distinct and unsupported.
 - [~] Decode `.map.water` sidecars into per-surface four-height records;
   determine corner/quadrant ordering and validate provisional water rendering.
-  Per-tile/
-  detail/seasonal ground textures, map lightmaps, and Chrono variant resolution
-  remain. Chrono selector IDs and opaque override payload lines are parser-only.
+  Remaining per-tile texture semantics, seasonal ground textures, map lightmaps,
+  and Chrono variant resolution need work. Chrono selector IDs and opaque
+  override payload lines are parser-only.
 - [~] Map loading is being moved to background preparation with main-thread
   publication. Map-wide tile/traffic indexing now runs on the asset worker pool;
   map startup waits for that phase and for the initial active window. Newly
@@ -1196,8 +1214,7 @@ the outstanding implementation and validation tasks:
   ready; gameplay then keeps later tile requests asynchronous. Initial startup
   preparation failures are reported to the menu instead of leaving it waiting
   indefinitely. Tile jobs are prioritized by distance to the requested center
-  and
-  capped to eight pending preparations per job type; map and terrain decoding
+  and capped to eight pending preparations per job type; map and terrain decoding
   overlap. Per-tile `.sco` and model configuration resolution/parsing is now
   scheduled on workers before scene publication; results are consumed and
   committed on the renderer thread, including attached-object parent assets.
@@ -1316,8 +1333,7 @@ limitations.
   p50/p95 and keep traced scope totals separate from frame time.
 - [~] Traffic driving reuses overlapping curvature samples and filters following
   and priority candidates with spatial indexes, retaining same-route leaders and
-  conservative fallbacks. `OpenBusMapTrafficRuntimeProbe
-  --benchmark-traffic-scale`
+  conservative fallbacks. `OpenBusMapTrafficRuntimeProbe --benchmark-traffic-scale`
   covers 333 separated actors, while `--benchmark-junctions` hashes junction
   state on every update. Uninstrumented Linux release runs measured
   approximately 22.3-23.6 ms/update before and 20.0-20.8 ms/update after for
@@ -1336,8 +1352,7 @@ limitations.
   now smooths requested-rate changes and only updates the worker when the
   configured rate has changed materially, avoiding per-render-frame lock and
   wakeup churn. Validate rate stability under real backlog and high-load
-  captures;
-  do not change timestep or backlog behavior without those measurements.
+  captures; do not change timestep or backlog behavior without those measurements.
 - [~] Traffic actors more than 500 m from the main camera use 2 m curve-speed
   sampling, promoted back to full sampling inside 400 m. Following, collision,
   signal, junction, obstacle-clearance, and authored speed-limit checks remain
@@ -1376,11 +1391,9 @@ limitations.
   reordering and upload for each view. Index buffers are bounded to three view
   directions per batch; profiler scopes separate cache hits, CPU sorting, and
   index uploads. Measure the new scopes in a crowded scene to quantify
-  frame-time
-  improvement.
+  frame-time improvement.
 - [~] Within each traffic substep, junction ranges and unchanged actor
-  footprints
-  are reused, and claim-section overlap checks are shared across samples.
+  footprints are reused, and claim-section overlap checks are shared across samples.
   The traffic probe checks stationary leaders resuming across an occupancy-cell
   boundary. In three uninstrumented Linux release comparisons, the junction
   benchmark kept the same state hash and took 4.39-4.61 ms/update versus

@@ -8,15 +8,48 @@ directed station link has a complete ordered path. Player buses can board and
 alight at mapped calls when stationary, aligned with their approach direction,
 and within 20 metres of the stop. Waiting passengers walk from their authored
 waiting positions to the actual front entry and remain there until the entry
-door's `pax_entryN_open` variable is set. Exiting similarly requires an open
+door's `pax_entryN_open` variable is set. Player-bus entry waiting positions
+form a single line beside the bus; scheduled AI buses do not yet use this
+approach queue. Exiting similarly requires an open
 `pax_exitN_open` door. The player stop remains active until the bus moves away;
-an interrupted boarder returns to the shared queue. Passengers board with the
-next stop as their destination and alight
-there; any riders remaining at a route's final mapped call alight before the
+when the bus starts moving, service is cancelled before passengers advance and
+an interrupted boarder returns to the shared queue. Boarding riders receive a
+deterministic service and downstream stop from the located timetable routes
+available when their waiting record is first assigned. Only a bus on the
+matching route (or the same timetable key and line) that serves the selected
+stop near the rider's destination can board that rider. Cancellation returns the same journey to the shared
+queue; routes registered later do not change assigned journeys. Before boarding,
+a rider is assigned a destination 15–45 m forward on a nearby directed human
+spline where available. If no suitable spline exists, the mapped stop is used
+instead and the fallback is logged. When the human lane network is still being
+prepared, an eligible scheduled bus holds its dwell rather than departing solely
+because destination selection is pending. If no located mapped journey is
+available, the rider waits and the stop is reported in the log.
+Any riders remaining at a route's final mapped call alight before the
 scheduled bus ends its trip. Waiting queues and boarding/alighting positions
 use the correct passenger side for left- and right-hand traffic maps, with
 curb-side and queue offsets derived from the map's north-zero road heading.
 Ambient map pedestrians remain a separate population.
+Once within 200 m of the generated destination (or the mapped stop for the
+fallback), each seated rider requests its assigned stop via `int_haltewunsch`
+when the vehicle script supplies the trigger.
+All remaining route calls are checked, so an intervening stop does not hide a
+nearby later destination. Requests for later destinations are rearmed after
+serving an intermediate stop, whose door cycle may have cleared the bell.
+When the bus arrives, the configured exterior exit position for each seat is
+checked against the rider's destination before normal destination-based
+alighting. A rider left aboard because a repeated stop ID is too far away can
+request a later call again. The mapped-stop fallback retains its originally
+assigned world position. Player-bus exits are rechecked during alighting, so
+a rider waits aboard if the stopped bus drifts out of range. Forced unloading
+at terminal calls or on service cancellation can still override the limit;
+those cases need further work.
+After alighting, a separate pedestrian actor follows its assigned directed
+route if the exit is within 0.5 m horizontally and vertically of a forward
+route point and the short connector does not move toward the bus. Otherwise
+the rider disappears and a warning is logged. This conservative proximity
+check does not establish road safety or guarantee a handoff for every sidewalk;
+visual and end-to-end validation remain outstanding.
 Player stop discovery uses a timetable-route catalog registered independently
 of scheduled AI bus instances, so setting the AI bus population to zero does
 not disable player boarding. The catalog still requires a loadable bus
@@ -29,12 +62,22 @@ the authored seat height; zero-height positions remain standing. Passengers
 walk to the seat before sitting and stand up before alighting. Missing or
 incomplete model skin weights use an approximate seated-only geometric rig,
 while normal walking retains its existing animation.
+Cabin traversal uses the length of the rendered path at a nominal 1.4 m/s,
+with time for the sit/stand transition and a minimum 0.75-second interval.
+The same duration drives simulation and rendering; visual validation remains
+outstanding.
 On multi-door buses, boarders request and use the first configured entry.
 Alighters request and use the shortest reachable configured exit from their
 seat's nearest cabin path point. If no exit is reachable, they use the nearest
 known exit, or the first configured exit if its geometry is unavailable. The
-selected door must be open before movement progresses; changing to the next
-passenger re-evaluates the door. Door slots beyond index 7 are not managed.
+selected entry must be open before boarding starts. An alighter with a
+connected path can stand and walk to a waiting point up to 0.5 m short of the
+selected exit along the path while it is closed, but cannot pass it until it
+opens. Without a known
+connected exit path, the alighter remains seated until the door opens.
+Changing to the next passenger re-evaluates the door and waiting point. Only
+one alighter moves at a time; the others remain seated. Door slots beyond index
+7 are not managed.
 Waiting passengers request entry only when a seat is free or an alighter is
 due to free one; a reserved boarder keeps the request until boarding completes.
 Full buses leave the remaining queue in place without holding the entry request.
@@ -118,15 +161,16 @@ occupancy remain unimplemented.
 `MapPassengerServiceRuntime` maintains per-stop waiting queues, fixed seat
 occupancy, alighting, a dwell timer, and boarding at a bounded rate. A
 passenger is reserved from the shared queue while the boarding interval runs,
-then assigned to a seat on completion. Queue model identities derive from the
-stop ID and queue position, so the nearest displayed rider keeps the same
-identity when reserved, seated, and later alighted. Its boarding origin remains
-fixed when another bus consumes the shared queue. A departure or service
-cancellation first synchronizes with the shared count before returning an
-unfinished boarder. The returned rider keeps their model identity in the queue
-and through later boarding, even if another bus reserved a rider concurrently.
-Model identities for newly replenished demand remain deterministic and are not
-globally unique passenger identifiers.
+then assigned to a seat on completion. Shared waiting records retain their model,
+service, destination, arrival order and physical queue slot. A bus selects the
+oldest matching rider without removing or moving passengers for other services.
+Reservations retain their slots until boarding finishes or is cancelled, and
+returned riders retain their journeys even if another bus reserved a rider
+concurrently. Replenished demand exceeding the stop's available queue slots is
+held as pending demand until a slot is free. Model indices are deterministic
+and are not globally unique passenger identifiers. Assignments use mapped stop
+IDs, not exact timetable-call indices, and are limited to routes known at the
+time of assignment.
 During boarding and alighting, the
 configured human model animates between the roadside and seat. If the authored
 cabin entry/exit points and directed path-link graph connect the endpoints,

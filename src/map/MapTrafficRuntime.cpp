@@ -501,7 +501,10 @@ std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& 
 }
 
 MapPassengerServiceRuntime::MapPassengerServiceRuntime(std::size_t seatCount)
-    : seatDestinations_(seatCount), seatPassengerModelIndices_(seatCount) {}
+    : seatDestinations_(seatCount), seatPassengerModelIndices_(seatCount),
+      seatPedestrianJourneys_(seatCount), seatDestinationPositions_(seatCount),
+      seatStopRequests_(seatCount, false), seatOutsideAlightingRadius_(seatCount, false),
+      seatForcedAlighting_(seatCount, false) {}
 
 void MapPassengerServiceRuntime::setWaitingPassengers(int stopId, std::size_t count) {
     if (stopId != 0) {
@@ -514,17 +517,61 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
         stop.dwellSeconds < 0.0) {
         return false;
     }
+    if (!stop.alightingPositions.empty() &&
+        (stop.alightingPositions.size() != seatDestinations_.size() ||
+         !std::ranges::all_of(stop.alightingPositions, [](const auto& position) {
+             return std::ranges::all_of(position, [](double value) { return std::isfinite(value); });
+         }))) {
+        throw std::invalid_argument("Passenger alighting positions must match the seats and be finite");
+    }
+    if (!stop.onwardStopIds.empty()) {
+        std::unordered_set<int> uniqueStops;
+        if (stop.nextStopId != stop.onwardStopIds.front()) {
+            throw std::invalid_argument("First passenger destination must match the next stop");
+        }
+        for (const int destination : stop.onwardStopIds) {
+            if (destination <= 0 || destination == stop.stopId ||
+                !uniqueStops.insert(destination).second) {
+                throw std::invalid_argument(
+                    "Passenger destination stops must be positive, unique and distinct from origin");
+            }
+        }
+    }
     currentStopId_ = stop.stopId;
+    eligibleWaitingPassengers_.reset();
     nextStopId_ = stop.nextStopId;
+    onwardStopIds_ = stop.onwardStopIds;
+    if (onwardStopIds_.empty() && nextStopId_ != 0) {
+        onwardStopIds_.push_back(nextStopId_);
+    }
     clearPassengerPathLinkProgressProfile();
     queuedAlightingSeats_.clear();
+    outOfRangeAssignedPassengers_ = 0;
+    std::fill(seatOutsideAlightingRadius_.begin(), seatOutsideAlightingRadius_.end(), false);
+    std::fill(seatForcedAlighting_.begin(), seatForcedAlighting_.end(), false);
     alightingSeat_.reset();
     alightingAccumulatorSeconds_ = 0.0;
+    alightingAnimationSeconds_ = 0.75;
+    alightingAnimationDurationSet_ = false;
+    alightingDoorWaitProgress_.reset();
     std::vector<bool> selectedSeats(seatDestinations_.size(), false);
     for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
-        if (seatDestinations_[seat] && *seatDestinations_[seat] == stop.stopId) {
+        const auto& destination = seatPedestrianJourneys_[seat]
+                                      ? std::optional{seatPedestrianJourneys_[seat]->destination}
+                                      : seatDestinationPositions_[seat];
+        const bool withinDestinationRadius =
+            stop.alightingPositions.empty() || !destination ||
+            std::hypot(stop.alightingPositions[seat][0] - (*destination)[0],
+                       stop.alightingPositions[seat][1] - (*destination)[1]) <=
+                passengerStopRequestRadiusMeters;
+        if (seatDestinations_[seat] && *seatDestinations_[seat] == stop.stopId &&
+            withinDestinationRadius) {
             queuedAlightingSeats_.push_back(seat);
             selectedSeats[seat] = true;
+        } else if (seatDestinations_[seat] && *seatDestinations_[seat] == stop.stopId &&
+                   !withinDestinationRadius) {
+            ++outOfRangeAssignedPassengers_;
+            seatOutsideAlightingRadius_[seat] = true;
         }
     }
     std::size_t remainingToAlight = stop.passengersAlighting > queuedAlightingSeats_.size()
@@ -535,6 +582,7 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
         if (seatDestinations_[seatIndex] && !selectedSeats[seatIndex]) {
             queuedAlightingSeats_.push_back(seatIndex);
             selectedSeats[seatIndex] = true;
+            seatForcedAlighting_[seatIndex] = true;
             --remainingToAlight;
         }
     }
@@ -563,12 +611,19 @@ void MapPassengerServiceRuntime::endServiceAtCurrentStop() {
         ++waitingByStop_[currentStopId_];
         boardingSeat_.reset();
         boardingPassengerModelIndex_.reset();
+        boardingPassengerDestinationStopId_.reset();
+        boardingPedestrianJourney_.reset();
+        boardingDestinationPosition_.reset();
         boardingPassengerQueuePosition_.reset();
+        boardingPassengerFixedQueueSlot_.reset();
         boardingAccumulatorSeconds_ = 0.0;
         clearPassengerPathLinkProgressProfile();
     }
     queuedAlightingSeats_.clear();
     for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat]) {
+            seatForcedAlighting_[seat] = true;
+        }
         if (seatDestinations_[seat] && alightingSeat_ != seat) {
             queuedAlightingSeats_.push_back(seat);
         }
@@ -577,6 +632,9 @@ void MapPassengerServiceRuntime::endServiceAtCurrentStop() {
         alightingSeat_ = queuedAlightingSeats_.front();
         queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
         alightingAccumulatorSeconds_ = 0.0;
+        alightingAnimationSeconds_ = 0.75;
+        alightingAnimationDurationSet_ = false;
+        alightingDoorWaitProgress_.reset();
         clearPassengerPathLinkProgressProfile();
     }
     dwelling_ = dwelling_ || alightingSeat_.has_value();
@@ -595,11 +653,17 @@ void MapPassengerServiceRuntime::depart() {
     }
     boardingSeat_.reset();
     boardingPassengerModelIndex_.reset();
+    boardingPassengerDestinationStopId_.reset();
+    boardingPedestrianJourney_.reset();
+    boardingDestinationPosition_.reset();
     boardingPassengerQueuePosition_.reset();
+    boardingPassengerFixedQueueSlot_.reset();
+    eligibleWaitingPassengers_.reset();
     boardingAccumulatorSeconds_ = 0.0;
     alightingSeat_.reset();
     queuedAlightingSeats_.clear();
     alightingAccumulatorSeconds_ = 0.0;
+    alightingDoorWaitProgress_.reset();
     dwellRemainingSeconds_ = 0.0;
     dwelling_ = false;
     clearPassengerPathLinkProgressProfile();
@@ -608,27 +672,56 @@ void MapPassengerServiceRuntime::depart() {
 void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoarding,
                                          bool allowAlighting, bool holdAtStop,
                                          bool stopAfterAlightingPassenger,
-                                         MapPassengerQueueIdentities* queueIdentities) {
+                                         MapPassengerQueueIdentities* queueIdentities,
+                                         bool requireAnimationDuration,
+                                         const MapPassengerBoardingSelection* selectedPassenger,
+                                         bool requireSelectedPassenger, bool pauseDwellTimer) {
     if (!dwelling_ || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) {
         return;
     }
-    constexpr double boardingIntervalSeconds = 0.75;
-    constexpr double passengerAnimationSeconds = 0.75;
+    if (selectedPassenger && (!requireSelectedPassenger || !requireAnimationDuration ||
+                              queueIdentities != nullptr || boardingSeat_)) {
+        throw std::invalid_argument("Selected boarding requires a new, duration-gated reservation");
+    }
+    if (selectedPassenger &&
+        ((selectedPassenger->destinationPosition &&
+          !std::ranges::all_of(*selectedPassenger->destinationPosition,
+                               [](double value) { return std::isfinite(value); })) ||
+         (selectedPassenger->pedestrianJourney &&
+          !std::ranges::all_of(selectedPassenger->pedestrianJourney->destination,
+                               [](double value) { return std::isfinite(value); })))) {
+        throw std::invalid_argument("Selected passenger destination must be finite");
+    }
     const double dwellAtStartSeconds =
         holdAtStop ? std::max(dwellRemainingSeconds_, elapsedSeconds) : dwellRemainingSeconds_;
     double elapsedForAlightingSeconds = 0.0;
     double alightingSeconds = elapsedSeconds;
-    while (allowAlighting && alightingSeconds > 1.0e-9 && alightingSeat_) {
-        const double timeToAlight = passengerAnimationSeconds - alightingAccumulatorSeconds_;
+    while (alightingSeconds > 1.0e-9 && alightingSeat_) {
+        if (requireAnimationDuration && !alightingAnimationDurationSet_) {
+            break;
+        }
+        const double allowedProgress =
+            allowAlighting ? 1.0 : alightingDoorWaitProgress_.value_or(0.0);
+        const double timeToAlight = std::max(0.0, allowedProgress * alightingAnimationSeconds_ -
+                                                      alightingAccumulatorSeconds_);
+        if (timeToAlight <= 1.0e-9) {
+            break;
+        }
         const double alightingTime = std::min(alightingSeconds, timeToAlight);
         alightingAccumulatorSeconds_ += alightingTime;
         alightingSeconds -= alightingTime;
         elapsedForAlightingSeconds += alightingTime;
-        if (alightingAccumulatorSeconds_ + 1.0e-9 >= passengerAnimationSeconds) {
+        if (allowAlighting && alightingAccumulatorSeconds_ + 1.0e-9 >= alightingAnimationSeconds_) {
             seatDestinations_[*alightingSeat_].reset();
             seatPassengerModelIndices_[*alightingSeat_].reset();
+            seatPedestrianJourneys_[*alightingSeat_].reset();
+            seatDestinationPositions_[*alightingSeat_].reset();
+            seatStopRequests_[*alightingSeat_] = false;
             alightingSeat_.reset();
             alightingAccumulatorSeconds_ = 0.0;
+            alightingAnimationSeconds_ = 0.75;
+            alightingAnimationDurationSet_ = false;
+            alightingDoorWaitProgress_.reset();
             clearPassengerPathLinkProgressProfile();
             if (!queuedAlightingSeats_.empty()) {
                 alightingSeat_ = queuedAlightingSeats_.front();
@@ -649,8 +742,13 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
     std::size_t& waiting = waitingByStop_[currentStopId_];
     while (activeSeconds > 1.0e-9) {
         if (!boardingSeat_) {
-            if (!allowBoarding || nextStopId_ == 0 || waiting == 0) {
+            if (!allowBoarding || nextStopId_ == 0 || waiting == 0 ||
+                (requireSelectedPassenger && selectedPassenger == nullptr)) {
                 break;
+            }
+            if (selectedPassenger &&
+                !acceptsPassengerDestination(selectedPassenger->destinationStopId)) {
+                throw std::invalid_argument("Selected passenger destination is not served");
             }
             const auto seat = std::find_if(
                 seatDestinations_.begin(), seatDestinations_.end(),
@@ -663,43 +761,49 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             --waiting;
             boardingPassengerQueuePosition_ = waiting;
             boardingPassengerModelIndex_ =
-                queueIdentities ? queueIdentities->take(currentStopId_, waiting)
-                                : mapScheduledPassengerModelIdentity(currentStopId_, waiting);
+                selectedPassenger ? selectedPassenger->modelIndex
+                : queueIdentities ? queueIdentities->take(currentStopId_, waiting)
+                                  : mapScheduledPassengerModelIdentity(currentStopId_, waiting);
+            boardingPassengerFixedQueueSlot_ =
+                selectedPassenger ? std::optional<std::size_t>(selectedPassenger->queueSlot)
+                                  : std::nullopt;
+            if (onwardStopIds_.empty()) {
+                throw std::logic_error("Boarding passenger has no onward destination");
+            }
+            boardingPassengerDestinationStopId_ =
+                selectedPassenger
+                    ? selectedPassenger->destinationStopId
+                    : onwardStopIds_[*boardingPassengerModelIndex_ % onwardStopIds_.size()];
+            boardingPedestrianJourney_ =
+                selectedPassenger ? selectedPassenger->pedestrianJourney : std::nullopt;
+            boardingDestinationPosition_ =
+                selectedPassenger ? selectedPassenger->destinationPosition : std::nullopt;
             boardingAccumulatorSeconds_ = 0.0;
+            boardingAnimationSeconds_ = 0.75;
+            boardingAnimationDurationSet_ = false;
             clearPassengerPathLinkProgressProfile();
         }
-        if (!allowBoarding) {
+        if (!allowBoarding || (requireAnimationDuration && !boardingAnimationDurationSet_)) {
             break;
         }
-        const double timeToBoard = boardingIntervalSeconds - boardingAccumulatorSeconds_;
+        const double timeToBoard = boardingAnimationSeconds_ - boardingAccumulatorSeconds_;
         const double boardingTime = std::min(activeSeconds, timeToBoard);
         boardingAccumulatorSeconds_ += boardingTime;
         activeSeconds -= boardingTime;
-        if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
-            seatDestinations_[*boardingSeat_] = nextStopId_;
-            seatPassengerModelIndices_[*boardingSeat_] = boardingPassengerModelIndex_;
-            ++passengerStopRequestSequence_;
-            boardingSeat_.reset();
-            boardingPassengerModelIndex_.reset();
-            boardingPassengerQueuePosition_.reset();
-            boardingAccumulatorSeconds_ = 0.0;
-            clearPassengerPathLinkProgressProfile();
+        if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingAnimationSeconds_) {
+            completeBoardingPassenger();
         }
     }
     dwellRemainingSeconds_ =
-        std::max(0.0, dwellAtStartSeconds - std::min(elapsedSeconds, dwellAtStartSeconds));
+        pauseDwellTimer
+            ? dwellAtStartSeconds
+            : std::max(0.0, dwellAtStartSeconds - std::min(elapsedSeconds, dwellAtStartSeconds));
     const double overrunSeconds = elapsedSeconds - std::min(elapsedSeconds, dwellAtStartSeconds);
-    if (allowBoarding && boardingSeat_ && overrunSeconds > 0.0) {
+    if (allowBoarding && boardingSeat_ && overrunSeconds > 0.0 &&
+        (!requireAnimationDuration || boardingAnimationDurationSet_)) {
         boardingAccumulatorSeconds_ += overrunSeconds;
-        if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
-            seatDestinations_[*boardingSeat_] = nextStopId_;
-            seatPassengerModelIndices_[*boardingSeat_] = boardingPassengerModelIndex_;
-            ++passengerStopRequestSequence_;
-            boardingSeat_.reset();
-            boardingPassengerModelIndex_.reset();
-            boardingPassengerQueuePosition_.reset();
-            boardingAccumulatorSeconds_ = 0.0;
-            clearPassengerPathLinkProgressProfile();
+        if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingAnimationSeconds_) {
+            completeBoardingPassenger();
         }
     }
     if (!holdAtStop && dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_) {
@@ -707,6 +811,26 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
         dwelling_ = false;
     }
     updatePassengerPathLinkIndex();
+}
+
+void MapPassengerServiceRuntime::completeBoardingPassenger() {
+    if (!boardingSeat_ || !boardingPassengerModelIndex_ || !boardingPassengerDestinationStopId_) {
+        throw std::logic_error("Completed boarding passenger has incomplete journey data");
+    }
+    seatDestinations_[*boardingSeat_] = *boardingPassengerDestinationStopId_;
+    seatPassengerModelIndices_[*boardingSeat_] = *boardingPassengerModelIndex_;
+    seatPedestrianJourneys_[*boardingSeat_] = boardingPedestrianJourney_;
+    seatDestinationPositions_[*boardingSeat_] = boardingDestinationPosition_;
+    seatStopRequests_[*boardingSeat_] = false;
+    boardingSeat_.reset();
+    boardingPassengerModelIndex_.reset();
+    boardingPassengerDestinationStopId_.reset();
+    boardingPedestrianJourney_.reset();
+    boardingDestinationPosition_.reset();
+    boardingPassengerQueuePosition_.reset();
+    boardingPassengerFixedQueueSlot_.reset();
+    boardingAccumulatorSeconds_ = 0.0;
+    clearPassengerPathLinkProgressProfile();
 }
 
 bool MapPassengerServiceRuntime::dwelling() const noexcept {
@@ -740,8 +864,23 @@ bool MapPassengerServiceRuntime::canAcceptWaitingPassenger() const noexcept {
     return false;
 }
 
+bool MapPassengerServiceRuntime::acceptsPassengerDestination(int stopId) const noexcept {
+    return std::find(onwardStopIds_.begin(), onwardStopIds_.end(), stopId) != onwardStopIds_.end();
+}
+
+void MapPassengerServiceRuntime::setEligibleWaitingPassengers(
+    std::optional<std::size_t> count) noexcept {
+    eligibleWaitingPassengers_ = count;
+}
+
+std::size_t MapPassengerServiceRuntime::eligibleWaitingPassengers() const noexcept {
+    return eligibleWaitingPassengers_.value_or(waitingPassengers(currentStopId_));
+}
+
 double MapPassengerServiceRuntime::boardingProgress() const noexcept {
-    return boardingSeat_ ? std::clamp(boardingAccumulatorSeconds_ / 0.75, 0.0, 1.0) : 0.0;
+    return boardingSeat_
+               ? std::clamp(boardingAccumulatorSeconds_ / boardingAnimationSeconds_, 0.0, 1.0)
+               : 0.0;
 }
 
 std::optional<std::size_t> MapPassengerServiceRuntime::boardingSeatIndex() const noexcept {
@@ -752,8 +891,30 @@ bool MapPassengerServiceRuntime::alightingPassenger() const noexcept {
     return alightingSeat_.has_value();
 }
 
+std::size_t MapPassengerServiceRuntime::outOfRangeAssignedPassengers() const noexcept {
+    return outOfRangeAssignedPassengers_;
+}
+
+bool MapPassengerServiceRuntime::canCurrentPassengerAlightAt(
+    const std::array<double, 3>& position) const {
+    if (!std::ranges::all_of(position, [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Passenger alighting position must be finite");
+    }
+    if (!alightingSeat_ || seatForcedAlighting_[*alightingSeat_]) {
+        return true;
+    }
+    const auto& journey = seatPedestrianJourneys_[*alightingSeat_];
+    const auto destination =
+        journey ? std::optional{journey->destination} : seatDestinationPositions_[*alightingSeat_];
+    return !destination ||
+           std::hypot(position[0] - (*destination)[0], position[1] - (*destination)[1]) <=
+               passengerStopRequestRadiusMeters;
+}
+
 double MapPassengerServiceRuntime::alightingProgress() const noexcept {
-    return alightingSeat_ ? std::clamp(alightingAccumulatorSeconds_ / 0.75, 0.0, 1.0) : 0.0;
+    return alightingSeat_ ? std::clamp(alightingAccumulatorSeconds_ / alightingAnimationSeconds_,
+                                       0.0, 1.0)
+                          : 0.0;
 }
 
 std::optional<std::size_t> MapPassengerServiceRuntime::alightingSeatIndex() const noexcept {
@@ -765,8 +926,15 @@ MapPassengerServiceRuntime::boardingPassengerModelIndex() const noexcept {
     return boardingPassengerModelIndex_;
 }
 
+std::optional<int> MapPassengerServiceRuntime::boardingPassengerDestinationStopId() const noexcept {
+    return boardingPassengerDestinationStopId_;
+}
+
 std::optional<std::size_t>
 MapPassengerServiceRuntime::boardingPassengerQueueSlot(std::size_t initialCount) const {
+    if (boardingPassengerFixedQueueSlot_) {
+        return boardingPassengerFixedQueueSlot_;
+    }
     if (!boardingPassengerQueuePosition_) {
         return std::nullopt;
     }
@@ -779,9 +947,104 @@ std::uint64_t MapPassengerServiceRuntime::passengerStopRequestSequence() const n
     return passengerStopRequestSequence_;
 }
 
+bool MapPassengerServiceRuntime::hasUnrequestedPassengerStop(int stopId) const noexcept {
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat] == stopId && !seatStopRequests_[seat]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void MapPassengerServiceRuntime::requestStopForPassengers(int stopId, double distanceMeters) {
+    if (stopId <= 0 || !std::isfinite(distanceMeters) || distanceMeters < 0.0) {
+        throw std::invalid_argument("Passenger stop request requires a valid stop and distance");
+    }
+    if (distanceMeters > passengerStopRequestRadiusMeters) {
+        return;
+    }
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat] == stopId && !seatStopRequests_[seat]) {
+            seatStopRequests_[seat] = true;
+            ++passengerStopRequestSequence_;
+        }
+    }
+}
+
+void MapPassengerServiceRuntime::requestStopForPassengers(
+    int stopId, const std::array<double, 3>& busPosition,
+    const std::array<double, 3>& stopPosition) {
+    if (stopId <= 0 ||
+        !std::ranges::all_of(busPosition, [](double value) { return std::isfinite(value); }) ||
+        !std::ranges::all_of(stopPosition, [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Passenger stop request requires finite positions");
+    }
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat] != stopId || seatStopRequests_[seat]) {
+            continue;
+        }
+        const auto& destination = seatPedestrianJourneys_[seat]
+                                      ? seatPedestrianJourneys_[seat]->destination
+                                      : seatDestinationPositions_[seat].value_or(stopPosition);
+        if (std::hypot(destination[0] - busPosition[0], destination[1] - busPosition[1]) <=
+            passengerStopRequestRadiusMeters) {
+            seatStopRequests_[seat] = true;
+            ++passengerStopRequestSequence_;
+        }
+    }
+}
+
+void MapPassengerServiceRuntime::rearmPassengerStopRequestsAfterStop(int stopId) {
+    if (stopId <= 0) {
+        throw std::invalid_argument("Served passenger stop must have a positive ID");
+    }
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat] &&
+            (*seatDestinations_[seat] != stopId || seatOutsideAlightingRadius_[seat])) {
+            seatStopRequests_[seat] = false;
+        }
+    }
+}
+
 std::size_t MapPassengerServiceRuntime::waitingPassengers(int stopId) const noexcept {
     const auto found = waitingByStop_.find(stopId);
     return found == waitingByStop_.end() ? 0 : found->second;
+}
+
+void MapPassengerServiceRuntime::setPassengerAnimationDuration(double seconds) {
+    if (!std::isfinite(seconds) || seconds <= 0.0) {
+        throw std::invalid_argument("Passenger animation duration must be finite and positive");
+    }
+    if (boardingSeat_) {
+        if (!boardingAnimationDurationSet_) {
+            if (seconds < boardingAccumulatorSeconds_) {
+                throw std::invalid_argument("Boarding duration is less than elapsed time");
+            }
+            boardingAnimationSeconds_ = seconds;
+            boardingAnimationDurationSet_ = true;
+        }
+    } else if (alightingSeat_) {
+        if (!alightingAnimationDurationSet_) {
+            if (seconds < alightingAccumulatorSeconds_) {
+                throw std::invalid_argument("Alighting duration is less than elapsed time");
+            }
+            alightingAnimationSeconds_ = seconds;
+            alightingAnimationDurationSet_ = true;
+        }
+    } else {
+        throw std::logic_error("Cannot set animation duration without an active passenger");
+    }
+    updatePassengerPathLinkIndex();
+}
+
+void MapPassengerServiceRuntime::setAlightingDoorWaitProgress(std::optional<double> progress) {
+    if (!alightingSeat_) {
+        throw std::logic_error("Cannot set exit wait progress without an active alighter");
+    }
+    if (progress && (!std::isfinite(*progress) || *progress < 0.0 || *progress >= 1.0)) {
+        throw std::invalid_argument("Exit wait progress must be finite and in [0, 1)");
+    }
+    alightingDoorWaitProgress_ = progress;
 }
 
 void MapPassengerServiceRuntime::setPassengerPathLinkProgressProfile(
@@ -813,10 +1076,9 @@ void MapPassengerServiceRuntime::updatePassengerPathLinkIndex() noexcept {
         return;
     }
     const double progress = boardingSeat_ ? boardingProgress() : alightingProgress();
-    const double easedProgress = progress * progress * (3.0 - 2.0 * progress);
     const auto segment = std::find_if(
         passengerPathLinkProgressProfile_.begin(), passengerPathLinkProgressProfile_.end(),
-        [easedProgress](const auto& candidate) { return easedProgress <= candidate.first; });
+        [progress](const auto& candidate) { return progress <= candidate.first; });
     if (segment != passengerPathLinkProgressProfile_.end()) {
         passengerPathLinkIndex_ = segment->second;
     }
@@ -837,6 +1099,12 @@ MapPassengerServiceRuntime::passengerModelIndexOnSeat(std::size_t seatIndex) con
                                                          : std::nullopt;
 }
 
+std::optional<MapPassengerPedestrianJourney>
+MapPassengerServiceRuntime::passengerPedestrianJourneyOnSeat(std::size_t seatIndex) const {
+    return seatIndex < seatPedestrianJourneys_.size() ? seatPedestrianJourneys_[seatIndex]
+                                                       : std::nullopt;
+}
+
 std::size_t MapPassengerServiceRuntime::onboardPassengerCount() const noexcept {
     return static_cast<std::size_t>(std::count_if(
         seatDestinations_.begin(), seatDestinations_.end(),
@@ -852,7 +1120,8 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
                                                MapPassengerQueueIdentities& queueIdentities,
                                                double elapsedSeconds, bool allowBoarding,
                                                bool allowAlighting, bool holdAtStop,
-                                               bool stopAfterAlightingPassenger) {
+                                               bool stopAfterAlightingPassenger,
+                                               bool requireAnimationDuration) {
     if (stopId == 0) {
         throw std::invalid_argument(trafficInputError(
             "Shared passenger queue requires a valid stop ID", "stopId=", stopId,
@@ -863,7 +1132,7 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
     }
     service.setWaitingPassengers(stopId, sharedWaitingPassengers);
     service.advance(elapsedSeconds, allowBoarding, allowAlighting, holdAtStop,
-                    stopAfterAlightingPassenger, &queueIdentities);
+                    stopAfterAlightingPassenger, &queueIdentities, requireAnimationDuration);
     sharedWaitingPassengers = service.waitingPassengers(stopId);
 }
 
@@ -3436,6 +3705,83 @@ std::size_t MapTrafficLaneNetwork::laneCount(int splineId) const {
     }
     const auto lanes = lanesBySpline_.find(splineId);
     return lanes == lanesBySpline_.end() ? 0 : lanes->second.size();
+}
+
+std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourneyNear(
+    const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition, std::size_t seed,
+    double maximumDistanceMeters) const {
+    if (!finalized_) {
+        throw std::logic_error("Pedestrian journey requires a finalized lane network");
+    }
+    if (!std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0 ||
+        !std::ranges::all_of(stopPosition, [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Pedestrian journey position or search radius is invalid");
+    }
+    struct Candidate {
+        int splineId;
+        std::size_t laneSelector;
+        double distanceAlongLane;
+        double distanceToStop;
+    };
+    std::vector<Candidate> candidates;
+    for (const int splineId : splineIds) {
+        const auto lanes = lanesBySpline_.find(splineId);
+        if (lanes == lanesBySpline_.end()) {
+            continue;
+        }
+        for (std::size_t selector = 0; selector < lanes->second.size(); ++selector) {
+            const auto lane = lanes->second[selector];
+            const double length = lengths_[lane];
+            MapTrafficRoute single;
+            single.segments.push_back(segments_[lane]);
+            single.cumulativeEndDistances.push_back(length);
+            single.totalLength = length;
+            double bestDistance = std::numeric_limits<double>::infinity();
+            double bestAlong = 0.0;
+            const std::size_t samples =
+                std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(length / 2.0)));
+            for (std::size_t sample = 0; sample <= samples; ++sample) {
+                const double along = length * static_cast<double>(sample) / samples;
+                const auto pose = sampleMapTrafficRoute(single, along, 0.0);
+                if (!pose) {
+                    throw std::runtime_error("Cannot sample a pedestrian lane");
+                }
+                if (std::abs(pose->position[2] - stopPosition[2]) > 2.0) {
+                    continue;
+                }
+                const double distance = std::hypot(pose->position[0] - stopPosition[0],
+                                                   pose->position[1] - stopPosition[1]);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestAlong = along;
+                }
+            }
+            if (bestDistance <= maximumDistanceMeters) {
+                candidates.push_back({splineId, selector, bestAlong, bestDistance});
+            }
+        }
+    }
+    std::ranges::sort(candidates, [](const auto& first, const auto& second) {
+        return std::tie(first.distanceToStop, first.splineId, first.laneSelector) <
+               std::tie(second.distanceToStop, second.splineId, second.laneSelector);
+    });
+    for (const auto& candidate : candidates) {
+        auto route = buildRoute(candidate.splineId, candidate.laneSelector);
+        if (!route || route->totalLength - candidate.distanceAlongLane < 5.0) {
+            continue;
+        }
+        const double destinationDistance = std::min(
+            route->totalLength - 0.01,
+            candidate.distanceAlongLane + 15.0 + static_cast<double>(seed % 31));
+        const auto destination = sampleMapTrafficRoute(*route, destinationDistance, 0.0);
+        if (!destination) {
+            throw std::runtime_error("Cannot sample a pedestrian destination");
+        }
+        return MapPassengerPedestrianJourney{std::make_shared<const MapTrafficRoute>(std::move(*route)),
+                                             candidate.distanceAlongLane, destinationDistance,
+                                             destination->position};
+    }
+    return std::nullopt;
 }
 
 std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(

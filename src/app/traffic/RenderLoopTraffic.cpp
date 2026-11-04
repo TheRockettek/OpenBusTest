@@ -377,6 +377,16 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         if (!state.isBus() || !state.bus->scheduledTripActive) {
             return;
         }
+        if (state.bus->passengerStopArrived && state.vehicle && state.vehicle->passengers) {
+            auto& service = state.vehicle->passengers->service;
+            if (passengerNetwork_.queues.contains(service.currentStopId())) {
+                passengerNetwork_.departService(service);
+            } else {
+                service.depart();
+            }
+            state.bus->passengerStopArrived = false;
+            state.bus->passengerStopDepartureRequested = false;
+        }
         openbus::app::finishScheduledBusTrip(*state.bus, currentSimulationTime);
         if (state.vehicle != nullptr) {
             state.vehicle->variables.set("schedule_active", 0.0F);
@@ -404,8 +414,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     auto& service = state.vehicle->passengers->service;
                     const auto queue = passengerNetwork_.queues.find(service.currentStopId());
                     if (queue != passengerNetwork_.queues.end()) {
-                        openbus::map::endMapPassengerServiceWithSharedQueue(
-                            service, queue->second, passengerNetwork_.queueIdentities);
+                        passengerNetwork_.endService(service);
                     } else {
                         service.endServiceAtCurrentStop();
                     }
@@ -432,6 +441,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 ++state.workerGeneration;
             } else if (departureAction ==
                        openbus::map::MapTrafficPassengerStopDepartureAction::ResumeRoute) {
+                state.vehicle->passengers->service.rearmPassengerStopRequestsAfterStop(
+                    state.bus->passengerStops[state.bus->nextPassengerStopIndex].stopId);
                 state.bus->passengerStopArrived = false;
                 state.bus->passengerStopDepartureRequested = false;
                 ++state.bus->nextPassengerStopIndex;
@@ -1450,13 +1461,35 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                         queue == passengerNetwork_.queues.end() ? 0 : queue->second;
                     trafficVehicle.vehicle->passengers->service.setWaitingPassengers(
                         stop.stopId, waitingPassengers);
+                    auto stopService = openbus::app::scheduledBusStopService(
+                        *trafficVehicle.bus, trafficVehicle.vehicle->passengers->service);
+                    const auto sampledBus = openbus::map::sampleMapTrafficActorPose(
+                        trafficVehicle.actor, trafficVehicle.actor.distanceMeters);
+                    const auto stopPose = openbus::map::sampleMapTrafficRoute(
+                        trafficVehicle.actor.route, stop.routeDistanceMeters, 0.0);
+                    if (!sampledBus || !stopPose || !mapRenderer_) {
+                        throw std::runtime_error("Cannot locate scheduled bus alighting positions");
+                    }
+                    auto busPose = *sampledBus;
+                    busPose.position[2] += trafficVehicle.vehicle->aiDeltaHeight;
+                    stopService.alightingPositions = passengerAlightingPositions(
+                        *trafficVehicle.vehicle, busPose, *stopPose, mapRenderer_->leftHandTraffic(),
+                        trafficVehicle.actor.lateralOffsetMeters, trafficVehicle.actor.widthMeters);
                     if (!trafficVehicle.vehicle->passengers->service.arrive(
-                            openbus::app::scheduledBusStopService(
-                                *trafficVehicle.bus,
-                                trafficVehicle.vehicle->passengers->service))) {
+                            stopService)) {
                         throw std::logic_error(
                             "Scheduled bus reached a passenger stop while already dwelling");
                     }
+                    if (trafficVehicle.vehicle->passengers->service
+                            .outOfRangeAssignedPassengers() > 0) {
+                        gameLog.Warning(
+                            "Scheduled bus reached stop " + std::to_string(stop.stopId) +
+                            " with assigned passenger destinations more than 200 m from their exits." +
+                            (stopService.passengersAlighting > 0
+                                 ? " Forced alighting at this stop can override the distance check."
+                                 : " Those passengers remain aboard."));
+                    }
+                    trafficVehicle.vehicle->passengers->service.setEligibleWaitingPassengers(0);
                     trafficVehicle.bus->passengerStopArrived = true;
                     trafficVehicle.bus->passengerStopDepartureRequested = false;
                     trafficVehicle.vehicle->variables.set("ai_scheduled_atstation", 1.0F);

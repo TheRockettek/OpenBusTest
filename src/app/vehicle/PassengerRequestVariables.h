@@ -53,7 +53,7 @@ passengerServiceRequestVariables(std::optional<std::size_t> entryDoor,
     const int stopId = service.currentStopId();
     return passengerRequestVariables(
         entryDoor, exitDoor, service.dwelling() && stopId != 0,
-        service.canAcceptWaitingPassenger() ? service.waitingPassengers(stopId) : 0,
+        service.canAcceptWaitingPassenger() ? service.eligibleWaitingPassengers() : 0,
         service.boardingPassenger(), service.alightingPassenger());
 }
 

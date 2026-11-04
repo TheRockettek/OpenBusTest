@@ -83,14 +83,18 @@ scheduledBusStopService(const ScheduledBusState& bus,
     }
     const auto& stop = bus.passengerStops[bus.nextPassengerStopIndex];
     const std::size_t nextIndex = bus.nextPassengerStopIndex + 1;
+    const auto destinations =
+        bus.scheduledServiceCancelled
+            ? std::vector<int>{}
+            : onwardPassengerStopIds(bus.passengerStops, nextIndex, stop.stopId,
+                                     [](std::size_t) { return true; });
     return {.stopId = stop.stopId,
             .waitingPassengers = 0,
             .passengersAlighting = bus.scheduledServiceCancelled ? service.onboardPassengerCount()
                                                                  : stop.passengersAlighting,
             .dwellSeconds = stop.dwellSeconds,
-            .nextStopId = !bus.scheduledServiceCancelled && nextIndex < bus.passengerStops.size()
-                              ? bus.passengerStops[nextIndex].stopId
-                              : 0};
+            .nextStopId = destinations.empty() ? 0 : destinations.front(),
+            .onwardStopIds = destinations};
 }
 
 inline bool shouldSuppressScheduledDeparture(const ScheduledBusState& bus,

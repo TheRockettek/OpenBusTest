@@ -35,6 +35,10 @@ class MapSceneLoader {
         return loadFinished_ && !roadTrafficLaneNetworkDirty &&
                !pendingRoadTrafficLaneNetworkFinalization_.valid();
     }
+    bool humanTrafficLaneNetworkReady() const noexcept {
+        return loadFinished_ && !humanTrafficLaneNetworkDirty &&
+               !pendingHumanTrafficLaneNetworkFinalization_.valid();
+    }
     // Loads render assets for active tiles that have not been loaded yet.
     TileLoadStatus loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoordinates,
                                    const openbus::map::MapTileCoordinate& priorityCenter,

@@ -301,8 +301,23 @@ void verifyPassengerDoorGating() {
             "closed entry doors prevent boarding and stop requests");
     service.advance(0.75, true, true);
     require(service.waitingPassengers(10) == 0 && service.onboardPassengerCount() == 1 &&
-                service.passengerStopRequestSequence() == 1,
+                service.passengerStopRequestSequence() == 0,
             "opening an entry door allows the queued passenger to board");
+    service.requestStopForPassengers(20, 200.01);
+    service.requestStopForPassengers(30, 0.0);
+    require(service.passengerStopRequestSequence() == 0,
+            "a passenger does not request a distant or unrelated stop");
+    service.requestStopForPassengers(20, 200.0);
+    service.requestStopForPassengers(20, 0.0);
+    require(service.passengerStopRequestSequence() == 1,
+            "a passenger requests their stop once within the 200-metre boundary");
+    bool rejectedInvalidDistance = false;
+    try {
+        service.requestStopForPassengers(20, -1.0);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidDistance = true;
+    }
+    require(rejectedInvalidDistance, "stop requests reject invalid distance inputs");
 
     require(service.arrive({.stopId = 20, .dwellSeconds = 0.75, .nextStopId = 30}),
             "door-gating fixture reaches the passenger destination");
@@ -1137,6 +1152,493 @@ void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
     MapPassengerQueueIdentities queueIdentities;
     {
+        MapTrafficLaneNetwork lanes;
+        auto spline = makeSpline(9901, 0, 0, 0.0);
+        spline.length = 100.0;
+        lanes.addSegment({{spline, 0, 0}});
+        lanes.finalize();
+        const auto journey = lanes.passengerJourneyNear({9901}, {5.0, 0.0, 2.0}, 5);
+        require(journey && journey->route && journey->destinationDistanceMeters >
+                                                 journey->startDistanceMeters,
+                "nearby directed human lane produces a forward pedestrian destination");
+        require(std::hypot(journey->destination[0] - 5.0, journey->destination[1]) <= 200.0,
+                "generated pedestrian destination is within 200 metres of the stop");
+        require(!lanes.passengerJourneyNear({9901}, {500.0, 0.0, 2.0}, 5),
+                "a distant pedestrian lane is not treated as nearby");
+        const auto laneStart = sampleMapTrafficRoute(*journey->route, journey->startDistanceMeters, 0.0);
+        require(laneStart.has_value(), "pedestrian handoff start can be sampled");
+        const auto side = mapTrafficPassengerWorldOffset(false, 0.0, 1.0, 0.0);
+        MapTrafficPose busPose = *laneStart;
+        MapTrafficPose exitPose = *laneStart;
+        for (std::size_t axis = 0; axis < 2; ++axis) {
+            busPose.position[axis] -= 2.0 * side[axis];
+            exitPose.position[axis] -= 0.25 * side[axis];
+        }
+        auto handoff = openbus::app::makePassengerPedestrianHandoff(*journey, exitPose, busPose,
+                                                                    false, 17);
+        require(handoff && handoff->modelIndex == 17,
+                "nearby forward pedestrian route accepts the alighter and preserves its model");
+        const auto initialPose = openbus::app::passengerPedestrianHandoffPose(*handoff);
+        requireNear(initialPose.position[0], exitPose.position[0],
+                    "handoff begins at the rendered exit position");
+        requireNear(initialPose.position[1], exitPose.position[1],
+                    "handoff begins at the rendered exit position");
+        require(openbus::app::advancePassengerPedestrianHandoff(*handoff, 1.0),
+                "handoff advances onto the pedestrian route");
+        const auto walkingPose = openbus::app::passengerPedestrianHandoffPose(*handoff);
+        require(std::hypot(walkingPose.position[0] - exitPose.position[0],
+                           walkingPose.position[1] - exitPose.position[1]) > 0.25,
+                "handoff continues forward after the connector");
+        require(!openbus::app::advancePassengerPedestrianHandoff(*handoff, 100.0),
+                "handoff completes at its destination");
+        auto unsafeExit = exitPose;
+        unsafeExit.position[2] += 1.0;
+        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
+                                                               false, 17),
+                "handoff rejects vertically separated paths");
+        unsafeExit = exitPose;
+        for (std::size_t axis = 0; axis < 2; ++axis) {
+            unsafeExit.position[axis] += side[axis] * 0.75;
+        }
+        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
+                                                               false, 17),
+                "handoff rejects connectors toward the bus");
+        unsafeExit = exitPose;
+        unsafeExit.position[1] += 40.0;
+        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
+                                                               false, 17),
+                "handoff rejects distant paths and points beyond the destination");
+        auto missingRoute = *journey;
+        missingRoute.route.reset();
+        require(!openbus::app::makePassengerPedestrianHandoff(missingRoute, exitPose, busPose,
+                                                               false, 17),
+                "missing pedestrian routes do not create a handoff");
+        MapPassengerServiceRuntime loadingService(1);
+        require(loadingService.arrive({.stopId = 100, .waitingPassengers = 1,
+                                       .dwellSeconds = 0.1, .nextStopId = 200}),
+                "destination-loading fixture starts dwelling");
+        loadingService.advance(1.0, false, true, true, false, nullptr, false, nullptr, false, true);
+        require(loadingService.dwelling(),
+                "a held service does not depart while a destination is being prepared");
+        loadingService.advance(0.1, true, true);
+        require(loadingService.boardingPassenger(),
+                "destination preparation preserves enough dwell to start boarding");
+        loadingService.advance(1.0, true, true);
+        require(!loadingService.dwelling(),
+                "service can depart once the destination preparation hold is released");
+        openbus::app::PassengerNetwork network;
+        openbus::app::PassengerStopRouteState route;
+        route.timetableKey = "walk";
+        route.stops = openbus::app::PassengerStops(
+            {{.stopId = 100, .waitingPassengers = 1}, {.stopId = 200}});
+        route.stopPoses = {MapTrafficPose{}, MapTrafficPose{}};
+        network.routes.push_back(route);
+        network.initializeQueues(route.stops.values());
+        MapPassengerServiceRuntime service(1);
+        require(service.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "pedestrian destination fixture starts boarding");
+        const auto passenger = network.nextPassenger(100, 0, service);
+        require(passenger.has_value(), "pedestrian destination fixture has a waiting rider");
+        network.resolvePassengerPedestrianJourney(100, *passenger, journey);
+        network.advanceService(service, 0, passenger, 0.1, true, true, true);
+        network.departService(service);
+        require(network.waitingPassengers(100)[0].journey->pedestrianJourney.has_value(),
+                "cancellation retains the rider's pedestrian destination");
+        require(service.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "the rider can reboard after cancellation");
+        network.advanceService(service, 0, network.nextPassenger(100, 0, service), 0.1, true,
+                               true, true);
+        service.setPassengerAnimationDuration(0.75);
+        network.advanceService(service, 0, std::nullopt, 0.75, true, true, true);
+        require(service.passengerPedestrianJourneyOnSeat(0).has_value(),
+                "the pedestrian destination follows the rider to their seat");
+        const auto destination = journey->destination;
+        service.requestStopForPassengers(
+            200, {destination[0] - 200.01, destination[1], destination[2]}, {5.0, 0.0, 2.0});
+        require(service.passengerStopRequestSequence() == 0,
+                "a destination just beyond 200 metres does not request the stop");
+        service.requestStopForPassengers(
+            200, {destination[0] - 200.0, destination[1], destination[2]}, {5.0, 0.0, 2.0});
+        require(service.passengerStopRequestSequence() == 1,
+                "the 200-metre request uses the pedestrian destination");
+        service.depart();
+        require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300,
+                                .alightingPositions = {{destination[0] - 200.01,
+                                                        destination[1], destination[2]}}}) &&
+                    !service.alightingPassenger() &&
+                    service.outOfRangeAssignedPassengers() == 1,
+                "a repeated stop ID beyond 200 metres does not unload the rider");
+        service.depart();
+        service.rearmPassengerStopRequestsAfterStop(200);
+        service.requestStopForPassengers(
+            200, {destination[0] - 200.0, destination[1], destination[2]}, {5.0, 0.0, 2.0});
+        require(service.passengerStopRequestSequence() == 2,
+                "a retained rider can request the later call with the same stop ID");
+        require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300,
+                                .alightingPositions = {{destination[0] - 200.0,
+                                                        destination[1], destination[2]}}}) &&
+                    service.alightingPassenger(),
+                "a rider may alight when the exit is exactly 200 metres from the destination");
+        require(service.canCurrentPassengerAlightAt(
+                    {destination[0] - 200.0, destination[1], destination[2]}) &&
+                    !service.canCurrentPassengerAlightAt(
+                        {destination[0] - 200.01, destination[1], destination[2]}),
+                "an alighter waits if the bus drifts beyond the destination radius");
+        service.setPassengerAnimationDuration(1.0);
+        service.setAlightingDoorWaitProgress(0.5);
+        service.advance(1.0, true,
+                        service.canCurrentPassengerAlightAt(
+                            {destination[0] - 200.01, destination[1], destination[2]}));
+        require(service.alightingPassenger() && service.alightingProgress() == 0.5 &&
+                    service.passengerCountOnSeat(0) == 1,
+                "drift blocks the alighter at the door without removing the rider");
+        service.advance(0.5, true,
+                        service.canCurrentPassengerAlightAt(
+                            {destination[0] - 200.0, destination[1], destination[2]}));
+        require(!service.alightingPassenger() && service.passengerCountOnSeat(0) == 0,
+                "alighting resumes when the exit returns within 200 metres");
+    }
+    {
+        openbus::app::PassengerNetwork network;
+        openbus::app::PassengerStopRouteState route;
+        route.timetableKey = "fallback-position";
+        route.stops = openbus::app::PassengerStops(
+            {{.stopId = 101, .waitingPassengers = 1}, {.stopId = 201}});
+        MapTrafficPose destinationPose;
+        destinationPose.position = {1000.0, 0.0, 2.0};
+        route.stopPoses = {MapTrafficPose{}, destinationPose};
+        network.routes.push_back(route);
+        network.initializeQueues(route.stops.values());
+        MapPassengerServiceRuntime service(1);
+        require(service.arrive({.stopId = 101, .dwellSeconds = 5.0, .nextStopId = 201}),
+                "mapped destination fixture starts boarding");
+        const auto rider = network.nextPassenger(101, 0, service);
+        require(rider.has_value(), "mapped destination fixture selects a rider");
+        network.resolvePassengerPedestrianJourney(101, *rider, std::nullopt);
+        network.advanceService(service, 0, rider, 0.1, true, true, true);
+        service.setPassengerAnimationDuration(0.75);
+        network.advanceService(service, 0, std::nullopt, 0.75, true, true, true);
+        service.requestStopForPassengers(201, {0.0, 0.0, 2.0}, {0.0, 0.0, 2.0});
+        require(service.passengerStopRequestSequence() == 0,
+                "fallback requests use the rider's original stop position, not a repeated ID");
+        service.requestStopForPassengers(201, {800.0, 0.0, 2.0}, {0.0, 0.0, 2.0});
+        require(service.passengerStopRequestSequence() == 1,
+                "fallback requests trigger at the original position's 200-metre boundary");
+        service.depart();
+        require(service.arrive({.stopId = 201, .dwellSeconds = 1.0, .nextStopId = 301,
+                                .alightingPositions = {{{0.0, 0.0, 2.0}}}}) &&
+                    !service.alightingPassenger(),
+                "mapped-stop fallback retains its original position for repeated stop IDs");
+        service.depart();
+        require(service.arrive({.stopId = 201, .passengersAlighting = 1,
+                                .dwellSeconds = 1.0, .nextStopId = 301,
+                                .alightingPositions = {{{0.0, 0.0, 2.0}}}}) &&
+                    service.alightingPassenger() &&
+                    service.canCurrentPassengerAlightAt({0.0, 0.0, 2.0}),
+                "explicit forced unloading retains its existing distance override");
+        service.depart();
+        require(service.arrive({.stopId = 201, .dwellSeconds = 1.0, .nextStopId = 301,
+                                .alightingPositions = {{{800.0, 0.0, 2.0}}}}) &&
+                    service.alightingPassenger(),
+                "mapped-stop fallback allows alighting at the 200-metre boundary");
+    }
+    {
+        openbus::app::PassengerNetwork network;
+        openbus::app::PassengerStopRouteState route;
+        route.timetableKey = "unlocated";
+        route.stops =
+            openbus::app::PassengerStops({{.stopId = 90, .waitingPassengers = 1}, {.stopId = 91}});
+        route.stopPoses = {MapTrafficPose{}, std::nullopt};
+        network.routes.push_back(route);
+        network.initializeQueues(route.stops.values());
+        MapPassengerServiceRuntime service(1);
+        require(service.arrive({.stopId = 90, .dwellSeconds = 5.0, .nextStopId = 91}) &&
+                    !network.waitingPassengers(90)[0].journey &&
+                    !network.nextPassenger(90, 0, service),
+                "an unlocated destination does not create a fabricated journey");
+        network.routes.push_back(route);
+        network.routes.back().stopPoses[1] = MapTrafficPose{};
+        require(network.waitingPassengers(90)[0].journey &&
+                    network.waitingPassengers(90)[0].journey->routeIndex == 1,
+                "unassigned riders can choose a newly registered located route");
+    }
+    {
+        openbus::app::PassengerNetwork network;
+        const auto route = [](const std::string& key, int destination) {
+            openbus::app::PassengerStopRouteState result;
+            result.timetableKey = key;
+            result.stops = openbus::app::PassengerStops(
+                {{.stopId = 100, .waitingPassengers = 4}, {.stopId = destination}});
+            result.stopPoses = {MapTrafficPose{}, MapTrafficPose{}};
+            return result;
+        };
+        network.routes.push_back(route("line-a", 200));
+        network.routes.push_back(route("line-b", 300));
+        network.initializeQueues(network.routes[0].stops.values());
+        const auto original = network.waitingPassengers(100);
+        require(original.size() == 4 && original[2].journey->routeIndex == 0 &&
+                    original[2].queueSlot == 1 && original[3].journey->routeIndex == 1 &&
+                    original[3].queueSlot == 0,
+                "waiting riders have persistent service and destination choices");
+
+        MapPassengerServiceRuntime busA(1);
+        MapPassengerServiceRuntime busB(1);
+        require(busA.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}) &&
+                    busB.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 300}),
+                "different services arrive at the shared queue");
+        const auto indexA = network.nextPassenger(100, 0, busA);
+        require(indexA == 2, "a matching rider can board past a rider for another service");
+        network.advanceService(busA, 0, indexA, 0.1, true, true, true);
+        const auto indexB = network.nextPassenger(100, 1, busB);
+        require(indexB && network.waitingPassengers(100)[*indexB].modelIndex == 103,
+                "the first bus leaves the other service's front rider in place");
+        network.advanceService(busB, 1, indexB, 0.1, true, true, true);
+        require(network.queues.at(100) == 2 && busA.boardingPassengerModelIndex() == 102 &&
+                    busA.boardingPassengerQueueSlot(4) == 1 &&
+                    busA.boardingPassengerDestinationStopId() == 200 &&
+                    busB.boardingPassengerModelIndex() == 103 &&
+                    busB.boardingPassengerQueueSlot(4) == 0 &&
+                    busB.boardingPassengerDestinationStopId() == 300 &&
+                    network.waitingPassengers(100)[0].queueSlot == 3 &&
+                    network.waitingPassengers(100)[1].queueSlot == 2,
+                "concurrent service reservations preserve identities, destinations and slots");
+        network.departService(busA);
+        network.endService(busB);
+        require(network.queues.at(100) == 4, "cancelled reservations return to the shared queue");
+        network.routes.push_back(route("line-c", 400));
+        const auto& returned = network.waitingPassengers(100);
+        const auto riderA = std::ranges::find(returned, std::size_t{102},
+                                              &openbus::app::WaitingPassenger::modelIndex);
+        const auto riderB = std::ranges::find(returned, std::size_t{103},
+                                              &openbus::app::WaitingPassenger::modelIndex);
+        require(riderA != returned.end() && riderB != returned.end() && riderA->queueSlot == 1 &&
+                    riderA->journey->routeIndex == 0 && riderA->journey->destinationStopId == 200 &&
+                    riderB->queueSlot == 0 && riderB->journey->routeIndex == 1 &&
+                    riderB->journey->destinationStopId == 300,
+                "returned journeys and positions do not change when routes are added");
+        MapPassengerServiceRuntime unrelated(1);
+        require(unrelated.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 400}),
+                "newly registered service can reach the same stop");
+        require(!network.nextPassenger(100, 2, unrelated),
+                "existing riders do not switch to a newly registered service");
+        network.advanceService(unrelated, 2, std::nullopt, 0.1, true, true, true);
+        require(!unrelated.boardingPassenger() && unrelated.eligibleWaitingPassengers() == 0 &&
+                    !openbus::app::vehicle::passengerServiceRequestVariables(0, 0, unrelated)
+                         .entries[0],
+                "unmatched passengers neither board nor request the entry door");
+        network.routes.push_back(route("line-a", 400));
+        require(!network.nextPassenger(100, 3, unrelated),
+                "a same-key route variant cannot board a rider for an unavailable destination");
+        auto otherLine = route("line-a", 200);
+        otherLine.lineName = "another line";
+        network.routes.push_back(std::move(otherLine));
+        MapPassengerServiceRuntime otherLineBus(1);
+        require(otherLineBus.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}) &&
+                    !network.nextPassenger(100, 4, otherLineBus),
+                "a shared timetable key does not make a different line the expected service");
+        auto distantVariant = route("line-a", 200);
+        distantVariant.stopPoses[1]->position[0] = 1000.0;
+        network.routes.push_back(std::move(distantVariant));
+        require(!network.passengerMatchesService(*riderA, 5, otherLineBus),
+                "a same-key service cannot board a rider for a distant stop with the same ID");
+        MapPassengerServiceRuntime replacement(1);
+        require(replacement.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "replacement bus can serve returned passengers");
+        const auto replacementIndex = network.nextPassenger(100, 0, replacement);
+        require(replacementIndex &&
+                    network.waitingPassengers(100)[*replacementIndex].modelIndex == 102,
+                "the same service selects its oldest returned rider");
+        network.advanceService(replacement, 0, replacementIndex, 0.1, true, true, true);
+        replacement.setPassengerAnimationDuration(0.75);
+        network.advanceService(replacement, 0, std::nullopt, 0.75, true, true, true);
+        require(replacement.passengerModelIndexOnSeat(0) == 102 && network.queues.at(100) == 3,
+                "the reserved passenger keeps their model through seating");
+        network.queues.at(100) = 4;
+        const auto& replenished = network.waitingPassengers(100);
+        std::unordered_set<std::size_t> occupiedSlots;
+        for (const auto& passenger : replenished) {
+            occupiedSlots.insert(passenger.queueSlot);
+        }
+        require(replenished.size() == 4 && occupiedSlots.size() == 4 &&
+                    std::ranges::any_of(replenished,
+                                        [](const auto& passenger) {
+                                            return passenger.modelIndex == 104 &&
+                                                   passenger.journey.has_value();
+                                        }),
+                "replenishment creates a new journey without overlapping waiting slots");
+        require(replacement.arrive({.stopId = 200, .dwellSeconds = 1.0}) == false,
+                "a held service cannot arrive at another stop");
+    }
+    {
+        openbus::app::PassengerNetwork network;
+        openbus::app::PassengerStopRouteState route;
+        route.timetableKey = "single";
+        route.stops = openbus::app::PassengerStops(
+            {{.stopId = 100, .waitingPassengers = 1}, {.stopId = 200}});
+        route.stopPoses = {MapTrafficPose{}, MapTrafficPose{}};
+        network.routes.push_back(route);
+        network.initializeQueues(route.stops.values());
+        MapPassengerServiceRuntime first(1);
+        require(first.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "replenishment fixture starts at a stop");
+        network.advanceService(first, 0, network.nextPassenger(100, 0, first), 0.1, true, true,
+                               true);
+        network.queues.at(100) = 1;
+        require(network.waitingPassengers(100).empty(),
+                "new demand waits for a slot reserved by a boarding passenger");
+        network.departService(first);
+        require(network.queues.at(100) == 2 && network.waitingPassengers(100).size() == 1 &&
+                    network.waitingPassengers(100).front().modelIndex == 100,
+                "a cancelled reservation returns without overlapping replenished demand");
+        MapPassengerServiceRuntime second(1);
+        require(second.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "a replacement bus serves the restored rider");
+        network.advanceService(second, 0, network.nextPassenger(100, 0, second), 0.1, true, true,
+                               true);
+        second.setPassengerAnimationDuration(0.75);
+        network.advanceService(second, 0, std::nullopt, 0.75, true, true, true);
+        require(network.queues.at(100) == 1 && network.waitingPassengers(100).size() == 1 &&
+                    network.waitingPassengers(100).front().modelIndex == 101 &&
+                    network.waitingPassengers(100).front().queueSlot == 0,
+                "deferred demand enters the free slot after the rider boards");
+    }
+    {
+        openbus::app::PassengerStops stops({{.stopId = 100},
+                                            {.stopId = 200},
+                                            {.stopId = 200},
+                                            {.stopId = 300},
+                                            {.stopId = 100},
+                                            {.stopId = 400}});
+        const auto destinations = openbus::app::onwardPassengerStopIds(
+            stops, 1, 100, [](std::size_t index) { return index != 3; });
+        require(destinations == std::vector<int>({200, 400}),
+                "onward destinations exclude unavailable, repeated and origin stop IDs");
+        openbus::app::ScheduledBusState scheduled;
+        scheduled.passengerStops = stops;
+        MapPassengerServiceRuntime emptyService(0);
+        const auto scheduledStop = openbus::app::scheduledBusStopService(scheduled, emptyService);
+        require(scheduledStop.nextStopId == 200 &&
+                    scheduledStop.onwardStopIds == std::vector<int>({200, 300, 400}),
+                "scheduled buses expose all distinct downstream destination stops");
+        MapPassengerServiceRuntime service(3);
+        service.setWaitingPassengers(100, 3);
+        require(service.arrive({.stopId = 100,
+                                .dwellSeconds = 3.0,
+                                .nextStopId = 200,
+                                .onwardStopIds = {200, 300, 400}}),
+                "multiple-destination fixture starts boarding");
+        service.advance(2.25, true, true, true);
+        require(service.onboardPassengerCount() == 3,
+                "multiple-destination fixture boards three passengers");
+        service.requestStopForPassengers(200, 200.01);
+        require(service.passengerStopRequestSequence() == 0,
+                "passengers do not request their destinations beyond 200 metres");
+        service.requestStopForPassengers(200, 200.0);
+        require(service.passengerStopRequestSequence() == 1,
+                "only the passenger assigned to the approaching stop requests it");
+        service.depart();
+        require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300}),
+                "multiple-destination fixture reaches its first destination");
+        require(service.alightingSeatIndex() == 0,
+                "only the rider assigned to the first stop alights");
+        service.advance(0.75, false, true, true);
+        require(service.onboardPassengerCount() == 2, "riders for later stops remain on board");
+        service.depart();
+        require(service.arrive({.stopId = 300, .dwellSeconds = 1.0, .nextStopId = 400}) &&
+                    service.alightingSeatIndex() == 2,
+                "the next assigned rider alights at the second destination");
+        service.advance(0.75, false, true, true);
+        service.depart();
+        require(service.arrive({.stopId = 400, .dwellSeconds = 1.0}) &&
+                    service.alightingSeatIndex() == 1,
+                "the last assigned rider continues to the third destination");
+        service.advance(0.75, false, true, true);
+        require(service.onboardPassengerCount() == 0,
+                "all riders alight at their assigned destinations");
+    }
+    {
+        const openbus::app::PassengerStops stops(
+            {{.stopId = 100}, {.stopId = 200}, {.stopId = 300}, {.stopId = 400}});
+        MapPassengerServiceRuntime service(3);
+        service.setWaitingPassengers(100, 3);
+        require(service.arrive({.stopId = 100,
+                                .dwellSeconds = 3.0,
+                                .nextStopId = 200,
+                                .onwardStopIds = {200, 300, 400}}),
+                "future-stop request fixture starts boarding");
+        service.advance(2.25, true, true, true);
+        service.depart();
+        const auto position = [](std::size_t index) -> std::optional<std::array<double, 3>> {
+            if (index == 1) {
+                return std::array<double, 3>{250.0, 0.0, 0.0};
+            }
+            if (index == 3) {
+                return std::array<double, 3>{200.0, 0.0, 0.0};
+            }
+            return std::nullopt;
+        };
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 1, {0.0, 0.0, 0.0}, position);
+        require(service.passengerStopRequestSequence() == 1 &&
+                    !service.hasUnrequestedPassengerStop(400) &&
+                    service.hasUnrequestedPassengerStop(200) &&
+                    service.hasUnrequestedPassengerStop(300),
+                "a later stop at 200 metres is requested despite an intervening stop");
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 2, {50.0, 0.0, 0.0}, position);
+        require(service.passengerStopRequestSequence() == 1,
+                "past stops and missing positions do not generate requests");
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 1, {49.99, 0.0, 0.0}, position);
+        require(service.passengerStopRequestSequence() == 1,
+                "an unrequested stop just over 200 metres away remains pending");
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 1, {50.0, 0.0, 0.0}, position);
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 1, {50.0, 0.0, 0.0}, position);
+        require(service.passengerStopRequestSequence() == 2,
+                "each rider requests their stop only once at the 200-metre boundary");
+        service.rearmPassengerStopRequestsAfterStop(200);
+        require(service.hasUnrequestedPassengerStop(400) &&
+                    !service.hasUnrequestedPassengerStop(200),
+                "an intermediate stop rearms later riders without rearming its own riders");
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 2, {50.0, 0.0, 0.0}, position);
+        openbus::app::requestPassengerStopsOnRoute(service, stops, 2, {50.0, 0.0, 0.0}, position);
+        require(service.passengerStopRequestSequence() == 3,
+                "a later rider can request again after the intermediate stop resets the bell");
+    }
+    {
+        MapPassengerQueueIdentities identities;
+        MapPassengerServiceRuntime service(1);
+        std::size_t waiting = 2;
+        const MapPassengerStopService stop{.stopId = 720,
+                                           .dwellSeconds = 2.0,
+                                           .nextStopId = 721,
+                                           .onwardStopIds = {721, 722, 723}};
+        require(service.arrive(stop), "returning rider fixture starts boarding");
+        advanceMapPassengerServiceWithSharedQueue(service, 720, waiting, identities, 0.25);
+        const auto identity = service.boardingPassengerModelIndex();
+        const auto destination = service.boardingPassengerDestinationStopId();
+        require(identity && destination, "a reserved rider has a model and destination");
+        departMapPassengerServiceWithSharedQueue(service, waiting, identities);
+        require(waiting == 2 && service.arrive(stop), "an interrupted rider returns to the queue");
+        advanceMapPassengerServiceWithSharedQueue(service, 720, waiting, identities, 0.25);
+        require(service.boardingPassengerModelIndex() == identity &&
+                    service.boardingPassengerDestinationStopId() == destination,
+                "reboarding on the same route preserves the rider's destination");
+
+        for (const std::vector<int>& destinations :
+             std::vector<std::vector<int>>{{721, 721}, {721, 720}, {721, 0}, {722, 721}}) {
+            MapPassengerServiceRuntime invalid(1);
+            bool rejected = false;
+            try {
+                invalid.arrive({.stopId = 720,
+                                .dwellSeconds = 1.0,
+                                .nextStopId = 721,
+                                .onwardStopIds = destinations});
+            } catch (const std::invalid_argument&) {
+                rejected = true;
+            }
+            require(rejected && !invalid.dwelling(),
+                    "invalid destination lists are rejected before the stop state changes");
+        }
+    }
+    {
         require(openbus::app::playerPassengerStopArrivalRadiusMeters == 20.0 &&
                     openbus::app::playerPassengerStopReleaseRadiusMeters >
                         openbus::app::playerPassengerStopArrivalRadiusMeters,
@@ -1182,6 +1684,21 @@ void verifyPassengerServiceBehavior() {
         requireNear(right.position[0], 11.9, "right-hand traffic queues at the right door");
         requireNear(left.position[0], 8.1, "left-hand traffic queues at the left door");
         requireNear(right.position[1], 23.0, "queue follows the actual front entry");
+        for (std::size_t slot = 1; slot < 5; ++slot) {
+            const auto rightQueued =
+                openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, false, slot);
+            const auto leftQueued = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, true, slot);
+            requireNear(rightQueued.position[0], right.position[0],
+                        "right-hand queue stays in a single line beside the bus");
+            requireNear(leftQueued.position[0], left.position[0],
+                        "left-hand queue stays in a single line beside the bus");
+            requireNear(rightQueued.position[1], right.position[1] - 0.7 * slot,
+                        "each passenger queues behind the previous passenger");
+            requireNear(leftQueued.position[1], rightQueued.position[1],
+                        "both traffic directions preserve the same queue order");
+            requireNear(rightQueued.headingRadians, bus.headingRadians,
+                        "queued passengers face the front of the line");
+        }
         const MapTrafficPose start{{11.9, 9.0, 1.0}, 0.0};
         const double duration = openbus::app::passengerApproachDuration(start, right);
         requireNear(duration, 10.0, "approach time follows walking distance");
@@ -1204,6 +1721,21 @@ void verifyPassengerServiceBehavior() {
         const auto seat = openbus::app::passengerCabinSeatPose(bus, cabin.passengerPositions[0]);
         const auto seatLocal = openbus::app::passengerCabinStandingPoint(
             cabin.passengerPositions[0].position, cabin.passengerPositions[0].seatHeight);
+        const openbus::app::PassengerCabinTravelPathData directPath;
+        requireNear(openbus::app::passengerCabinTravelDuration(
+                        directPath, {0.0, 0.0, 0.0}, {0.0, 14.0, 0.0}, false),
+                    10.0, "fallback walking time scales with distance");
+        requireNear(openbus::app::passengerCabinTravelDuration(
+                        directPath, {0.0, 0.0, 0.0}, {0.0, 14.0, 0.0}, true),
+                    12.5, "seated walking time includes the sitting transition");
+        requireNear(openbus::app::passengerCabinTravelDuration(
+                        directPath, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, false),
+                    0.75, "zero-length paths retain a bounded transition time");
+        openbus::app::PassengerCabinTravelPathData bentPath;
+        bentPath.positions = {{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}, {3.0, 4.0, 0.0}};
+        requireNear(openbus::app::passengerCabinTravelDuration(
+                        bentPath, bentPath.positions.front(), bentPath.positions.back(), false),
+                    5.0, "cabin walking time follows the full path rather than its chord");
         MapPassengerServiceRuntime service(1);
         service.setWaitingPassengers(901, 1);
         require(service.arrive({.stopId = 901, .dwellSeconds = 1.0, .nextStopId = 902}),
@@ -1214,11 +1746,11 @@ void verifyPassengerServiceBehavior() {
         require(service.passengerCountOnPathLink(0) == 1 &&
                     service.passengerCountOnPathLink(1) == 0,
                 "simulation computes the first boarding link without a render pass");
-        service.advance(0.225, true, true, true);
+        service.advance(0.55, true, true, true);
         require(service.passengerCountOnPathLink(0) == 0 &&
                     service.passengerCountOnPathLink(1) == 1,
                 "simulation progress moves boarding occupancy to the next link");
-        service.advance(0.3, true, true, true);
+        service.advance(0.8, true, true, true);
         require(service.passengerCountOnPathLink(1) == 0 && service.onboardPassengerCount() == 1,
                 "boarding completion clears path occupancy");
         service.depart();
@@ -1234,7 +1766,7 @@ void verifyPassengerServiceBehavior() {
         service.advance(0.225, false, false, true);
         require(service.passengerCountOnPathLink(1) == 1,
                 "closed exit doors leave alighting occupancy on the current link");
-        service.advance(0.225, false, true, true);
+        service.advance(0.55, false, true, true);
         require(service.passengerCountOnPathLink(1) == 0 &&
                     service.passengerCountOnPathLink(0) == 1,
                 "simulation advances alighting occupancy to the selected exit");
@@ -1259,14 +1791,15 @@ void verifyPassengerServiceBehavior() {
         seatedService.advance(0.375, true, true, true);
         openbus::app::updatePassengerCabinPathOccupancy(
             seatedService, cabin, bus, door.position, seatLocal, true, 0, 0);
+        seatedService.advance(0.7, true, true, true);
         require(seatedService.passengerCountOnPathLink(1) == 1,
                 "a seated passenger occupies the cabin link while walking to the seat");
-        seatedService.advance(0.3, true, true, true);
+        seatedService.advance(0.55, true, true, true);
         require(seatedService.boardingPassenger() &&
                     seatedService.passengerCountOnPathLink(0) == 0 &&
                     seatedService.passengerCountOnPathLink(1) == 0,
                 "the sitting transition does not occupy a cabin link");
-        seatedService.advance(0.075, true, true, true);
+        seatedService.advance(0.2, true, true, true);
         seatedService.depart();
         require(seatedService.arrive({.stopId = 904, .dwellSeconds = 1.0}),
                 "seated cabin occupancy fixture starts alighting");
@@ -1277,9 +1810,152 @@ void verifyPassengerServiceBehavior() {
         require(seatedService.passengerCountOnPathLink(0) == 0 &&
                     seatedService.passengerCountOnPathLink(1) == 0,
                 "the standing transition does not occupy a cabin link");
-        seatedService.advance(0.3, false, true, true);
+        seatedService.advance(0.55, false, true, true);
         require(seatedService.passengerCountOnPathLink(1) == 1,
                 "alighting occupies the selected path after standing");
+    }
+    {
+        MapPassengerServiceRuntime service(2);
+        service.setWaitingPassengers(905, 2);
+        require(service.arrive({.stopId = 905, .dwellSeconds = 10.0, .nextStopId = 906}),
+                "distance-based animation fixture starts boarding");
+        service.advance(0.25, true, true, true, true, nullptr, true);
+        require(service.boardingPassenger() && service.boardingProgress() == 0.0,
+                "boarding waits until its path duration is configured");
+        service.setPassengerAnimationDuration(2.0);
+        service.advance(0.75, true, true, true, true, nullptr, true);
+        requireNear(service.boardingProgress(), 0.375,
+                    "boarding progression uses the configured walking duration");
+        service.setPassengerAnimationDuration(10.0);
+        service.advance(1.0, false, true, true, true, nullptr, true);
+        requireNear(service.boardingProgress(), 0.375,
+                    "closing the door pauses distance-based boarding");
+        service.advance(1.25, true, true, true, true, nullptr, true);
+        require(service.onboardPassengerCount() == 1 && !service.boardingPassenger(),
+                "the first passenger completes after its original duration");
+        service.advance(0.25, true, true, true, true, nullptr, true);
+        service.setPassengerAnimationDuration(3.0);
+        service.advance(0.25, true, true, true, true, nullptr, true);
+        requireNear(service.boardingProgress(), 0.25 / 3.0,
+                    "the next passenger receives a fresh path duration");
+        service.advance(2.75, true, true, true, true, nullptr, true);
+        service.depart();
+        require(service.arrive({.stopId = 906, .dwellSeconds = 1.0}),
+                "distance-based animation fixture starts alighting");
+        service.advance(0.25, false, true, true, true, nullptr, true);
+        require(service.alightingPassenger() && service.alightingProgress() == 0.0,
+                "alighting waits until its path duration is configured");
+        service.setPassengerAnimationDuration(2.0);
+        service.advance(1.0, false, true, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.5,
+                    "alighting progression uses the configured walking duration");
+        service.advance(1.0, false, true, true, true, nullptr, true);
+        require(service.alightingPassenger() && service.alightingProgress() == 0.0,
+                "the next alighter starts with no inherited animation duration");
+        service.advance(0.25, false, true, true, true, nullptr, true);
+        require(service.alightingProgress() == 0.0,
+                "the next alighter also waits for its own path duration");
+        service.setPassengerAnimationDuration(3.0);
+        service.advance(1.5, false, true, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.5,
+                    "the next alighter uses its own path duration");
+    }
+    {
+        VehicleConfig cabin;
+        cabin.passengerPositions = {{{0.0, 0.0, 0.0}}};
+        const MapTrafficPose bus{{0.0, 0.0, 1.0}, 0.3};
+        MapPassengerServiceRuntime service(1);
+        service.setWaitingPassengers(907, 1);
+        require(service.arrive({.stopId = 907, .dwellSeconds = 10.0, .nextStopId = 908}),
+                "fallback animation fixture starts boarding");
+        service.advance(0.25, true, true, true, true, nullptr, true);
+        openbus::app::updatePassengerCabinPathOccupancy(
+            service, cabin, bus, {0.0, 0.0, 0.0},
+            openbus::app::passengerCabinLocalPoint(bus, {6.0, 0.0, 0.0}), true, 0,
+            std::nullopt, std::array<double, 3>{3.0, 4.0, 0.0});
+        service.advance(1.0, true, true, true, true, nullptr, true);
+        requireNear(service.boardingProgress(), 0.14,
+                    "fallback duration includes the rendered intermediate curb point");
+        require(service.passengerCountOnPathLink(0) == 0,
+                "fallback movement does not occupy an authored cabin link");
+    }
+    {
+        openbus::app::PassengerCabinTravelPathData path;
+        path.positions = {{0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}, {3.0, 0.0, 0.0}};
+        path.doorPointIndex = 1;
+        const auto standingWait = openbus::app::passengerAlightingDoorWaitProgress(path, false);
+        const auto seatedWait = openbus::app::passengerAlightingDoorWaitProgress(path, true);
+        require(standingWait && seatedWait, "a connected exit has a door waiting position");
+        requireNear(*standingWait, 0.5, "waiting position is half a metre inside the exit");
+        requireNear(*seatedWait, 0.6, "exit approach includes the standing transition");
+        path.doorPointIndex.reset();
+        require(!openbus::app::passengerAlightingDoorWaitProgress(path, true),
+                "an unknown exit does not invent a safe waiting position");
+
+        MapPassengerServiceRuntime service(2);
+        service.setWaitingPassengers(909, 2);
+        require(service.arrive({.stopId = 909, .dwellSeconds = 2.0, .nextStopId = 910}),
+                "exit waiting fixture starts boarding");
+        service.advance(1.5, true, true, true);
+        service.depart();
+        require(service.arrive({.stopId = 910, .dwellSeconds = 1.0}),
+                "exit waiting fixture reaches its destination");
+        service.advance(0.25, false, false, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.0,
+                    "closed exit waits for its path to be configured");
+        service.setPassengerAnimationDuration(3.0);
+        service.setAlightingDoorWaitProgress(seatedWait);
+        service.advance(10.0, false, false, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.6,
+                    "alighter approaches but does not pass the closed door");
+        require(service.onboardPassengerCount() == 2 &&
+                    openbus::app::vehicle::passengerServiceRequestVariables(0, 1, service)
+                        .exits[1],
+                "waiting alighter keeps its seat reservation and requests the selected exit");
+        service.advance(1.0, false, false, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.6,
+                    "alighter remains at the closed door");
+        service.advance(0.6, false, true, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.8,
+                    "an open door lets the alighter continue past the waiting point");
+        service.advance(1.0, false, false, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.8,
+                    "closing the door again pauses without moving the alighter backwards");
+        service.advance(0.6, false, true, true, true, nullptr, true);
+        require(service.onboardPassengerCount() == 1 && service.alightingPassenger() &&
+                    service.alightingProgress() == 0.0,
+                "opening the door releases the first alighter and selects the next");
+        service.setPassengerAnimationDuration(3.0);
+        service.advance(1.0, false, false, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.0,
+                    "the next alighter does not inherit the previous door waiting position");
+    }
+    {
+        VehicleConfig cabin;
+        cabin.passengerPositions = {{{0.0, 2.0, 0.45}, 0.45, 0.0}};
+        cabin.passengerPathPoints = {
+            {0, {0.0, 0.0, 0.0}}, {1, {0.0, 1.0, 0.0}}, {2, {0.0, 2.0, 0.0}}};
+        cabin.passengerPathLinks = {{0, 1, false}, {1, 2, false}};
+        cabin.passengerExitPathPoints = {0};
+        const MapTrafficPose bus{{10.0, 20.0, 1.0}, 0.3};
+        const auto seat = openbus::app::passengerCabinSeatPose(bus, cabin.passengerPositions[0]);
+        const std::array<double, 3> outsideLocal{0.0, -1.0, 0.0};
+        MapPassengerServiceRuntime service(1);
+        service.setWaitingPassengers(911, 1);
+        require(service.arrive({.stopId = 911, .dwellSeconds = 1.0, .nextStopId = 912}),
+                "connected exit approach fixture starts boarding");
+        service.advance(0.75, true, true, true);
+        service.depart();
+        require(service.arrive({.stopId = 912, .dwellSeconds = 1.0}),
+                "connected exit approach fixture reaches its destination");
+        service.advance(0.25, false, false, true, true, nullptr, true);
+        openbus::app::updatePassengerCabinPathOccupancy(service, cabin, bus, seat.position,
+                                                        outsideLocal, false, 0, 0);
+        service.advance(10.0, false, false, true, true, nullptr, true);
+        requireNear(service.alightingProgress(), 0.6,
+                    "the authored exit path stops a closed-door alighter before the exit point");
+        require(service.onboardPassengerCount() == 1,
+                "a closed door cannot complete an authored exit path");
     }
     {
         MapPassengerServiceRuntime player(1);
@@ -1401,17 +2077,20 @@ void verifyPassengerServiceBehavior() {
             "arrival opens a stop dwell and alights no more than occupied seats");
     service.advance(0.5);
     require(service.passengerStopRequestSequence() == 0,
-            "passenger stop request waits until boarding assigns the next-stop destination");
+            "no passenger stop request is generated during boarding");
     service.advance(0.25);
     require(service.passengerCountOnSeat(0) == 1 && service.passengerCountOnSeat(1) == 0 &&
                 service.waitingPassengers(100) == 3 &&
-                service.passengerStopRequestSequence() == 1,
-            "boarding assigns a next-stop destination and emits one passenger stop request");
+                service.passengerStopRequestSequence() == 0,
+            "boarding assigns a destination without requesting the stop immediately");
     service.advance(1.25);
     require(!service.dwelling() && service.onboardPassengerCount() == 2 &&
                 service.waitingPassengers(100) == 2 &&
-                service.passengerStopRequestSequence() == 2,
-            "each completed boarding emits one request without exceeding seat capacity");
+                service.passengerStopRequestSequence() == 0,
+            "boarding multiple passengers does not request the destination prematurely");
+    service.requestStopForPassengers(200, 200.0);
+    require(service.passengerStopRequestSequence() == 2,
+            "each passenger requests the destination once when it is within 200 metres");
     service.setWaitingPassengers(200, 2);
     require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300}) &&
                 service.onboardPassengerCount() == 2 && service.alightingPassenger(),
@@ -1715,11 +2394,11 @@ void verifyPassengerServiceBehavior() {
     boardingService.advance(0.15);
     require(boardingService.passengerCountOnPathLink(1) == 1,
             "simulation progress retains occupancy within the current pathlink");
-    boardingService.advance(0.04);
+    boardingService.advance(0.08);
     require(boardingService.passengerCountOnPathLink(1) == 0 &&
                 boardingService.passengerCountOnPathLink(2) == 1,
             "simulation progress advances a boarding passenger to the next pathlink");
-    boardingService.advance(0.185);
+    boardingService.advance(0.145);
     require(!boardingService.boardingPassenger() && !boardingService.boardingSeatIndex() &&
                 boardingService.passengerCountOnSeat(0) == 1 &&
                 boardingService.passengerCountOnPathLink(1) == 0 &&

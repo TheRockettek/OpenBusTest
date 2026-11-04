@@ -138,6 +138,10 @@ class MapRenderer {
                                   std::size_t selectionSeed,
                                   const std::vector<std::pair<int, int>>& activeTiles) const;
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    bool humanTrafficLaneNetworkReady() const noexcept;
+    std::optional<openbus::map::MapPassengerPedestrianJourney>
+    passengerPedestrianJourneyNear(const std::array<double, 3>& stopPosition,
+                                   std::size_t seed) const;
     std::vector<int> trafficSplineIdsInTiles(int pathTypeCode,
                                              const std::vector<std::pair<int, int>>& tiles) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;

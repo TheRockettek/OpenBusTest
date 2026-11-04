@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -86,6 +87,13 @@ struct MapTrafficRoute {
     bool closed = false;
     std::optional<double> loopStartDistance;
     bool startsAtEntryLane = false;
+};
+
+struct MapPassengerPedestrianJourney {
+    std::shared_ptr<const MapTrafficRoute> route;
+    double startDistanceMeters = 0.0;
+    double destinationDistanceMeters = 0.0;
+    std::array<double, 3> destination = {};
 };
 
 struct MapTrafficDrivingRouteMetadata {
@@ -285,12 +293,24 @@ std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, doubl
 std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& serviceStopIds,
                                                         std::size_t rotation);
 
+inline constexpr double passengerStopRequestRadiusMeters = 200.0;
+
 struct MapPassengerStopService {
     int stopId = 0;
     std::size_t waitingPassengers = 0;
     std::size_t passengersAlighting = 0;
     double dwellSeconds = 0.0;
     int nextStopId = 0;
+    std::vector<int> onwardStopIds;
+    std::vector<std::array<double, 3>> alightingPositions = {};
+};
+
+struct MapPassengerBoardingSelection {
+    std::size_t modelIndex = 0;
+    std::size_t queueSlot = 0;
+    int destinationStopId = 0;
+    std::optional<MapPassengerPedestrianJourney> pedestrianJourney;
+    std::optional<std::array<double, 3>> destinationPosition = std::nullopt;
 };
 
 struct MapTrafficPassengerStop {
@@ -321,48 +341,84 @@ class MapPassengerServiceRuntime {
     // completion.
     void advance(double elapsedSeconds, bool allowBoarding = true, bool allowAlighting = true,
                  bool holdAtStop = false, bool stopAfterAlightingPassenger = false,
-                 MapPassengerQueueIdentities* queueIdentities = nullptr);
+                 MapPassengerQueueIdentities* queueIdentities = nullptr,
+                 bool requireAnimationDuration = false,
+                 const MapPassengerBoardingSelection* selectedPassenger = nullptr,
+                 bool requireSelectedPassenger = false, bool pauseDwellTimer = false);
     bool dwelling() const noexcept;
     int currentStopId() const noexcept;
     bool boardingPassenger() const noexcept;
     bool acceptsBoarding() const noexcept;
     bool canAcceptWaitingPassenger() const noexcept;
+    bool acceptsPassengerDestination(int stopId) const noexcept;
+    void setEligibleWaitingPassengers(std::optional<std::size_t> count) noexcept;
+    std::size_t eligibleWaitingPassengers() const noexcept;
     double boardingProgress() const noexcept;
     std::optional<std::size_t> boardingSeatIndex() const noexcept;
     bool alightingPassenger() const noexcept;
+    std::size_t outOfRangeAssignedPassengers() const noexcept;
+    bool canCurrentPassengerAlightAt(const std::array<double, 3>& position) const;
     double alightingProgress() const noexcept;
     std::optional<std::size_t> alightingSeatIndex() const noexcept;
     std::optional<std::size_t> boardingPassengerModelIndex() const noexcept;
+    std::optional<int> boardingPassengerDestinationStopId() const noexcept;
     std::optional<std::size_t> boardingPassengerQueueSlot(std::size_t initialCount) const;
     std::uint64_t passengerStopRequestSequence() const noexcept;
+    bool hasUnrequestedPassengerStop(int stopId) const noexcept;
+    void requestStopForPassengers(int stopId, double distanceMeters);
+    void requestStopForPassengers(int stopId, const std::array<double, 3>& busPosition,
+                                  const std::array<double, 3>& stopPosition);
+    void rearmPassengerStopRequestsAfterStop(int stopId);
     std::size_t waitingPassengers(int stopId) const noexcept;
+    void setPassengerAnimationDuration(double seconds);
+    void setAlightingDoorWaitProgress(std::optional<double> progress);
     void setPassengerPathLinkProgressProfile(
         std::vector<std::pair<double, std::optional<std::size_t>>> profile);
     std::size_t passengerCountOnPathLink(std::size_t linkIndex) const noexcept;
     std::size_t passengerCountOnSeat(std::size_t seatIndex) const noexcept;
     std::optional<std::size_t> passengerModelIndexOnSeat(std::size_t seatIndex) const noexcept;
+    std::optional<MapPassengerPedestrianJourney>
+    passengerPedestrianJourneyOnSeat(std::size_t seatIndex) const;
     std::size_t onboardPassengerCount() const noexcept;
     std::size_t seatCount() const noexcept;
 
   private:
     std::vector<std::optional<int>> seatDestinations_;
     std::vector<std::optional<std::size_t>> seatPassengerModelIndices_;
+    std::vector<std::optional<MapPassengerPedestrianJourney>> seatPedestrianJourneys_;
+    std::vector<std::optional<std::array<double, 3>>> seatDestinationPositions_;
+    std::vector<bool> seatStopRequests_;
+    std::vector<bool> seatOutsideAlightingRadius_;
+    std::vector<bool> seatForcedAlighting_;
     std::unordered_map<int, std::size_t> waitingByStop_;
     int currentStopId_ = 0;
     int nextStopId_ = 0;
+    std::vector<int> onwardStopIds_;
     double dwellRemainingSeconds_ = 0.0;
     double boardingAccumulatorSeconds_ = 0.0;
+    double boardingAnimationSeconds_ = 0.75;
+    bool boardingAnimationDurationSet_ = false;
     std::optional<std::size_t> boardingSeat_;
     std::optional<std::size_t> boardingPassengerModelIndex_;
+    std::optional<int> boardingPassengerDestinationStopId_;
+    std::optional<MapPassengerPedestrianJourney> boardingPedestrianJourney_;
+    std::optional<std::array<double, 3>> boardingDestinationPosition_;
     std::optional<std::size_t> boardingPassengerQueuePosition_;
+    std::optional<std::size_t> boardingPassengerFixedQueueSlot_;
+    std::optional<std::size_t> eligibleWaitingPassengers_;
     std::vector<std::size_t> queuedAlightingSeats_;
+    std::size_t outOfRangeAssignedPassengers_ = 0;
     std::optional<std::size_t> alightingSeat_;
     double alightingAccumulatorSeconds_ = 0.0;
+    double alightingAnimationSeconds_ = 0.75;
+    bool alightingAnimationDurationSet_ = false;
+    std::optional<double> alightingDoorWaitProgress_;
     std::optional<std::size_t> passengerPathLinkIndex_;
     std::vector<std::pair<double, std::optional<std::size_t>>> passengerPathLinkProgressProfile_;
     std::uint64_t passengerStopRequestSequence_ = 0;
     bool dwelling_ = false;
 
+    void completeBoardingPassenger();
     void clearPassengerPathLinkProgressProfile() noexcept;
     void updatePassengerPathLinkIndex() noexcept;
 };
@@ -372,7 +428,8 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
                                                MapPassengerQueueIdentities& queueIdentities,
                                                double elapsedSeconds, bool allowBoarding = true,
                                                bool allowAlighting = true, bool holdAtStop = false,
-                                               bool stopAfterAlightingPassenger = false);
+                                               bool stopAfterAlightingPassenger = false,
+                                               bool requireAnimationDuration = false);
 void departMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service,
                                               std::size_t& sharedWaitingPassengers,
                                               MapPassengerQueueIdentities& queueIdentities);
@@ -581,6 +638,9 @@ class MapTrafficLaneNetwork {
                bool allowIntermediarySegmentsBetweenRequired = false,
                bool allowReverseTraversalForRequired = false) const;
     std::size_t laneCount(int splineId) const;
+    std::optional<MapPassengerPedestrianJourney>
+    passengerJourneyNear(const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition,
+                         std::size_t seed, double maximumDistanceMeters = 25.0) const;
     std::vector<MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
     std::optional<MapTrafficPose> timetableStopPose(int splineId, std::size_t pathIndex,

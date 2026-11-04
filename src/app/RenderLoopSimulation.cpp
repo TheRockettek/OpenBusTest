@@ -168,6 +168,24 @@ void RenderLoop::refreshPassengerWaitingPositions() {
     authoredPassengerObjectCount_ = objects.size();
 }
 
+void RenderLoop::cancelMovingPlayerPassengerService(const BusSimulation& simulation) {
+    if (!activePlayerPassengerStop_) {
+        return;
+    }
+    if (playerVehicle_ == nullptr || !playerVehicle_->passengers) {
+        throw std::logic_error("Active player passenger stop has no passenger service");
+    }
+    if (std::abs(simulation.speed()) <= 0.35) {
+        return;
+    }
+    const auto queue = passengerNetwork_.queues.find(*activePlayerPassengerStop_);
+    if (queue != passengerNetwork_.queues.end()) {
+        passengerNetwork_.departService(playerVehicle_->passengers->service);
+    } else {
+        playerVehicle_->passengers->service.depart();
+    }
+}
+
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
@@ -186,6 +204,7 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     }
     updateTrafficDriving(simulation, std::clamp(frameTimeStep_, 0.0, 0.25));
     refreshPassengerWaitingPositions();
+    cancelMovingPlayerPassengerService(simulation);
     for (const auto& vehicle : vehicles_) {
         vehicle->soundViewContext =
             vehicle.get() == playerVehicle_ ? soundViewpoint_ : RenderViewContext::NonPlayer;
@@ -222,11 +241,15 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         const double passengerServiceTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
         std::unordered_map<Vehicle*, int> sharedQueueStops;
         std::unordered_map<Vehicle*, const TrafficVehicleState*> scheduledStopVehicles;
+        std::unordered_map<Vehicle*, const TrafficVehicleState*> scheduledVehicles;
         for (const TrafficVehicleState& state : trafficFleet_.vehicles) {
-            if (state.vehicle != nullptr && state.bus && state.bus->passengerStopArrived) {
-                sharedQueueStops.emplace(state.vehicle,
-                                         state.vehicle->passengers->service.currentStopId());
-                scheduledStopVehicles.emplace(state.vehicle, &state);
+            if (state.vehicle != nullptr && state.bus) {
+                scheduledVehicles.emplace(state.vehicle, &state);
+                if (state.bus->passengerStopArrived) {
+                    sharedQueueStops.emplace(state.vehicle,
+                                             state.vehicle->passengers->service.currentStopId());
+                    scheduledStopVehicles.emplace(state.vehicle, &state);
+                }
             }
         }
         if (playerVehicle_ != nullptr && activePlayerPassengerStop_) {
@@ -249,29 +272,228 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
             }
             const std::uint64_t stopRequestSequenceBefore =
                 vehicle->passengers->service.passengerStopRequestSequence();
+            auto& service = vehicle->passengers->service;
+            if (service.onboardPassengerCount() > 0) {
+                if (vehicle.get() == playerVehicle_) {
+                    const auto position = simulation.chassisPose().position;
+                    const auto requestRouteStops = [&](const PassengerStopRouteState& route,
+                                                       std::size_t firstStop) {
+                        openbus::app::requestPassengerStopsOnRoute(
+                            service, route.stops, firstStop, position,
+                            [&](std::size_t stopIndex) -> std::optional<std::array<double, 3>> {
+                                const auto pose = route.stopPose(stopIndex);
+                                if (!pose) {
+                                    return std::nullopt;
+                                }
+                                const int stopId = route.stops[stopIndex].stopId;
+                                const auto editorPosition =
+                                    mapRenderer_ ? mapRenderer_->editorOnlyBusStopPosition(stopId)
+                                                 : std::nullopt;
+                                return editorPosition.value_or(pose->position);
+                            });
+                    };
+                    if (playerPassengerServiceRouteIndex_) {
+                        const auto& route =
+                            passengerNetwork_.routes.at(*playerPassengerServiceRouteIndex_);
+                        requestRouteStops(route, playerPassengerServiceNextStopIndex_);
+                    } else {
+                        for (const auto& route : passengerNetwork_.routes) {
+                            requestRouteStops(route, 0);
+                        }
+                    }
+                } else {
+                    const auto scheduled = scheduledVehicles.find(vehicle.get());
+                    if (scheduled != scheduledVehicles.end() &&
+                        scheduled->second->bus->nextPassengerStopIndex <
+                            scheduled->second->bus->passengerStops.size()) {
+                        const auto& state = *scheduled->second;
+                        const auto busPose = openbus::map::sampleMapTrafficActorPose(
+                            state.actor, state.actor.distanceMeters);
+                        if (!busPose) {
+                            throw std::runtime_error(
+                                "Cannot sample scheduled passenger stop-request bus pose");
+                        }
+                        openbus::app::requestPassengerStopsOnRoute(
+                            service, state.bus->passengerStops, state.bus->nextPassengerStopIndex,
+                            busPose->position,
+                            [&](std::size_t index) -> std::optional<std::array<double, 3>> {
+                                const auto& stop = state.bus->passengerStops[index];
+                                const auto stopPose = openbus::map::sampleMapTrafficRoute(
+                                    state.actor.route, stop.routeDistanceMeters, 0.0);
+                                if (!stopPose) {
+                                    throw std::runtime_error(
+                                        "Cannot sample scheduled passenger stop-request pose");
+                                }
+                                return stopPose->position;
+                            });
+                    }
+                }
+            }
             const auto activeStop = sharedQueueStops.find(vehicle.get());
             const bool playerServiceActive =
                 vehicle.get() == playerVehicle_ && activeStop != sharedQueueStops.end();
             const bool entryOpen = openbus::app::vehicle::passengerDoorIsOpen(
                 vehicle->variables, openbus::app::vehicle::PassengerDoorKind::Entry,
                 vehicle->passengers->entryDoor());
-            const bool exitOpen = openbus::app::vehicle::passengerDoorIsOpen(
+            bool exitOpen = openbus::app::vehicle::passengerDoorIsOpen(
                 vehicle->variables, openbus::app::vehicle::PassengerDoorKind::Exit,
                 vehicle->passengers->exitDoor());
+            const auto alightingSeatBefore = service.alightingSeatIndex();
+            const auto alightingDoorBefore = vehicle->passengers->exitDoor();
+            const auto alightingModelBefore =
+                alightingSeatBefore ? service.passengerModelIndexOnSeat(*alightingSeatBefore)
+                                    : std::nullopt;
+            const auto pedestrianJourneyBefore =
+                alightingSeatBefore ? service.passengerPedestrianJourneyOnSeat(*alightingSeatBefore)
+                                    : std::nullopt;
+            if (exitOpen && playerServiceActive && alightingSeatBefore) {
+                if (!mapRenderer_ || !activePlayerPassengerStopRouteIndex_ ||
+                    !activePlayerPassengerStopIndex_) {
+                    throw std::logic_error("Cannot locate the active player bus exit");
+                }
+                auto stopPose = passengerNetwork_.routes.at(*activePlayerPassengerStopRouteIndex_)
+                                    .stopPose(*activePlayerPassengerStopIndex_);
+                if (!stopPose) {
+                    throw std::runtime_error("Cannot sample the player passenger stop pose");
+                }
+                if (const auto editorPosition =
+                        mapRenderer_->editorOnlyBusStopPosition(activeStop->second)) {
+                    stopPose->position = *editorPosition;
+                }
+                const auto chassis = simulation.chassisPose();
+                openbus::map::MapTrafficPose busPose;
+                busPose.position = transformLocalPoint(chassis, {0.0, 0.0, vehicle->modelOffsetZ});
+                busPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+                const auto curb = passengerCurbPose(*stopPose, mapRenderer_->leftHandTraffic(), 0.0,
+                                                    vehicle->trafficWidthMeters);
+                const auto outside = passengerConfiguredDoorQueuePose(
+                                         *vehicle, busPose, mapRenderer_->leftHandTraffic(),
+                                         vehicle->passengers->configuration().passengerExitPathPoints,
+                                         alightingDoorBefore, 0)
+                                         .value_or(curb);
+                exitOpen = service.canCurrentPassengerAlightAt(outside.position);
+                if (!exitOpen && reportedPassengerDriftStops_.insert(activeStop->second).second) {
+                    gameLog.Warning(
+                        "Player bus moved its exit more than 200 m from a passenger destination "
+                        "at stop " + std::to_string(activeStop->second) +
+                        "; the passenger will wait aboard.");
+                }
+            }
             auto queue = activeStop != sharedQueueStops.end()
                              ? passengerNetwork_.queues.find(activeStop->second)
                              : passengerNetwork_.queues.end();
+            std::optional<std::size_t> serviceRouteIndex;
+            std::optional<std::size_t> nextPassenger;
+            bool passengerDestinationPending = false;
+            if (queue != passengerNetwork_.queues.end()) {
+                if (playerServiceActive) {
+                    serviceRouteIndex = activePlayerPassengerStopRouteIndex_;
+                } else {
+                    const auto scheduled = scheduledStopVehicles.find(vehicle.get());
+                    if (scheduled != scheduledStopVehicles.end()) {
+                        serviceRouteIndex = scheduled->second->bus->passengerRouteIndex;
+                    }
+                }
+                if (!serviceRouteIndex || *serviceRouteIndex >= passengerNetwork_.routes.size()) {
+                    throw std::logic_error("Active passenger service has no registered route");
+                }
+                nextPassenger = passengerNetwork_.nextPassenger(activeStop->second,
+                                                                *serviceRouteIndex, service);
+                if (nextPassenger && !service.boardingPassenger()) {
+                    const auto& rider =
+                        passengerNetwork_.waitingPassengers(activeStop->second)[*nextPassenger];
+                    if (!rider.journey) {
+                        throw std::logic_error("Selected passenger has no journey");
+                    }
+                    if (!rider.journey->pedestrianResolved) {
+                        if (!mapRenderer_ || !mapRenderer_->humanTrafficLaneNetworkReady()) {
+                            passengerDestinationPending = service.canAcceptWaitingPassenger();
+                            nextPassenger.reset();
+                        } else {
+                            const auto& route =
+                                passengerNetwork_.routes.at(rider.journey->routeIndex);
+                            std::optional<openbus::map::MapTrafficPose> destinationPose;
+                            bool passedOrigin = false;
+                            for (std::size_t index = 0; index < route.stops.size(); ++index) {
+                                if (passedOrigin &&
+                                    route.stops[index].stopId == rider.journey->destinationStopId) {
+                                    destinationPose = route.stopPose(index);
+                                    if (destinationPose) {
+                                        break;
+                                    }
+                                }
+                                passedOrigin = passedOrigin ||
+                                               route.stops[index].stopId == activeStop->second;
+                            }
+                            if (!destinationPose) {
+                                throw std::logic_error(
+                                    "Passenger journey has no located downstream destination");
+                            }
+                            const auto key = std::pair{rider.journey->routeIndex,
+                                                       rider.journey->destinationStopId};
+                            auto cached = passengerPedestrianPaths_.find(key);
+                            if (cached == passengerPedestrianPaths_.end()) {
+                                auto candidate = mapRenderer_->passengerPedestrianJourneyNear(
+                                    destinationPose->position, 0);
+                                if (candidate) {
+                                    cached = passengerPedestrianPaths_
+                                                 .emplace(key, std::move(*candidate))
+                                                 .first;
+                                }
+                            }
+                            std::optional<openbus::map::MapPassengerPedestrianJourney> pedestrian;
+                            if (cached != passengerPedestrianPaths_.end()) {
+                                pedestrian = cached->second;
+                                pedestrian->destinationDistanceMeters = std::min(
+                                    pedestrian->route->totalLength - 0.01,
+                                    pedestrian->startDistanceMeters + 15.0 +
+                                        static_cast<double>(rider.modelIndex % 31));
+                                const auto destination = openbus::map::sampleMapTrafficRoute(
+                                    *pedestrian->route, pedestrian->destinationDistanceMeters, 0.0);
+                                if (!destination) {
+                                    throw std::runtime_error(
+                                        "Cannot sample passenger pedestrian destination");
+                                }
+                                pedestrian->destination = destination->position;
+                            }
+                            if (!pedestrian &&
+                                reportedPassengerPedestrianStops_
+                                    .insert(rider.journey->destinationStopId)
+                                    .second) {
+                                gameLog.Warning(
+                                    "No suitable pedestrian spline near passenger destination stop " +
+                                    std::to_string(rider.journey->destinationStopId) +
+                                    "; riders use the mapped stop and disappear after alighting.");
+                            }
+                            passengerNetwork_.resolvePassengerPedestrianJourney(
+                                activeStop->second, *nextPassenger, std::move(pedestrian));
+                            if (!passengerNetwork_.passengerMatchesService(
+                                    passengerNetwork_.waitingPassengers(activeStop->second)
+                                        [*nextPassenger],
+                                    *serviceRouteIndex, service)) {
+                                nextPassenger.reset();
+                            }
+                        }
+                    }
+                }
+                const auto& waiting = passengerNetwork_.waitingPassengers(activeStop->second);
+                if (service.acceptsBoarding() &&
+                    std::ranges::any_of(waiting,
+                                        [](const auto& rider) { return !rider.journey; }) &&
+                    reportedPassengerJourneyStops_.insert(activeStop->second).second) {
+                    gameLog.Warning(
+                        "No mapped downstream passenger journeys are available at stop " +
+                        std::to_string(activeStop->second) +
+                        "; waiting passengers cannot choose a service.");
+                }
+            }
             bool passengerReady = true;
             if (playerServiceActive && queue != passengerNetwork_.queues.end()) {
                 playerPassengerApproachSeconds_ += passengerServiceTimeStep;
-                if (queue->second > 0 && !vehicle->passengers->service.boardingPassenger()) {
-                    const auto initialQueue = passengerNetwork_.initialQueues.find(activeStop->second);
-                    const std::size_t initialCount =
-                        initialQueue == passengerNetwork_.initialQueues.end()
-                            ? queue->second
-                            : std::max(initialQueue->second, queue->second);
-                    const std::size_t slot = openbus::map::mapScheduledPassengerQueueSlot(
-                        initialCount, queue->second - 1);
+                if (nextPassenger && !vehicle->passengers->service.boardingPassenger()) {
+                    const std::size_t slot =
+                        passengerNetwork_.waitingPassengers(activeStop->second)[*nextPassenger]
+                            .queueSlot;
                     const auto start = passengerQueuePose(activeStop->second, slot);
                     if (!start || mapRenderer_ == nullptr) {
                         throw std::logic_error("Cannot locate waiting player bus passengers");
@@ -283,21 +505,88 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 }
             }
             if (queue != passengerNetwork_.queues.end()) {
-                advanceMapPassengerServiceWithSharedQueue(
-                    vehicle->passengers->service, activeStop->second, queue->second,
-                    passengerNetwork_.queueIdentities, passengerServiceTimeStep,
+                passengerNetwork_.advanceService(
+                    service, *serviceRouteIndex, nextPassenger, passengerServiceTimeStep,
                     entryOpen && passengerReady, exitOpen,
-                    playerServiceActive && activePlayerPassengerStopServiceGeneration_ ==
-                                               playerPassengerServiceGeneration_,
-                    true);
+                    (playerServiceActive && activePlayerPassengerStopServiceGeneration_ ==
+                                                playerPassengerServiceGeneration_) ||
+                        passengerDestinationPending,
+                    passengerDestinationPending);
             } else {
                 vehicle->passengers->service.advance(passengerServiceTimeStep, entryOpen, exitOpen,
-                                                     false, true);
+                                                     false, true, nullptr, true);
             }
-            auto& service = vehicle->passengers->service;
+            if (alightingSeatBefore && alightingModelBefore && pedestrianJourneyBefore &&
+                service.passengerCountOnSeat(*alightingSeatBefore) == 0) {
+                if (activeStop == sharedQueueStops.end() || !mapRenderer_) {
+                    throw std::logic_error("Alighting pedestrian has no active mapped stop");
+                }
+                openbus::map::MapTrafficPose busPose;
+                std::optional<openbus::map::MapTrafficPose> stopPose;
+                double laneOffset = 0.0;
+                double vehicleWidth = vehicle->trafficWidthMeters;
+                if (playerServiceActive) {
+                    if (!activePlayerPassengerStopRouteIndex_ || !activePlayerPassengerStopIndex_) {
+                        throw std::logic_error("Alighting player passenger has no route call");
+                    }
+                    const auto chassis = simulation.chassisPose();
+                    busPose.position =
+                        transformLocalPoint(chassis, {0.0, 0.0, vehicle->modelOffsetZ});
+                    busPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+                    stopPose = passengerNetwork_.routes.at(*activePlayerPassengerStopRouteIndex_)
+                                   .stopPose(*activePlayerPassengerStopIndex_);
+                    if (stopPose) {
+                        if (const auto editorPosition =
+                                mapRenderer_->editorOnlyBusStopPosition(activeStop->second)) {
+                            stopPose->position = *editorPosition;
+                        }
+                    }
+                } else {
+                    const auto scheduled = scheduledStopVehicles.find(vehicle.get());
+                    if (scheduled == scheduledStopVehicles.end()) {
+                        throw std::logic_error("Alighting scheduled passenger has no bus state");
+                    }
+                    const auto& state = *scheduled->second;
+                    const auto sampled = openbus::map::sampleMapTrafficActorPose(
+                        state.actor, state.actor.distanceMeters);
+                    if (!sampled || state.bus->nextPassengerStopIndex >=
+                                        state.bus->passengerStops.size()) {
+                        throw std::runtime_error("Cannot sample alighting bus pose");
+                    }
+                    busPose = *sampled;
+                    busPose.position[2] += vehicle->aiDeltaHeight;
+                    const auto& stop = state.bus->passengerStops[state.bus->nextPassengerStopIndex];
+                    stopPose = openbus::map::sampleMapTrafficRoute(
+                        state.actor.route, stop.routeDistanceMeters, 0.0);
+                    laneOffset = state.actor.lateralOffsetMeters;
+                    vehicleWidth = state.actor.widthMeters;
+                }
+                if (!stopPose) {
+                    throw std::runtime_error("Cannot sample alighting stop pose");
+                }
+                const auto curb = passengerCurbPose(*stopPose, mapRenderer_->leftHandTraffic(),
+                                                    laneOffset, vehicleWidth);
+                const auto outside = passengerConfiguredDoorQueuePose(
+                                         *vehicle, busPose, mapRenderer_->leftHandTraffic(),
+                                         vehicle->passengers->configuration().passengerExitPathPoints,
+                                         alightingDoorBefore, 0)
+                                         .value_or(curb);
+                auto handoff = openbus::app::makePassengerPedestrianHandoff(
+                    *pedestrianJourneyBefore, outside, busPose, mapRenderer_->leftHandTraffic(),
+                    *alightingModelBefore);
+                if (handoff) {
+                    alightedPassengers_.push_back(std::move(*handoff));
+                } else if (reportedPassengerHandoffStops_.insert(activeStop->second).second) {
+                    gameLog.Warning(
+                        "No pedestrian path can be reached safely from a bus exit at stop " +
+                        std::to_string(activeStop->second) +
+                        "; the alighting passenger was removed.");
+                }
+            }
             if (service.boardingPassenger() || service.alightingPassenger()) {
                 if (activeStop == sharedQueueStops.end() || mapRenderer_ == nullptr) {
-                    service.setPassengerPathLinkProgressProfile({});
+                    throw std::logic_error(
+                        "Active passenger movement has no mapped stop or map renderer");
                 } else {
                     openbus::map::MapTrafficPose busPose;
                     std::optional<openbus::map::MapTrafficPose> stopPose;
@@ -393,7 +682,7 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                         updatePassengerCabinPathOccupancy(
                             service, cabin, busPose, outside.position,
                             passengerCabinStandingPoint(position.position, position.seatHeight),
-                            true, *seat, vehicle->passengers->entryDoor());
+                            true, *seat, vehicle->passengers->entryDoor(), curb.position);
                     } else {
                         const auto outside =
                             passengerConfiguredDoorQueuePose(
@@ -421,6 +710,10 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                         [](int stopId) { return stopId != 0; })) {
             ++passengerNetwork_.updateOffset;
         }
+        std::erase_if(alightedPassengers_, [&](auto& passenger) {
+            return !openbus::app::advancePassengerPedestrianHandoff(passenger,
+                                                                     passengerServiceTimeStep);
+        });
     }
     updateScripts();
     for (TrafficVehicleState& trafficVehicle : trafficFleet_.vehicles) {
@@ -465,9 +758,6 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
     hasPreviousCalendarSimulationTime_ = true;
     simulationState_.sharedVariables().updateSimulationClock(calendarElapsedSeconds_);
     if (playerVehicle_ != nullptr) {
-        if (activePlayerPassengerStop_ && !playerVehicle_->passengers) {
-            throw std::logic_error("Active player passenger stop has no passenger service");
-        }
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
@@ -481,17 +771,10 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                 playerVehicle_->scripts->invokeSystemTrigger("collision");
             }
         }
-        if (activePlayerPassengerStop_ && std::abs(simulation.speed()) > 0.35) {
-            const auto queue = passengerNetwork_.queues.find(*activePlayerPassengerStop_);
-            if (queue != passengerNetwork_.queues.end()) {
-                openbus::map::departMapPassengerServiceWithSharedQueue(
-                    playerVehicle_->passengers->service, queue->second,
-                    passengerNetwork_.queueIdentities);
-            } else {
-                playerVehicle_->passengers->service.depart();
-            }
-        }
+        cancelMovingPlayerPassengerService(simulation);
         if (activePlayerPassengerStop_ && !playerVehicle_->passengers->service.dwelling()) {
+            playerVehicle_->passengers->service.rearmPassengerStopRequestsAfterStop(
+                *activePlayerPassengerStop_);
             const std::optional<std::size_t> completedRoute = activePlayerPassengerStopRouteIndex_;
             const std::optional<std::size_t> completedStop = activePlayerPassengerStopIndex_;
             if (activePlayerPassengerStopServiceGeneration_ == playerPassengerServiceGeneration_ &&
@@ -652,9 +935,22 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             const auto queue = passengerNetwork_.queues.find(stop.stopId);
             if (queue != passengerNetwork_.queues.end()) {
                 const auto& route = passengerNetwork_.routes[nearestStop.routeIndex];
-                const auto nextStop =
-                    openbus::app::nextLocatedPassengerStop(route, nearestStop.stopIndex + 1);
-                const int nextStopId = nextStop ? route.stops[*nextStop].stopId : 0;
+                const auto destinations = openbus::app::onwardPassengerStopIds(
+                    route.stops, nearestStop.stopIndex + 1, stop.stopId,
+                    [&](std::size_t index) { return route.stopPose(index).has_value(); });
+                const int nextStopId = destinations.empty() ? 0 : destinations.front();
+                auto stopPose = route.stopPose(nearestStop.stopIndex);
+                if (!stopPose || !mapRenderer_) {
+                    throw std::logic_error("Cannot locate player bus alighting positions");
+                }
+                if (const auto editorPosition = mapRenderer_->editorOnlyBusStopPosition(stop.stopId)) {
+                    stopPose->position = *editorPosition;
+                }
+                const auto chassis = simulation.chassisPose();
+                openbus::map::MapTrafficPose busPose;
+                busPose.position =
+                    transformLocalPoint(chassis, {0.0, 0.0, playerVehicle_->modelOffsetZ});
+                busPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
                 playerVehicle_->passengers->service.setWaitingPassengers(
                     stop.stopId, nextStopId == 0 ? 0 : queue->second);
                 if (!playerVehicle_->passengers->service.arrive(
@@ -662,10 +958,23 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                          .waitingPassengers = 0,
                          .passengersAlighting = stop.passengersAlighting,
                          .dwellSeconds = stop.dwellSeconds,
-                         .nextStopId = nextStopId})) {
+                         .nextStopId = nextStopId,
+                         .onwardStopIds = destinations,
+                         .alightingPositions = passengerAlightingPositions(
+                             *playerVehicle_, busPose, *stopPose, mapRenderer_->leftHandTraffic(),
+                             0.0, playerVehicle_->trafficWidthMeters)})) {
                     throw std::logic_error("Player bus reached a passenger stop while already "
                                            "dwelling");
                 }
+                if (playerVehicle_->passengers->service.outOfRangeAssignedPassengers() > 0) {
+                    gameLog.Warning(
+                        "Player bus reached stop " + std::to_string(stop.stopId) +
+                        " with assigned passenger destinations more than 200 m from their exits." +
+                        (stop.passengersAlighting > 0
+                             ? " Forced alighting at this stop can override the distance check."
+                             : " Those passengers remain aboard."));
+                }
+                playerVehicle_->passengers->service.setEligibleWaitingPassengers(0);
                 activePlayerPassengerStop_ = stop.stopId;
                 playerPassengerApproachSeconds_ = 0.0;
                 activePlayerPassengerStopRouteIndex_ = nearestStop.routeIndex;

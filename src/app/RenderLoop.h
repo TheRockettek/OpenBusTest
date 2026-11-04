@@ -3,6 +3,7 @@
 #include "core/BusTypes.h"
 #include "app/FrameTiming.h"
 #include "app/traffic/PassengerNetwork.h"
+#include "app/traffic/PassengerApproach.h"
 #include "app/traffic/PlayerTimetableController.h"
 #include "app/traffic/TrafficFleet.h"
 #include "render/CameraMath.h"
@@ -26,11 +27,13 @@
 #include <filesystem>
 #include <future>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct GLFWwindow;
@@ -283,6 +286,7 @@ class RenderLoop {
     double currentFieldOfView() const;
     double mapTrafficElapsedSeconds(double simulationTime) const;
     void refreshPassengerWaitingPositions();
+    void cancelMovingPlayerPassengerService(const BusSimulation& simulation);
     std::optional<openbus::map::MapTrafficPose> passengerQueuePose(int stopId,
                                                                   std::size_t queueSlot) const;
     void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
@@ -526,6 +530,12 @@ class RenderLoop {
     std::map<int, std::size_t> authoredPassengerQueueCounts_;
     std::size_t authoredPassengerObjectCount_ = 0;
     std::unordered_set<int> reportedPassengerAreaStops_;
+    std::unordered_set<int> reportedPassengerJourneyStops_;
+    std::unordered_set<int> reportedPassengerPedestrianStops_;
+    std::unordered_set<int> reportedPassengerHandoffStops_;
+    std::unordered_set<int> reportedPassengerDriftStops_;
+    std::map<std::pair<std::size_t, int>, openbus::map::MapPassengerPedestrianJourney>
+        passengerPedestrianPaths_;
     std::optional<int> playerPassengerStopLatch_;
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
     std::optional<std::size_t> playerPassengerStopLatchIndex_;
@@ -554,6 +564,7 @@ class RenderLoop {
         std::uint64_t workerGeneration = 0;
     };
     std::vector<HumanTrafficState> humanTrafficActors_;
+    std::vector<openbus::app::PassengerPedestrianHandoff> alightedPassengers_;
     std::vector<std::filesystem::path> scheduledPassengerHumanModels_;
     std::size_t targetHumanTrafficCount_ = 0;
     Vehicle* playerVehicle_ = nullptr;
