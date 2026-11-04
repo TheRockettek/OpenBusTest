@@ -47,6 +47,7 @@ openbus_add_module(openbus_config
     SOURCES
         config/BusConfigLoader.cpp
         config/ConfigurationParser.cpp
+        config/HofData.cpp
         config/HumanConfigLoader.cpp
         config/ModelConfigJson.cpp
         config/ModelConfigLoader.cpp

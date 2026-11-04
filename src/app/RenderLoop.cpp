@@ -432,6 +432,7 @@ void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficD
             return mapRenderer_->timetableStopPose(stop.splineId, stop.pathIndex,
                                                    stop.splinePositionMeters.value_or(0.0));
         });
+    updateAutomaticMapHofSelection();
     playerTimetableCatalog_.invalidate();
     gameLog.Log("Player timetable routes registered from map schedules: " +
                 std::to_string(passengerNetwork_.routes.size()) +
@@ -772,11 +773,73 @@ void RenderLoop::SetMapTrafficStartHour(double startHour) {
         throw std::invalid_argument("Map traffic start hour must be between 0 and 24");
     }
     trafficFleet_.mapTrafficStartHour = startHour;
+    trafficFleet_.mapTrafficStartSimulationTime = 0.0;
 }
 
-void RenderLoop::SetMapCalendar(int year, int month, int day, double timeSeconds) {
+void RenderLoop::SetMapCalendar(int year, int month, int day, double timeSeconds,
+                                double simulationTime) {
+    if (!std::isfinite(simulationTime) || simulationTime < 0.0) {
+        throw std::invalid_argument("Simulation time is invalid");
+    }
     simulationState_.sharedVariables().configureSimulationClock(year, month, day, timeSeconds);
-    trafficFleet_.mapTrafficStartHour = timeSeconds / 3600.0;
+    calendarElapsedSeconds_ = 0.0;
+    previousCalendarSimulationTime_ = simulationTime;
+    hasPreviousCalendarSimulationTime_ = true;
+    rebaseMapTrafficClock(simulationTime, simulationTime, timeSeconds / 3600.0);
+}
+
+MapCalendarRequest RenderLoop::currentMapCalendar() const {
+    const SystemVariables& variables = simulationState_.sharedVariables();
+    return {static_cast<int>(variables.get("year")), static_cast<int>(variables.get("month")),
+            static_cast<int>(variables.get("day")), variables.get("time")};
+}
+
+void RenderLoop::ResetMapClockEpoch(double simulationTime) {
+    ResetMapClockEpoch(simulationTime, simulationTime);
+}
+
+void RenderLoop::ResetMapClockEpoch(double previousSimulationTime, double newSimulationTime) {
+    if (!std::isfinite(previousSimulationTime) || previousSimulationTime < 0.0 ||
+        !std::isfinite(newSimulationTime) || newSimulationTime < 0.0) {
+        throw std::invalid_argument("Simulation time is invalid");
+    }
+    const MapCalendarRequest current = currentMapCalendar();
+    simulationState_.sharedVariables().configureSimulationClock(
+        current.year, current.month, current.day, current.timeSeconds);
+    calendarElapsedSeconds_ = 0.0;
+    previousCalendarSimulationTime_ = newSimulationTime;
+    hasPreviousCalendarSimulationTime_ = true;
+    rebaseMapTrafficClock(previousSimulationTime, newSimulationTime,
+                          simulationState_.sharedVariables().get("time") / 3600.0);
+}
+
+double RenderLoop::mapTrafficElapsedSeconds(double simulationTime) const {
+    return std::max(0.0, simulationTime - trafficFleet_.mapTrafficStartSimulationTime);
+}
+
+void RenderLoop::rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
+                                       double newStartHour) {
+    const double previousElapsedSeconds = mapTrafficElapsedSeconds(previousSimulationTime);
+    clearPlayerTripAiPolicy();
+    for (TrafficVehicleState& state : trafficFleet_.vehicles) {
+        if (!state.bus) {
+            continue;
+        }
+        openbus::app::rebaseScheduledBusClock(*state.bus, newStartHour,
+                                              previousElapsedSeconds);
+    }
+    trafficFleet_.mapTrafficStartHour = newStartHour;
+    trafficFleet_.mapTrafficStartSimulationTime = newSimulationTime;
+    if (playerTimetable_.state &&
+        playerTimetable_.state->selection.courseIndex < passengerTimetableCourses_.size()) {
+        const auto& trips =
+            passengerTimetableCourses_[playerTimetable_.state->selection.courseIndex].trips;
+        const std::size_t tripIndex = playerTimetable_.state->selection.courseTripIndex;
+        if (tripIndex < trips.size()) {
+            applyPlayerTripAiPolicy(
+                trips[tripIndex], playerTimetable_.state->selection.driveAsAdditionalBus);
+        }
+    }
 }
 
 void RenderLoop::SetMapTrafficSpawnInView(bool enabled) {
@@ -987,6 +1050,7 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     playerTimetableCatalog_.invalidate();
     playerVehicle_ = model;
     if (playerVehicle_ != nullptr) {
+        mapBusVehicle_ = playerVehicle_;
         playerPassengerServiceEnabled_ = true;
         freeCameraEnabled_ = false;
         if (mouseLookEnabled_) {
@@ -997,6 +1061,108 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     }
 }
 
+void RenderLoop::SetParkedPlayerBus(Vehicle* vehicle) {
+    if (vehicle == nullptr || playerVehicle_ != nullptr) {
+        throw std::invalid_argument("A parked player bus requires an unoccupied vehicle");
+    }
+    mapBusVehicle_ = vehicle;
+}
+
+void RenderLoop::RemovePlayerVehicle() {
+    Vehicle* removedVehicle = mapBusVehicle_ != nullptr ? mapBusVehicle_ : playerVehicle_;
+    if (removedVehicle == nullptr) {
+        return;
+    }
+
+    SetPlayerTimetableSelection(std::nullopt);
+    SetPlayerVehicle(nullptr);
+    mapBusVehicle_ = nullptr;
+    mouseControlEnabled_ = false;
+    mouseLookEnabled_ = false;
+    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetCursor(window_, nullptr);
+    vehicles_.erase(std::remove_if(vehicles_.begin(), vehicles_.end(),
+                                  [removedVehicle](const std::unique_ptr<Vehicle>& vehicle) {
+                                      return vehicle.get() == removedVehicle;
+                                  }),
+                    vehicles_.end());
+    vehicleCameras_.clear();
+    vehicleScheduleViews_.clear();
+    vehicleTicketSellingViews_.clear();
+    cameraView_ = 0;
+    pauseMenuOpen_ = false;
+    setPausedState(false);
+}
+
+void RenderLoop::ResetForStartupMenu() {
+    if (playerTimetable_.state) {
+        SetPlayerTimetableSelection(std::nullopt);
+    }
+    clearPlayerTripAiPolicy();
+    trafficFleet_.worker.reset();
+    trafficFleet_.vehicles.clear();
+    trafficFleet_ = {};
+    SetPlayerVehicle(nullptr);
+    vehicles_.clear();
+    humanTrafficActors_.clear();
+    scheduledPassengerHumanModels_.clear();
+    passengerNetwork_ = {};
+    passengerTimetableCourses_.clear();
+    playerTimetableCatalog_.invalidate();
+    playerTimetableMapKeys_.clear();
+    playerTimetableMapPath_.clear();
+    playerTimetable_.state.reset();
+    authoredPassengerPositions_.clear();
+    authoredPassengerQueueCounts_.clear();
+    reportedPassengerAreaStops_.clear();
+    playerPassengerStopLatch_.reset();
+    playerPassengerStopLatchRouteIndex_.reset();
+    playerPassengerStopLatchIndex_.reset();
+    activePlayerPassengerStop_.reset();
+    activePlayerPassengerStopCompletesTimetable_ = false;
+    activePlayerPassengerStopRouteIndex_.reset();
+    activePlayerPassengerStopIndex_.reset();
+    mapRenderer_.reset();
+    vehicleCameras_.clear();
+    vehicleScheduleViews_.clear();
+    vehicleTicketSellingViews_.clear();
+    mouseControlEnabled_ = false;
+    mouseLookEnabled_ = false;
+    freeCameraEnabled_ = false;
+    clickableDebugOverlay_ = false;
+    collisionDebugOverlay_ = false;
+    tileBoundaryDebugOverlay_ = false;
+    trafficSplineDebugOverlay_ = false;
+    clickableHoverCacheValid_ = false;
+    targetHumanTrafficCount_ = 0;
+    authoredPassengerObjectCount_ = 0;
+    playerPassengerServiceEnabled_ = true;
+    spawnBusRequestPending_ = false;
+    enterMapBusRequestPending_ = false;
+    leaveMapBusRequestPending_ = false;
+    mapBusTeleportRequestPending_.reset();
+    removePlayerBusRequestPending_ = false;
+    openSpawnPopup_ = false;
+    openPlayerTimetablePopup_ = false;
+    pauseMenuOpen_ = false;
+    debugMenuOpen_ = false;
+    debugCalendarInitialized_ = false;
+    mapCalendarRequestPending_.reset();
+    quitToMenuRequested_ = false;
+    calendarElapsedSeconds_ = 0.0;
+    hasPreviousCalendarSimulationTime_ = false;
+    paused_ = false;
+    simulationState_ = SimulationState{};
+    mapEntryPoints_.clear();
+    selectedMapSpawnEntryPointIndex_ = 0;
+    mapSpawnInBus_ = true;
+    mapBusVehicle_ = nullptr;
+    onFootState_ = {};
+    freeCameraPose_ = {};
+    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetCursor(window_, nullptr);
+}
+
 void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                         std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                         bool prepareInitialWindowAsync) {
@@ -1004,6 +1170,8 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
+    mapEntryPoints_ = map.entryPoints;
+    selectedMapSpawnEntryPointIndex_ = spawnEntryPointIndex;
     passengerTimetableCourses_.clear();
     playerTimetableCatalog_.invalidate();
     playerTimetableMapPath_ = openbus::pathToUtf8(map.rootPath);

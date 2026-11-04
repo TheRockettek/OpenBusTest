@@ -74,6 +74,7 @@ struct TrafficFleet {
     double roadRouteRefreshElapsedSeconds = 0.0;
     std::size_t targetBusTrafficCount = 0;
     double mapTrafficStartHour = 12.0;
+    double mapTrafficStartSimulationTime = 0.0;
     bool mapTrafficSpawnInView = false;
     bool trafficSpawnDiagnosticsEnabled = false;
     double trafficSpawnDiagnosticElapsedSeconds = 0.0;

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <numbers>
@@ -54,10 +55,52 @@ std::string spawnLabel(std::size_t index, const openbus::map::MapEntryPoint& ent
            (entryPoint.name.empty() ? std::string("(unnamed)") : entryPoint.name);
 }
 
+void drawMapEntryPointCombo(const std::vector<openbus::map::MapEntryPoint>& entryPoints,
+                            std::size_t& selectedIndex, const char* label) {
+    if (entryPoints.empty()) {
+        ImGui::TextUnformatted("This map has no spawn locations.");
+        return;
+    }
+    selectedIndex = std::min(selectedIndex, entryPoints.size() - 1);
+    const std::string current = spawnLabel(selectedIndex, entryPoints[selectedIndex]);
+    if (ImGui::BeginCombo(label, current.c_str())) {
+        for (std::size_t index = 0; index < entryPoints.size(); ++index) {
+            const std::string option = spawnLabel(index, entryPoints[index]);
+            const bool selected = index == selectedIndex;
+            if (ImGui::Selectable(option.c_str(), selected)) {
+                selectedIndex = index;
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
 void copyToInputBuffer(std::array<char, 256>& buffer, const std::string& value) {
     const std::size_t count = std::min(value.size(), buffer.size() - 1);
     std::copy_n(value.data(), count, buffer.data());
     buffer[count] = '\0';
+}
+
+std::string lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return value;
+}
+
+bool matchesVehicleSearch(const openbus::config::VehicleCatalogEntry& vehicle,
+                          const std::string& search) {
+    if (search.empty()) {
+        return true;
+    }
+    const std::string searchable = lowercase(
+        vehicle.manufacturer + " " + vehicle.type + " " +
+        pathToUtf8(vehicle.configurationPath.filename()));
+    return searchable.find(search) != std::string::npos;
 }
 
 std::string environmentValue(const char* name) {
@@ -82,10 +125,17 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     {
         TraceScope catalogTrace("startup", "startup.discoverVehicleCatalog");
         vehicleCatalog_ = openbus::config::discoverVehicleCatalog(vehiclesDirectory);
+        vehicleDepotCatalog_ = openbus::config::discoverAllVehicleDepots(vehiclesDirectory);
     }
     if (vehicleCatalog_.empty()) {
         throw std::runtime_error("No OMSI .bus files were found under '" +
                                  pathToUtf8(vehiclesDirectory) + "'");
+    }
+    if (!vehicleDepotCatalog_.empty()) {
+        selectedMapDepotIndex_ =
+            std::min(selectedMapDepotIndex_, vehicleDepotCatalog_.size() - 1);
+    } else if (mapHofSelectionMode_ == MapHofSelectionMode::Manual) {
+        mapHofSelectionMode_ = MapHofSelectionMode::Automatic;
     }
 
     std::size_t selectedMapIndex = 0;
@@ -331,6 +381,17 @@ void RenderLoop::SetNoBusSpawnPoint(const VehiclePlacement& placement) {
     freeCameraEnabled_ = true;
 }
 
+bool RenderLoop::mapBusIsNearby() const {
+    if (mapBusVehicle_ == nullptr) {
+        return false;
+    }
+    const double deltaX =
+        onFootState_.feetPosition[0] - mapBusVehicle_->placement.position[0];
+    const double deltaY =
+        onFootState_.feetPosition[1] - mapBusVehicle_->placement.position[1];
+    return deltaX * deltaX + deltaY * deltaY <= 25.0;
+}
+
 void RenderLoop::updateOnFoot(const World& world, double elapsedSeconds) {
     if (playerVehicle_ != nullptr) {
         return;
@@ -358,7 +419,8 @@ std::array<double, 3> RenderLoop::streamingPosition(const BusSimulation& simulat
 }
 
 std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
-    if (!spawnBusRequestPending_ || vehicleCatalog_.empty() || !mapVehicleConfig_) {
+    if (!spawnBusRequestPending_ || vehicleCatalog_.empty() || !mapVehicleConfig_ ||
+        mapBusVehicle_ != nullptr || mapEntryPoints_.empty()) {
         spawnBusRequestPending_ = false;
         return std::nullopt;
     }
@@ -367,8 +429,10 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
     selectedMapVehicleIndex_ = std::min(selectedMapVehicleIndex_, vehicleCatalog_.size() - 1);
     SpawnBusRequest request;
     request.configurationPath = vehicleCatalog_[selectedMapVehicleIndex_].configurationPath;
-    request.placement.position = onFootState_.feetPosition;
-    request.placement.yawDegrees = freeCameraPose_.yawRadians * 180.0 / std::numbers::pi;
+    selectedMapSpawnEntryPointIndex_ =
+        std::min(selectedMapSpawnEntryPointIndex_, mapEntryPoints_.size() - 1);
+    request.placement = mapEntryPoints_[selectedMapSpawnEntryPointIndex_].placement;
+    request.spawnInBus = mapSpawnInBus_;
     if (selectedMapAppearanceIndex_ > 0) {
         const auto& appearance = mapVehicleAppearances_[selectedMapAppearanceIndex_ - 1];
         request.setupOptions.ctcTextureReplacements = appearance.textureReplacements;
@@ -377,10 +441,17 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
     } else {
         request.setupOptions.appearanceKey = "default";
     }
-    if (selectedMapDepotIndex_ > 0) {
-        const auto& depot = mapVehicleDepots_[selectedMapDepotIndex_ - 1];
-        request.setupOptions.depotPath = depot.path;
-        request.setupOptions.depotName = depot.name;
+    const openbus::config::VehicleDepot* depot = nullptr;
+    if (mapHofSelectionMode_ == MapHofSelectionMode::Automatic && autoMapDepotIndex_ &&
+        *autoMapDepotIndex_ < vehicleDepotCatalog_.size()) {
+        depot = &vehicleDepotCatalog_[*autoMapDepotIndex_];
+    } else if (mapHofSelectionMode_ == MapHofSelectionMode::Manual &&
+               selectedMapDepotIndex_ < vehicleDepotCatalog_.size()) {
+        depot = &vehicleDepotCatalog_[selectedMapDepotIndex_];
+    }
+    if (depot != nullptr) {
+        request.setupOptions.depotPath = depot->path;
+        request.setupOptions.depotName = depot->name;
     }
     const auto registration = vehicleRegistrationSelectionAtIndex(
         *mapVehicleConfig_, selectedMapRegistrationIndex_, mapVehicleNumberInput_.data(),
@@ -388,6 +459,50 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
     request.setupOptions.vehicleNumber = registration.vehicleNumber;
     request.setupOptions.registration = registration.registration;
     return request;
+}
+
+bool RenderLoop::consumeEnterMapBusRequest() {
+    const bool requested = enterMapBusRequestPending_;
+    enterMapBusRequestPending_ = false;
+    return requested;
+}
+
+bool RenderLoop::consumeLeaveMapBusRequest() {
+    const bool requested = leaveMapBusRequestPending_;
+    leaveMapBusRequestPending_ = false;
+    if (requested && playerTimetable_.state) {
+        gameLog.Warning("Cannot leave the player bus during an active timetable trip.");
+        return false;
+    }
+    return requested;
+}
+
+std::optional<VehiclePlacement> RenderLoop::consumeMapBusTeleportRequest() {
+    std::optional<VehiclePlacement> request = mapBusTeleportRequestPending_;
+    mapBusTeleportRequestPending_.reset();
+    if (request && playerTimetable_.state) {
+        gameLog.Warning("Cannot teleport the player bus during an active timetable trip.");
+        return std::nullopt;
+    }
+    return request;
+}
+
+bool RenderLoop::consumeRemovePlayerBusRequest() {
+    const bool requested = removePlayerBusRequestPending_;
+    removePlayerBusRequestPending_ = false;
+    return requested;
+}
+
+std::optional<MapCalendarRequest> RenderLoop::consumeMapCalendarRequest() {
+    std::optional<MapCalendarRequest> request = mapCalendarRequestPending_;
+    mapCalendarRequestPending_.reset();
+    return request;
+}
+
+bool RenderLoop::consumeQuitToMenuRequest() {
+    const bool requested = quitToMenuRequested_;
+    quitToMenuRequested_ = false;
+    return requested;
 }
 
 void RenderLoop::SetSpawnBusError(std::string error) {
@@ -423,10 +538,8 @@ void RenderLoop::loadMapVehicleOptions() {
     loadedMapVehicleIndex_ = selectedMapVehicleIndex_;
     mapVehicleConfig_.reset();
     mapVehicleAppearances_.clear();
-    mapVehicleDepots_.clear();
     mapVehicleLoadError_.clear();
     selectedMapAppearanceIndex_ = 0;
-    selectedMapDepotIndex_ = 0;
     selectedMapRegistrationIndex_ = 0;
     mapRegistrationInput_.fill('\0');
     mapVehicleNumberInput_.fill('\0');
@@ -436,7 +549,6 @@ void RenderLoop::loadMapVehicleOptions() {
         mapVehicleConfig_ = loadVehicleConfig(configPath, VehicleFileKind::Bus, false);
         mapVehicleAppearances_ =
             openbus::config::discoverVehicleAppearances(configPath, vehiclesDirectory_);
-        mapVehicleDepots_ = openbus::config::discoverVehicleDepots(configPath, vehiclesDirectory_);
         copyToInputBuffer(mapRegistrationInput_, mapVehicleConfig_->selectedRegistration);
         copyToInputBuffer(mapVehicleNumberInput_, mapVehicleConfig_->selectedVehicleNumber);
         restoreMapVehiclePreference();
@@ -446,6 +558,32 @@ void RenderLoop::loadMapVehicleOptions() {
         gameLog.Error("Unable to load bus '" +
                       pathToUtf8(vehicleCatalog_[selectedMapVehicleIndex_].configurationPath) +
                       "': " + error.what());
+    }
+}
+
+void RenderLoop::updateAutomaticMapHofSelection() {
+    TraceScope hofTrace("startup", "startup.autoMatchMapHof");
+    autoMapDepotEvaluated_ = true;
+    autoMapDepotIndex_.reset();
+    autoMapDepotMatchedRouteCount_ = 0;
+    if (vehicleDepotCatalog_.empty() || passengerNetwork_.routes.empty()) {
+        return;
+    }
+
+    for (std::size_t index = 0; index < vehicleDepotCatalog_.size(); ++index) {
+        const openbus::config::VehicleDepot& depot = vehicleDepotCatalog_[index];
+        try {
+            const openbus::config::HofData hof = openbus::config::loadHofData(depot.path);
+            const std::size_t matchedRoutes =
+                openbus::app::matchingPlayerTimetableRouteCount(passengerNetwork_.routes, hof);
+            if (matchedRoutes > autoMapDepotMatchedRouteCount_) {
+                autoMapDepotIndex_ = index;
+                autoMapDepotMatchedRouteCount_ = matchedRoutes;
+            }
+        } catch (const std::exception& error) {
+            gameLog.Warning("Skipping HOF during map auto-matching '" +
+                            pathToUtf8(depot.path) + "': " + error.what());
+        }
     }
 }
 
@@ -511,6 +649,21 @@ void RenderLoop::drawOnFootUi() {
     if (!imguiEnabled_ || playerVehicle_ != nullptr || renderingReflection_ || captureMode_) {
         return;
     }
+    if (mapBusVehicle_ != nullptr && !pauseMenuOpen_) {
+        ImGui::SetNextWindowPos(ImVec2(20.0F, 80.0F), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.82F);
+        ImGui::Begin("Parked bus", nullptr,
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
+                         ImGuiWindowFlags_NoNav);
+        if (mapBusIsNearby()) {
+            if (ImGui::Button("Enter bus")) {
+                enterMapBusRequestPending_ = true;
+            }
+        } else {
+            ImGui::TextUnformatted("Walk closer to the parked bus to enter.");
+        }
+        ImGui::End();
+    }
     if (openSpawnPopup_) {
         ImGui::OpenPopup("Spawn a bus");
         openSpawnPopup_ = false;
@@ -530,6 +683,9 @@ void RenderLoop::drawOnFootUi() {
         return;
     }
     ImGui::TextUnformatted("You are not in a bus.");
+    drawMapEntryPointCombo(mapEntryPoints_, selectedMapSpawnEntryPointIndex_,
+                           "Bus spawn location");
+    ImGui::Checkbox("Spawn in bus", &mapSpawnInBus_);
     if (vehicleCatalog_.empty()) {
         ImGui::TextUnformatted("No bus configurations are available.");
     } else {
@@ -537,15 +693,70 @@ void RenderLoop::drawOnFootUi() {
         if (!loadedMapVehicleIndex_ || *loadedMapVehicleIndex_ != selectedMapVehicleIndex_) {
             loadMapVehicleOptions();
         }
-        const auto vehicleLabel = [](const openbus::config::VehicleCatalogEntry& vehicle) {
-            return vehicle.manufacturer + " " + vehicle.type + " (" +
-                   pathToUtf8(vehicle.configurationPath.filename()) + ")";
+        ImGui::InputTextWithHint("Search buses", "Model, type, or file name",
+                                 mapVehicleSearchInput_.data(), mapVehicleSearchInput_.size());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear")) {
+            mapVehicleSearchInput_.fill('\0');
+        }
+        const std::string search = lowercase(mapVehicleSearchInput_.data());
+        struct ModelChoice {
+            std::string name;
         };
-        const std::string selectedVehicleLabel =
-            vehicleLabel(vehicleCatalog_[selectedMapVehicleIndex_]);
-        if (ImGui::BeginCombo("Bus", selectedVehicleLabel.c_str())) {
+        std::vector<ModelChoice> matchingModels;
+        for (const openbus::config::VehicleCatalogEntry& vehicle : vehicleCatalog_) {
+            if (!matchesVehicleSearch(vehicle, search)) {
+                continue;
+            }
+            const auto existing = std::find_if(
+                matchingModels.begin(), matchingModels.end(),
+                [&](const ModelChoice& model) { return model.name == vehicle.manufacturer; });
+            if (existing == matchingModels.end()) {
+                matchingModels.push_back({vehicle.manufacturer});
+            }
+        }
+        std::string selectedModel = vehicleCatalog_[selectedMapVehicleIndex_].manufacturer;
+        if (ImGui::BeginCombo("Model", selectedModel.c_str())) {
+            if (matchingModels.empty()) {
+                ImGui::TextDisabled("No matching models");
+            }
+            for (const ModelChoice& model : matchingModels) {
+                const bool selected = model.name == selectedModel;
+                if (ImGui::Selectable(model.name.c_str(), selected)) {
+                    const auto matchingVehicle = std::find_if(
+                        vehicleCatalog_.begin(), vehicleCatalog_.end(),
+                        [&](const openbus::config::VehicleCatalogEntry& vehicle) {
+                            return vehicle.manufacturer == model.name &&
+                                   matchesVehicleSearch(vehicle, search);
+                        });
+                    if (matchingVehicle != vehicleCatalog_.end()) {
+                        selectedMapVehicleIndex_ = static_cast<std::size_t>(
+                            matchingVehicle - vehicleCatalog_.begin());
+                        selectedModel = model.name;
+                        loadMapVehicleOptions();
+                    }
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        const auto vehicleTypeLabel = [](const openbus::config::VehicleCatalogEntry& vehicle) {
+            return vehicle.type + " (" + pathToUtf8(vehicle.configurationPath.filename()) + ")";
+        };
+        const std::string selectedTypeLabel =
+            vehicleTypeLabel(vehicleCatalog_[selectedMapVehicleIndex_]);
+        if (ImGui::BeginCombo("Bus type", selectedTypeLabel.c_str())) {
+            bool hasMatchingType = false;
             for (std::size_t index = 0; index < vehicleCatalog_.size(); ++index) {
-                const std::string label = vehicleLabel(vehicleCatalog_[index]);
+                const openbus::config::VehicleCatalogEntry& vehicle = vehicleCatalog_[index];
+                if (vehicle.manufacturer != selectedModel ||
+                    !matchesVehicleSearch(vehicle, search)) {
+                    continue;
+                }
+                hasMatchingType = true;
+                const std::string label = vehicleTypeLabel(vehicle);
                 const bool selected = index == selectedMapVehicleIndex_;
                 if (ImGui::Selectable(label.c_str(), selected)) {
                     selectedMapVehicleIndex_ = index;
@@ -554,6 +765,9 @@ void RenderLoop::drawOnFootUi() {
                 if (selected) {
                     ImGui::SetItemDefaultFocus();
                 }
+            }
+            if (!hasMatchingType) {
+                ImGui::TextDisabled("No matching bus types");
             }
             ImGui::EndCombo();
         }
@@ -589,30 +803,78 @@ void RenderLoop::drawOnFootUi() {
                 ImGui::EndCombo();
             }
 
-            const std::string currentDepot =
-                selectedMapDepotIndex_ == 0 ? "None"
-                                            : mapVehicleDepots_[selectedMapDepotIndex_ - 1].name;
-            if (ImGui::BeginCombo("Depot (HOF)", currentDepot.c_str())) {
-                const bool noDepotSelected = selectedMapDepotIndex_ == 0;
-                if (ImGui::Selectable("None", noDepotSelected)) {
-                    selectedMapDepotIndex_ = 0;
+            const auto depotLabel = [&](const openbus::config::VehicleDepot& depot) {
+                std::filesystem::path relativePath = depot.path.lexically_relative(vehiclesDirectory_);
+                if (relativePath.empty()) {
+                    relativePath = depot.path;
                 }
-                if (noDepotSelected) {
+                return depot.name + " (" + pathToUtf8(relativePath) + ")";
+            };
+            std::string currentDepot = "Auto-match this map";
+            if (mapHofSelectionMode_ == MapHofSelectionMode::None) {
+                currentDepot = "No HOF";
+            } else if (mapHofSelectionMode_ == MapHofSelectionMode::Manual &&
+                       selectedMapDepotIndex_ < vehicleDepotCatalog_.size()) {
+                currentDepot = depotLabel(vehicleDepotCatalog_[selectedMapDepotIndex_]);
+            } else if (autoMapDepotIndex_ &&
+                       *autoMapDepotIndex_ < vehicleDepotCatalog_.size()) {
+                currentDepot = "Auto: " + depotLabel(vehicleDepotCatalog_[*autoMapDepotIndex_]);
+            } else if (autoMapDepotEvaluated_) {
+                currentDepot = "Auto: no matching HOF found";
+            }
+            if (ImGui::BeginCombo("Timetable HOF", currentDepot.c_str())) {
+                const bool automaticSelected =
+                    mapHofSelectionMode_ == MapHofSelectionMode::Automatic;
+                if (ImGui::Selectable("Auto-match this map", automaticSelected)) {
+                    mapHofSelectionMode_ = MapHofSelectionMode::Automatic;
+                }
+                if (automaticSelected) {
                     ImGui::SetItemDefaultFocus();
                 }
-                for (std::size_t index = 0; index < mapVehicleDepots_.size(); ++index) {
-                    const bool selected = selectedMapDepotIndex_ == index + 1;
-                    const std::string label = mapVehicleDepots_[index].name + " (" +
-                                              pathToUtf8(mapVehicleDepots_[index].path.filename()) +
-                                              ")";
+                const bool noHofSelected = mapHofSelectionMode_ == MapHofSelectionMode::None;
+                if (ImGui::Selectable("None (drive without a HOF)", noHofSelected)) {
+                    mapHofSelectionMode_ = MapHofSelectionMode::None;
+                }
+                if (noHofSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+                if (!vehicleDepotCatalog_.empty()) {
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Choose an HOF from any installed bus");
+                }
+                for (std::size_t index = 0; index < vehicleDepotCatalog_.size(); ++index) {
+                    const bool selected = mapHofSelectionMode_ == MapHofSelectionMode::Manual &&
+                                          selectedMapDepotIndex_ == index;
+                    const std::string label = depotLabel(vehicleDepotCatalog_[index]);
                     if (ImGui::Selectable(label.c_str(), selected)) {
-                        selectedMapDepotIndex_ = index + 1;
+                        mapHofSelectionMode_ = MapHofSelectionMode::Manual;
+                        selectedMapDepotIndex_ = index;
                     }
                     if (selected) {
                         ImGui::SetItemDefaultFocus();
                     }
                 }
                 ImGui::EndCombo();
+            }
+            if (mapHofSelectionMode_ == MapHofSelectionMode::Automatic) {
+                if (autoMapDepotIndex_ && *autoMapDepotIndex_ < vehicleDepotCatalog_.size()) {
+                    const std::string label = depotLabel(vehicleDepotCatalog_[*autoMapDepotIndex_]);
+                    ImGui::TextWrapped("Auto-selected %s; it matches %zu map timetable routes.",
+                                       label.c_str(), autoMapDepotMatchedRouteCount_);
+                } else if (passengerNetwork_.routes.empty()) {
+                    ImGui::TextWrapped(
+                        "This map has no timetable routes to match automatically. You can still "
+                        "spawn and drive, or choose an HOF manually.");
+                } else if (autoMapDepotEvaluated_) {
+                    ImGui::TextWrapped(
+                        "No installed HOF matches the map timetable routes. You can still spawn "
+                        "and drive; select an HOF manually if you want scheduled trips.");
+                } else {
+                    ImGui::TextUnformatted("HOF matching will run after map timetables load.");
+                }
+            } else if (mapHofSelectionMode_ == MapHofSelectionMode::Manual) {
+                ImGui::TextUnformatted(
+                    "This HOF is used regardless of which bus model you spawn.");
             }
 
             const std::size_t registrationCount = registrationOptionCount(*mapVehicleConfig_);
@@ -689,8 +951,10 @@ void RenderLoop::drawOnFootUi() {
                                vehicleOdometerPreferencesError_.c_str());
         }
     }
-    ImGui::BeginDisabled(vehicleCatalog_.empty() || !mapVehicleConfig_);
-    if (ImGui::Button("Spawn selected bus", ImVec2(220.0F, 36.0F))) {
+    ImGui::BeginDisabled(vehicleCatalog_.empty() || !mapVehicleConfig_ ||
+                         mapBusVehicle_ != nullptr || mapEntryPoints_.empty());
+    if (ImGui::Button(mapSpawnInBus_ ? "Spawn and enter bus" : "Spawn bus on foot",
+                      ImVec2(220.0F, 36.0F))) {
         spawnBusRequestPending_ = true;
     }
     ImGui::EndDisabled();
@@ -872,7 +1136,8 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
             }
         } else {
             if (playerVehicle_->variables.getString("hof_file").empty()) {
-                ImGui::TextUnformatted("Select a Depot (HOF) when spawning the bus.");
+                ImGui::TextUnformatted(
+                    "Select a compatible Timetable HOF when spawning the bus.");
             } else if (hof.routes.empty()) {
                 ImGui::TextUnformatted("The selected HOF has no loaded routes.");
                 for (const auto& error : playerVehicle_->scripts->errors()) {
@@ -917,8 +1182,7 @@ void RenderLoop::drawPlayerTimetableUi() {
             ImGui::EndPopup();
         }
     };
-    if (!playerTimetable_.state && vehicleScheduleViews_.empty() &&
-        vehicleTicketSellingViews_.empty()) {
+    if (!playerTimetable_.state) {
         drawTripSelectionPopup();
         return;
     }
@@ -927,57 +1191,6 @@ void RenderLoop::drawPlayerTimetableUi() {
     ImGui::Begin("Player timetable", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoNav);
-    const auto drawConfiguredViewSelector = [this](const char* title,
-                                                   const std::vector<VehicleViewEntry>& entries) {
-        if (entries.empty()) {
-            return;
-        }
-
-        int currentDriverViewIndex = -1;
-        if (cameraView_ > 0 && static_cast<std::size_t>(cameraView_) <= vehicleCameras_.size()) {
-            const std::size_t currentCameraIndex = static_cast<std::size_t>(cameraView_ - 1);
-            for (std::size_t index = 0; index <= currentCameraIndex; ++index) {
-                if (vehicleCameras_[index].kind == VehicleCameraKind::Driver) {
-                    ++currentDriverViewIndex;
-                }
-            }
-        }
-        std::string preview = "Select view";
-        for (const VehicleViewEntry& entry : entries) {
-            if (entry.viewIndex != currentDriverViewIndex) {
-                continue;
-            }
-            preview = entry.label.empty()
-                          ? std::string(title) + " " + std::to_string(entry.viewIndex + 1)
-                          : entry.label;
-            break;
-        }
-
-        if (ImGui::BeginCombo(title, preview.c_str())) {
-            for (std::size_t index = 0; index < entries.size(); ++index) {
-                const VehicleViewEntry& entry = entries[index];
-                const std::string label =
-                    entry.label.empty()
-                        ? std::string(title) + " " + std::to_string(entry.viewIndex + 1)
-                        : entry.label;
-                ImGui::PushID(static_cast<int>(index));
-                if (ImGui::Selectable(label.c_str(), entry.viewIndex == currentDriverViewIndex) &&
-                    !selectDriverCameraView(entry.viewIndex)) {
-                    gameLog.Warning("Configured vehicle view has no matching driver camera: " +
-                                    std::to_string(entry.viewIndex));
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndCombo();
-        }
-    };
-    drawConfiguredViewSelector("Schedule view", vehicleScheduleViews_);
-    drawConfiguredViewSelector("Ticket-selling view", vehicleTicketSellingViews_);
-    if (!playerTimetable_.state) {
-        drawTripSelectionPopup();
-        ImGui::End();
-        return;
-    }
     const PlayerTimetableState& state = *playerTimetable_.state;
     if (state.selection.courseIndex >= passengerTimetableCourses_.size() ||
         state.selection.courseTripIndex >=
@@ -997,6 +1210,193 @@ void RenderLoop::drawPlayerTimetableUi() {
     if (ImGui::Button("Cancel trip now")) {
         SetPlayerTimetableSelection(std::nullopt);
         selectedPlayerTimetableSelection_.reset();
+    }
+    ImGui::End();
+}
+
+void RenderLoop::drawPauseMenuUi() {
+    if (!imguiEnabled_ || !pauseMenuOpen_ || renderingReflection_ || captureMode_) {
+        return;
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5F,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5F),
+                            ImGuiCond_Always, ImVec2(0.5F, 0.5F));
+    ImGui::SetNextWindowBgAlpha(0.95F);
+    if (!ImGui::Begin("Pause Menu", nullptr,
+                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
+                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::Button("Resume", ImVec2(260.0F, 36.0F))) {
+        pauseMenuOpen_ = false;
+        setPausedState(false);
+    }
+    ImGui::Separator();
+    if (playerTimetable_.state) {
+        if (playerTimetable_.state->stopAfterCurrentTrip) {
+            ImGui::TextUnformatted("Driving will stop at this trip's terminus.");
+        } else if (ImGui::Button("Stop driving after this trip", ImVec2(260.0F, 0.0F))) {
+            playerTimetable_.state->stopAfterCurrentTrip = true;
+        }
+        if (ImGui::Button("Stop driving immediately", ImVec2(260.0F, 0.0F))) {
+            SetPlayerTimetableSelection(std::nullopt);
+            selectedPlayerTimetableSelection_.reset();
+        }
+    } else if (playerVehicle_ != nullptr) {
+        if (ImGui::Button("Leave Bus", ImVec2(260.0F, 36.0F))) {
+            leaveMapBusRequestPending_ = true;
+            pauseMenuOpen_ = false;
+            setPausedState(false);
+        }
+        if (ImGui::Button("Remove Bus", ImVec2(260.0F, 36.0F))) {
+            removePlayerBusRequestPending_ = true;
+            pauseMenuOpen_ = false;
+        }
+    } else if (mapBusVehicle_ != nullptr) {
+        if (mapBusIsNearby()) {
+            if (ImGui::Button("Enter Bus", ImVec2(260.0F, 36.0F))) {
+                enterMapBusRequestPending_ = true;
+                pauseMenuOpen_ = false;
+                setPausedState(false);
+            }
+        } else {
+            ImGui::TextUnformatted("Walk closer to the parked bus to enter.");
+        }
+        if (ImGui::Button("Remove Bus", ImVec2(260.0F, 36.0F))) {
+            removePlayerBusRequestPending_ = true;
+            pauseMenuOpen_ = false;
+        }
+    } else if (ImGui::Button("Spawn Bus", ImVec2(260.0F, 36.0F))) {
+        openSpawnPopup_ = true;
+        pauseMenuOpen_ = false;
+        setPausedState(false);
+    }
+
+    if (!playerTimetable_.state) {
+        ImGui::Separator();
+        drawMapEntryPointCombo(mapEntryPoints_, selectedMapSpawnEntryPointIndex_,
+                               "Bus location");
+        if (mapBusVehicle_ != nullptr) {
+            if (ImGui::Button("Teleport Bus to selected location", ImVec2(260.0F, 36.0F))) {
+                if (selectedMapSpawnEntryPointIndex_ < mapEntryPoints_.size()) {
+                    mapBusTeleportRequestPending_ =
+                        mapEntryPoints_[selectedMapSpawnEntryPointIndex_].placement;
+                }
+            }
+        } else {
+            ImGui::TextUnformatted("This location will be used next time you spawn a bus.");
+        }
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Debug Menu", ImVec2(260.0F, 0.0F))) {
+        debugMenuOpen_ = !debugMenuOpen_;
+        debugCalendarInitialized_ = false;
+    }
+    if (ImGui::Button("Quit to Menu", ImVec2(260.0F, 0.0F))) {
+        quitToMenuRequested_ = true;
+        pauseMenuOpen_ = false;
+    }
+    if (ImGui::Button("Quit Game", ImVec2(260.0F, 0.0F))) {
+        requestClose();
+    }
+    ImGui::TextUnformatted("Esc: resume or open/close this menu | P: pause/resume");
+    ImGui::End();
+}
+
+void RenderLoop::drawDebugMenuUi() {
+    if (!imguiEnabled_ || !debugMenuOpen_ || renderingReflection_ || captureMode_) {
+        return;
+    }
+
+    SystemVariables& calendar = simulationState_.sharedVariables();
+    if (!debugCalendarInitialized_) {
+        debugCalendarYear_ = static_cast<int>(calendar.get("year"));
+        debugCalendarMonth_ = static_cast<int>(calendar.get("month"));
+        debugCalendarDay_ = static_cast<int>(calendar.get("day"));
+        const int timeSeconds = static_cast<int>(calendar.get("time"));
+        debugCalendarHour_ = timeSeconds / 3600;
+        debugCalendarMinute_ = (timeSeconds % 3600) / 60;
+        debugCalendarInitialized_ = true;
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 20.0F,
+                                   viewport->WorkPos.y + 20.0F),
+                            ImGuiCond_FirstUseEver, ImVec2(1.0F, 0.0F));
+    ImGui::SetNextWindowBgAlpha(0.95F);
+    if (!ImGui::Begin("OpenBus Debug Menu", &debugMenuOpen_,
+                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
+                          ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+
+    const int currentTime = static_cast<int>(calendar.get("time"));
+    ImGui::Text("Current map time: %04d-%02d-%02d %02d:%02d",
+                static_cast<int>(calendar.get("year")), static_cast<int>(calendar.get("month")),
+                static_cast<int>(calendar.get("day")), currentTime / 3600,
+                (currentTime % 3600) / 60);
+    ImGui::Separator();
+    ImGui::TextUnformatted("Set map date and time");
+    ImGui::SetNextItemWidth(100.0F);
+    ImGui::InputInt("Year", &debugCalendarYear_, 1, 1);
+    ImGui::SetNextItemWidth(100.0F);
+    ImGui::InputInt("Month", &debugCalendarMonth_, 1, 1);
+    ImGui::SetNextItemWidth(100.0F);
+    ImGui::InputInt("Day", &debugCalendarDay_, 1, 1);
+    ImGui::SetNextItemWidth(100.0F);
+    ImGui::InputInt("Hour", &debugCalendarHour_, 1, 1);
+    ImGui::SetNextItemWidth(100.0F);
+    ImGui::InputInt("Minute", &debugCalendarMinute_, 1, 1);
+
+    const std::chrono::year_month_day selectedDate{
+        std::chrono::year{std::clamp(debugCalendarYear_, 1, 9999)},
+        std::chrono::month{static_cast<unsigned>(std::clamp(debugCalendarMonth_, 1, 12))},
+        std::chrono::day{static_cast<unsigned>(std::clamp(debugCalendarDay_, 1, 31))}};
+    const bool validDateTime = debugCalendarYear_ >= 1 && debugCalendarYear_ <= 9999 &&
+                               debugCalendarMonth_ >= 1 && debugCalendarMonth_ <= 12 &&
+                               debugCalendarDay_ >= 1 && debugCalendarDay_ <= 31 &&
+                               selectedDate.ok() && debugCalendarHour_ >= 0 &&
+                               debugCalendarHour_ < 24 && debugCalendarMinute_ >= 0 &&
+                               debugCalendarMinute_ < 60;
+    if (!validDateTime) {
+        ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F),
+                           "Enter a valid date and time.");
+    }
+    ImGui::BeginDisabled(!validDateTime);
+    if (ImGui::Button("Apply date and time")) {
+        mapCalendarRequestPending_ = MapCalendarRequest{
+            debugCalendarYear_, debugCalendarMonth_, debugCalendarDay_,
+            static_cast<double>(debugCalendarHour_ * 3600 + debugCalendarMinute_ * 60)};
+    }
+    ImGui::EndDisabled();
+
+    if (playerTimetable_.state &&
+        playerTimetable_.state->selection.courseIndex < passengerTimetableCourses_.size()) {
+        const auto& trips =
+            passengerTimetableCourses_[playerTimetable_.state->selection.courseIndex].trips;
+        const std::size_t tripIndex = playerTimetable_.state->selection.courseTripIndex;
+        if (tripIndex < trips.size()) {
+            const double departureSeconds = trips[tripIndex].departureMinutes * 60.0;
+            if (std::isfinite(departureSeconds) && departureSeconds >= 0.0 &&
+                departureSeconds < 86400.0 && departureSeconds > calendar.get("time")) {
+                const int departureMinute =
+                    static_cast<int>(std::floor(departureSeconds / 60.0));
+                if (ImGui::Button("Skip to scheduled departure")) {
+                    mapCalendarRequestPending_ = MapCalendarRequest{
+                        static_cast<int>(calendar.get("year")),
+                        static_cast<int>(calendar.get("month")),
+                        static_cast<int>(calendar.get("day")),
+                        static_cast<double>(departureMinute * 60)};
+                    debugCalendarInitialized_ = false;
+                }
+            }
+        }
     }
     ImGui::End();
 }

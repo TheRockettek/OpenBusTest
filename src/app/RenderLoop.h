@@ -101,8 +101,18 @@ struct SpawnBusRequest {
     std::filesystem::path configurationPath;
     VehiclePlacement placement;
     VehicleSetupOptions setupOptions;
+    bool spawnInBus = true;
     using TimetableSelection = openbus::app::PlayerTimetableSelection;
 };
+
+struct MapCalendarRequest {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    double timeSeconds = 0.0;
+};
+
+enum class MapHofSelectionMode { Automatic, None, Manual };
 
 struct TrafficSplineDebugLabel {
     int splineId = 0;
@@ -162,7 +172,11 @@ class RenderLoop {
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
                                     bool isBus) const;
-    void SetMapCalendar(int year, int month, int day, double timeSeconds);
+    void SetMapCalendar(int year, int month, int day, double timeSeconds,
+                        double simulationTime = 0.0);
+    MapCalendarRequest currentMapCalendar() const;
+    void ResetMapClockEpoch(double simulationTime);
+    void ResetMapClockEpoch(double previousSimulationTime, double newSimulationTime);
     void SetMapTrafficStartHour(double startHour);
     void SetMapTrafficSpawnInView(bool enabled);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
@@ -208,10 +222,19 @@ class RenderLoop {
     void SetSunAltitude(double altitudeDegrees);
 
     void SetPlayerVehicle(Vehicle* vehicle);
+    void SetParkedPlayerBus(Vehicle* vehicle);
     void SetPlayerTimetableSelection(std::optional<SpawnBusRequest::TimetableSelection> selection);
     bool runStartupMenu(const std::filesystem::path& omsiRoot, StartupSelection& selection);
     void SetNoBusSpawnPoint(const VehiclePlacement& placement);
     std::optional<SpawnBusRequest> consumeSpawnBusRequest();
+    bool consumeEnterMapBusRequest();
+    bool consumeLeaveMapBusRequest();
+    std::optional<VehiclePlacement> consumeMapBusTeleportRequest();
+    bool consumeRemovePlayerBusRequest();
+    std::optional<MapCalendarRequest> consumeMapCalendarRequest();
+    bool consumeQuitToMenuRequest();
+    void ResetForStartupMenu();
+    void RemovePlayerVehicle();
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                 std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                 bool prepareInitialWindowAsync = false);
@@ -258,15 +281,23 @@ class RenderLoop {
     void logDiagnosticVariables() const;
     void logDrivetrainDiagnosticVariables() const;
     double currentFieldOfView() const;
+    double mapTrafficElapsedSeconds(double simulationTime) const;
+    void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
+                               double newStartHour);
     void renderReflectionViews(const BusSimulation& simulation, const World& world);
     void drawOnFootUi();
     void drawPlayerTimetableUi();
     void drawPlayerTimetableSelectionUi();
+    void drawPauseMenuUi();
+    void drawDebugMenuUi();
+    void setPausedState(bool paused);
     void applyPlayerTripAiPolicy(const openbus::map::MapAiTimetableCourseTrip& trip,
                                  bool additionalBus);
     void clearPlayerTripAiPolicy();
     void advancePlayerTimetableTrip();
     void loadMapVehicleOptions();
+    void updateAutomaticMapHofSelection();
+    bool mapBusIsNearby() const;
     void restoreMapVehiclePreference();
     void persistMapVehiclePreference();
     void persistPlayerOdometer(bool force = false);
@@ -277,18 +308,40 @@ class RenderLoop {
     std::unique_ptr<ImGuiLayer> imguiLayer_;
     bool imguiEnabled_ = false;
     bool spawnBusRequestPending_ = false;
+    bool enterMapBusRequestPending_ = false;
+    bool leaveMapBusRequestPending_ = false;
+    std::optional<VehiclePlacement> mapBusTeleportRequestPending_;
+    bool removePlayerBusRequestPending_ = false;
     bool openSpawnPopup_ = false;
     bool openPlayerTimetablePopup_ = false;
+    bool pauseMenuOpen_ = false;
+    bool debugMenuOpen_ = false;
+    bool debugCalendarInitialized_ = false;
+    bool quitToMenuRequested_ = false;
+    std::optional<MapCalendarRequest> mapCalendarRequestPending_;
+    int debugCalendarYear_ = 0;
+    int debugCalendarMonth_ = 1;
+    int debugCalendarDay_ = 1;
+    int debugCalendarHour_ = 12;
+    int debugCalendarMinute_ = 0;
     std::string spawnBusError_;
     std::vector<openbus::config::VehicleCatalogEntry> vehicleCatalog_;
     std::filesystem::path vehiclesDirectory_;
     std::size_t selectedMapVehicleIndex_ = 0;
+    std::array<char, 256> mapVehicleSearchInput_{};
+    std::vector<openbus::map::MapEntryPoint> mapEntryPoints_;
+    std::size_t selectedMapSpawnEntryPointIndex_ = 0;
+    bool mapSpawnInBus_ = true;
     std::optional<std::size_t> loadedMapVehicleIndex_;
     std::optional<VehicleConfig> mapVehicleConfig_;
     std::vector<openbus::config::VehicleAppearance> mapVehicleAppearances_;
-    std::vector<openbus::config::VehicleDepot> mapVehicleDepots_;
+    std::vector<openbus::config::VehicleDepot> vehicleDepotCatalog_;
     std::size_t selectedMapAppearanceIndex_ = 0;
+    MapHofSelectionMode mapHofSelectionMode_ = MapHofSelectionMode::Automatic;
     std::size_t selectedMapDepotIndex_ = 0;
+    std::optional<std::size_t> autoMapDepotIndex_;
+    std::size_t autoMapDepotMatchedRouteCount_ = 0;
+    bool autoMapDepotEvaluated_ = false;
     std::size_t selectedMapRegistrationIndex_ = 0;
     std::array<char, 256> mapRegistrationInput_{};
     std::array<char, 256> mapVehicleNumberInput_{};
@@ -338,9 +391,13 @@ class RenderLoop {
     int reflectionReferenceCamera_ = -1;
     bool previousFreeCameraToggleState_ = false;
     bool previousPauseToggleState_ = false;
+    bool previousPauseMenuToggleState_ = false;
     bool previousProfileToggleState_ = false;
     bool previousMouseLookToggleState_ = false;
     bool paused_ = false;
+    double calendarElapsedSeconds_ = 0.0;
+    double previousCalendarSimulationTime_ = 0.0;
+    bool hasPreviousCalendarSimulationTime_ = false;
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
     double mouseSteering_ = 0.0;
@@ -492,6 +549,7 @@ class RenderLoop {
     std::vector<std::filesystem::path> scheduledPassengerHumanModels_;
     std::size_t targetHumanTrafficCount_ = 0;
     Vehicle* playerVehicle_ = nullptr;
+    Vehicle* mapBusVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;
     GLFWcursor* mouseSteeringCursor_ = nullptr;
 };

@@ -607,9 +607,8 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
                            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
             if (part.boneBindings.empty() || sourceExtension != ".o3d")
                 continue;
-            const std::filesystem::path source =
-                openbus::assets::resolveReferencedPath(modelConfigPath,
-                                                       openbus::pathToUtf8(part.sourceMeshPath));
+            const std::filesystem::path source = openbus::assets::resolveReferencedPath(
+                modelConfigPath, openbus::pathToUtf8(part.sourceMeshPath));
             if (std::filesystem::is_regular_file(source)) {
                 part.objPath = source;
                 part.bundleEntry.clear();

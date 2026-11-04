@@ -32,5 +32,7 @@ discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
                            const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleDepot> discoverVehicleDepots(const std::filesystem::path& vehicleConfigPath,
                                                 const std::filesystem::path& vehiclesDirectory);
+std::vector<VehicleDepot>
+discoverAllVehicleDepots(const std::filesystem::path& vehiclesDirectory);
 
 } // namespace openbus::config

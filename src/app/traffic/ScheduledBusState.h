@@ -4,6 +4,8 @@
 #include "map/MapTrafficRuntime.h"
 #include "app/traffic/PassengerStops.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -44,6 +46,29 @@ struct ScheduledBusState {
     double lastScheduledAdmissionDiagnosticCameraDistanceMeters = -1.0;
     double lastScheduledProgressDiagnosticDistanceMeters = -1.0;
 };
+
+inline void rebaseScheduledBusClock(ScheduledBusState& bus, double startHour,
+                                    double previousElapsedSeconds) {
+    if (!std::isfinite(previousElapsedSeconds) || previousElapsedSeconds < 0.0) {
+        throw std::invalid_argument("Previous scheduled bus clock time is invalid");
+    }
+    if (bus.scheduledTripActive) {
+        bus.activeScheduledDepartureElapsedSeconds -= previousElapsedSeconds;
+    }
+    if (bus.scheduledDepartureMinutes.empty()) {
+        bus.suppressedDeparture.reset();
+        return;
+    }
+    bus.nextScheduledDepartureIndex =
+        openbus::map::mapTrafficNextDepartureIndex(startHour, 0.0,
+                                                   bus.scheduledDepartureMinutes);
+    bus.nextScheduledDepartureElapsedSeconds = openbus::map::mapTrafficNextDepartureElapsedSeconds(
+        startHour, 0.0, bus.scheduledDepartureMinutes[bus.nextScheduledDepartureIndex]);
+    if (bus.suppressedDeparture) {
+        bus.suppressedDeparture = ScheduledDepartureSuppression{
+            bus.nextScheduledDepartureIndex, bus.nextScheduledDepartureElapsedSeconds};
+    }
+}
 
 inline bool scheduledBusWaitingForPassengers(const ScheduledBusState& bus) {
     // Arrival remains latched through boarding, dwell, and the script's door-close handshake.

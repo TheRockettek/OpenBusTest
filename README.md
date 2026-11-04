@@ -45,10 +45,20 @@ performance tracing.
 Interactive startup opens an ImGui setup screen. It lists maps with a
 `global.cfg` under the configured OMSI root and `.bus` vehicles under
 `Vehicles`. Choose a vehicle by its `[friendlyname]` manufacturer and type, then
-choose its default appearance or a discovered `.cti` livery, an optional HOF
-depot, and a configured number/registration. CTI texture replacements apply to
-the selected vehicle. The depot's HOF path and name are exposed to vehicle
-scripts as `hof_file` and `hof_name`. After a bus is spawned, its **Player timetable**
+choose its default appearance or a discovered `.cti` livery, a timetable HOF
+source, and a configured number/registration. CTI texture replacements apply to
+the selected vehicle. The **Timetable HOF** setting can automatically choose the
+installed HOF that matches the most map timetable routes, including HOFs shipped
+with other bus models; a manual override can select any installed HOF or disable
+HOF loading. The selected HOF path and name are exposed to vehicle scripts as
+`hof_file` and `hof_name`. Some vehicle scripts may assume a particular HOF
+format, so use the manual override if an automatically matched HOF does not work
+with that bus. The bus picker defaults to **Spawn in bus**; turn it off to leave
+the bus parked and keep walking. Choose a map entrypoint for the bus, defaulting
+to the startup menu's selected entrypoint. When on foot, enter a nearby parked bus
+using the **Enter bus** button; use **Leave Bus** in the pause menu to get out.
+The pause menu can also teleport the bus to the selected entrypoint whenever no
+timetable trip is active. After a bus is spawned, its **Player timetable**
 panel offers **Drive a scheduled trip**. Select a line, tour/course, trip, and first
 stop, then **Start selected trip**. Available routes match the selected HOF's
 ordered stop sequence (stop identifiers or display names): the map may include
@@ -763,11 +773,17 @@ zero and absolute humidity must be non-negative. Set `OPENBUS_AUTO_CLUTCH` to
 reports the setting to scripts but does not yet implement automatic clutch
 control. `OPENBUS_SUN_ALTITUDE` overrides `SunAlt` in degrees (default `60`,
 valid range `-90` through `90`); it is not calculated from map location or
-simulation time. Press `P` to pause and resume the simulation; rendering and
-free-camera movement continue while physics, traffic, passenger service, the
-simulation clock, script frames, and vehicle key/mouse script events are paused.
-Active key and mouse interactions receive release events as pause begins. Weather
-settings populate the shared `PrecipType`,
+simulation time. Press `P` to pause/resume, or `Esc` to open the pause menu and
+pause; rendering and free-camera movement continue while physics, traffic,
+passenger service, the simulation clock, script frames, and vehicle key/mouse
+script events are paused. The pause menu can stop a scheduled trip immediately
+or at its terminus, remove or spawn the player bus when no trip is active, return
+to the startup screen, or quit the game. Its Debug Menu can set the map date/time
+and skip ahead to the scheduled departure when a player trip is early. Active key
+and mouse interactions receive release events as pause begins. On foot, the Spawn
+Bus panel searches model/manufacturer, bus type, and configuration filename, then
+filters bus types after a model is selected. Configuration filenames distinguish
+duplicate type labels. Weather settings populate the shared `PrecipType`,
 `PrecipRate`, `Weather_Temperature`, and `Weather_AbsHum` system variables
 before scripts run. This does not yet load OMSI map weather schedules or render
 fog, windshield effects, wet roads, or snow accumulation.
@@ -1075,11 +1091,11 @@ The ground uses a world-space grid with highlighted ten-metre lines.
 ## CPU and memory profiling
 
 Use `profile.bat` (Windows) or `profile.sh` (Linux) to launch an instrumented
-build. On Linux, `profile.sh` requires Heaptrack and runs the application under
-it automatically; install the `heaptrack` package if it is unavailable. The
-Linux build uses `RelWithDebInfo` so allocation call stacks retain symbols.
-Heaptrack's allocation capture runs for the entire application session.
-Its output defaults to `openbus-memory.heaptrack` in the repository root;
+build. The Linux script does not capture memory by default. Pass `--memory` to
+run it under Heaptrack; install the `heaptrack` package if it is unavailable.
+The Linux build uses `RelWithDebInfo` so allocation call stacks retain symbols.
+Heaptrack's allocation capture runs for the entire application session. Its
+output defaults to `openbus-memory.heaptrack` in the repository root;
 `OPENBUS_MEMORY_TRACE_FILE` selects another path. Open the capture with
 `heaptrack_gui` or inspect it with `heaptrack_print`.
 

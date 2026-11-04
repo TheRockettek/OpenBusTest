@@ -365,7 +365,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
         }
     }
-    const double currentSimulationTime = simulation.simulationTime();
+    const double currentSimulationTime = mapTrafficElapsedSeconds(simulation.simulationTime());
     const double currentSignalClockSeconds =
         mapTrafficSignalClockSeconds(currentSimulationTime, trafficFleet_.mapTrafficStartHour);
     const auto advanceScheduledDeparture = [&](TrafficVehicleState& state,

@@ -263,4 +263,38 @@ std::vector<VehicleDepot> discoverVehicleDepots(const std::filesystem::path& veh
     return depots;
 }
 
+std::vector<VehicleDepot>
+discoverAllVehicleDepots(const std::filesystem::path& vehiclesDirectory) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(vehiclesDirectory, error) || error) {
+        throw std::runtime_error("OMSI Vehicles directory is unavailable: " +
+                                 vehiclesDirectory.string());
+    }
+
+    std::vector<VehicleDepot> depots;
+    std::filesystem::recursive_directory_iterator entry(
+        vehiclesDirectory, std::filesystem::directory_options::skip_permission_denied, error);
+    const std::filesystem::recursive_directory_iterator end;
+    for (; !error && entry != end; entry.increment(error)) {
+        std::error_code statusError;
+        if (!entry->is_regular_file(statusError) || statusError ||
+            lowerExtension(entry->path()) != ".hof") {
+            continue;
+        }
+        depots.push_back({entry->path(), hofName(entry->path())});
+    }
+    if (error) {
+        throw std::runtime_error("Failed to list OMSI Vehicles directory '" +
+                                 vehiclesDirectory.string() + "': " + error.message());
+    }
+
+    std::sort(depots.begin(), depots.end(),
+              [](const VehicleDepot& left, const VehicleDepot& right) {
+                  const std::string leftName = lower(left.name);
+                  const std::string rightName = lower(right.name);
+                  return leftName == rightName ? left.path < right.path : leftName < rightName;
+              });
+    return depots;
+}
+
 } // namespace openbus::config

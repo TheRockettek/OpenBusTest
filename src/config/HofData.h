@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -30,5 +31,7 @@ struct HofData {
     std::vector<HofRoute> routes;
     std::vector<std::string> globalStrings;
 };
+
+HofData loadHofData(const std::filesystem::path& path);
 
 } // namespace openbus::config

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace openbus::app {
 
@@ -155,6 +156,19 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
 bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
                               const openbus::config::HofData& hof) {
     return passengerRouteHofRoute(route, hof) != nullptr;
+}
+
+std::size_t matchingPlayerTimetableRouteCount(
+    const std::vector<PassengerStopRouteState>& routes, const openbus::config::HofData& hof) {
+    const PreparedHof prepared(hof);
+    std::unordered_set<std::string> matchedTimetables;
+    for (const PassengerStopRouteState& route : routes) {
+        if (!route.stops.empty() &&
+            analyzePreparedPassengerRouteHof(route, prepared).route != nullptr) {
+            matchedTimetables.insert(route.timetableKey);
+        }
+    }
+    return matchedTimetables.size();
 }
 
 std::string passengerRouteDisplayLine(const PassengerStopRouteState& route,

@@ -114,41 +114,31 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     if (imguiEnabled_) {
         imguiLayer_->beginFrame(playerVehicle_ == nullptr);
     }
-    const bool pauseTogglePressed = glfwGetKey(window_, GLFW_KEY_P) == GLFW_PRESS;
-    const bool pauseToggleAllowed =
-        fixedTimeStep < 0.0 && (!imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard);
-    if (pauseToggleAllowed && pauseTogglePressed && !previousPauseToggleState_) {
-        if (!paused_) {
-            const auto releaseMouse = [this](const std::string& event) {
-                if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
-                    playerVehicle_->scripts->invokeMouseRelease(event);
-                }
-            };
-            mouseInteraction_.cancel(releaseMouse);
-            if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
-                const auto& bindings = vehicleKeyBindings();
-                for (std::size_t index = 0;
-                     index < bindings.size() && index < previousVehicleKeyStates_.size(); ++index) {
-                    if (!previousVehicleKeyStates_[index]) {
-                        continue;
-                    }
-                    const VehicleKeyBinding& binding = bindings[index];
-                    if (binding.action != "mouse_control_toggle" &&
-                        binding.action != "debug_dump_variables" && binding.key != GLFW_KEY_F2 &&
-                        binding.key != GLFW_KEY_F3 && binding.key != GLFW_KEY_F11 &&
-                        binding.key != GLFW_KEY_P) {
-                        playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
-                    }
-                }
-            }
-            pendingMouseClick_ = false;
-            clickableHoverCacheValid_ = false;
-            clickableHoverCacheHit_ = false;
-            glfwSetCursor(window_, nullptr);
+    const bool keyboardAvailable =
+        !imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard || pauseMenuOpen_ || debugMenuOpen_;
+    const bool pauseMenuTogglePressed = glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+    if (fixedTimeStep < 0.0 && keyboardAvailable && pauseMenuTogglePressed &&
+        !previousPauseMenuToggleState_) {
+        if (debugMenuOpen_) {
+            debugMenuOpen_ = false;
+        } else if (pauseMenuOpen_) {
+            pauseMenuOpen_ = false;
+            setPausedState(false);
+        } else {
+            pauseMenuOpen_ = true;
+            setPausedState(true);
         }
-        paused_ = !paused_;
-        simulationState_.sharedVariables().setPaused(paused_);
-        gameLog.Log(paused_ ? "Simulation paused (press P to resume)" : "Simulation resumed");
+    }
+    previousPauseMenuToggleState_ = pauseMenuTogglePressed;
+
+    const bool pauseTogglePressed = glfwGetKey(window_, GLFW_KEY_P) == GLFW_PRESS;
+    if (fixedTimeStep < 0.0 && keyboardAvailable && pauseTogglePressed &&
+        !previousPauseToggleState_) {
+        const bool resume = paused_;
+        setPausedState(!paused_);
+        if (resume) {
+            pauseMenuOpen_ = false;
+        }
     }
     previousPauseToggleState_ = pauseTogglePressed;
 
@@ -503,6 +493,47 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         setPerspective(static_cast<double>(width), static_cast<double>(height),
                        currentFieldOfView());
     }
+}
+
+void RenderLoop::setPausedState(bool paused) {
+    if (paused_ == paused) {
+        return;
+    }
+    if (paused) {
+        const auto releaseMouse = [this](const std::string& event) {
+            if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeMouseRelease(event);
+            }
+        };
+        mouseInteraction_.cancel(releaseMouse);
+        if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+            const auto& bindings = vehicleKeyBindings();
+            for (std::size_t index = 0;
+                 index < bindings.size() && index < previousVehicleKeyStates_.size(); ++index) {
+                if (!previousVehicleKeyStates_[index]) {
+                    continue;
+                }
+                const VehicleKeyBinding& binding = bindings[index];
+                if (binding.action != "mouse_control_toggle" &&
+                    binding.action != "debug_dump_variables" && binding.key != GLFW_KEY_F2 &&
+                    binding.key != GLFW_KEY_F3 && binding.key != GLFW_KEY_F11 &&
+                    binding.key != GLFW_KEY_P) {
+                    playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
+                }
+            }
+        }
+        pendingMouseClick_ = false;
+        clickableHoverCacheValid_ = false;
+        clickableHoverCacheHit_ = false;
+        glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        glfwSetCursor(window_, nullptr);
+    } else if (playerVehicle_ != nullptr && mouseLookEnabled_) {
+        glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwGetCursorPos(window_, &previousCursorX_, &previousCursorY_);
+    }
+    paused_ = paused;
+    simulationState_.sharedVariables().setPaused(paused_);
+    gameLog.Log(paused_ ? "Simulation paused" : "Simulation resumed");
 }
 
 double RenderLoop::throttle() const {

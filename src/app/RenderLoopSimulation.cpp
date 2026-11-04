@@ -290,7 +290,13 @@ void RenderLoop::updateNonPlayerSoundListenerGain() {
 }
 
 void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
-    simulationState_.sharedVariables().updateSimulationClock(simulation.simulationTime());
+    const double simulationTime = simulation.simulationTime();
+    if (hasPreviousCalendarSimulationTime_ && simulationTime >= previousCalendarSimulationTime_) {
+        calendarElapsedSeconds_ += simulationTime - previousCalendarSimulationTime_;
+    }
+    previousCalendarSimulationTime_ = simulationTime;
+    hasPreviousCalendarSimulationTime_ = true;
+    simulationState_.sharedVariables().updateSimulationClock(calendarElapsedSeconds_);
     if (playerVehicle_ != nullptr) {
         if (activePlayerPassengerStop_ && !playerVehicle_->passengers) {
             throw std::logic_error("Active player passenger stop has no passenger service");

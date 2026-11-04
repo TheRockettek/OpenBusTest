@@ -13,6 +13,8 @@ namespace openbus::app {
 
 bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
                               const openbus::config::HofData& hof);
+std::size_t matchingPlayerTimetableRouteCount(
+    const std::vector<PassengerStopRouteState>& routes, const openbus::config::HofData& hof);
 const openbus::config::HofRoute* passengerRouteHofRoute(const PassengerStopRouteState& route,
                                                         const openbus::config::HofData& hof);
 std::string passengerRouteDisplayLine(const PassengerStopRouteState& route,

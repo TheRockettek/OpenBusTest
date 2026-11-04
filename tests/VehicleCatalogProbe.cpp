@@ -1,4 +1,5 @@
 #include "config/VehicleCatalog.h"
+#include "config/HofData.h"
 #include "ProbeTempDirectory.h"
 
 #include <algorithm>
@@ -39,8 +40,16 @@ int main() {
 
     const std::filesystem::path hofPath = busDirectory.parent_path() / "Example Depot.hof";
     std::ofstream hof(hofPath);
-    hof << "[name]\nExample Depot\n";
+    hof << "[name]\nExample Depot\n"
+           "[infosystem_trip]\n1001\nOutbound\n0\n100\n"
+           "[infosystem_busstop_list]\n2\nSTOP_A\nSTOP_B\n";
     hof.close();
+    const std::filesystem::path otherBusDirectory = vehiclesDirectory / "OtherBus";
+    std::filesystem::create_directories(otherBusDirectory);
+    const std::filesystem::path otherHofPath = otherBusDirectory / "Other Depot.hof";
+    std::ofstream otherHof(otherHofPath);
+    otherHof << "[name]\nOther Depot\n";
+    otherHof.close();
 
     const std::vector<openbus::config::VehicleCatalogEntry> vehicles =
         openbus::config::discoverVehicleCatalog(vehiclesDirectory);
@@ -48,6 +57,9 @@ int main() {
         openbus::config::discoverVehicleAppearances(busPath, vehiclesDirectory);
     const std::vector<openbus::config::VehicleDepot> depots =
         openbus::config::discoverVehicleDepots(busPath, vehiclesDirectory);
+    const std::vector<openbus::config::VehicleDepot> allDepots =
+        openbus::config::discoverAllVehicleDepots(vehiclesDirectory);
+    const openbus::config::HofData parsedHof = openbus::config::loadHofData(hofPath);
     const auto redAppearance =
         std::find_if(appearances.begin(), appearances.end(),
                      [](const openbus::config::VehicleAppearance& appearance) {
@@ -69,7 +81,13 @@ int main() {
         blueAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(parentTexturePath).generic_string() &&
         depots.size() == 1 && depots[0].name == "Example Depot" &&
-        depots[0].path == hofPath;
+        depots[0].path == hofPath && allDepots.size() == 2 &&
+        parsedHof.routes.size() == 1 && parsedHof.routes[0].code == "1001" &&
+        parsedHof.routes[0].line == "100" &&
+        parsedHof.routes[0].busstopIdents == std::vector<std::string>({"STOP_A", "STOP_B"}) &&
+        std::ranges::any_of(allDepots, [&](const openbus::config::VehicleDepot& depot) {
+            return depot.name == "Other Depot" && depot.path == otherHofPath;
+        });
     openbus::probe::removeProbeDirectory(root);
     if (!passed) {
         std::cerr << "Vehicle catalog discovery failed\n";

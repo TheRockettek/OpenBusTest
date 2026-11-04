@@ -757,6 +757,12 @@ void verifyPlayerTimetableController() {
                 independentRoute.stopPose(0) && !independentRoute.stopPose(1) &&
                 passengerRouteMatchesHof(independentRoute, hof),
             "map schedule and HOF remain selectable without an AI route or all stop geometry");
+    require(matchingPlayerTimetableRouteCount({independentRoute}, hof) == 1,
+            "HOF auto-matching scores distinct map timetable routes that it can serve");
+    openbus::config::HofData unrelatedHof;
+    unrelatedHof.routes = {{"9001", 0, false, {"UNRELATED_A", "UNRELATED_B"}, "Other", "900"}};
+    require(matchingPlayerTimetableRouteCount({independentRoute}, unrelatedHof) == 0,
+            "HOF auto-matching rejects files with no compatible map timetable route");
     const std::vector<openbus::map::MapAiTimetableCourse> independentCourses{
         {"course", {{"hof-trip", 0, 480.0}}}};
     PlayerTimetableCatalog independentCatalog;
@@ -7035,6 +7041,26 @@ int main(int argc, char** argv) {
                     "the selected noon-start timetable departure is due in 19 minutes");
         require(mapTrafficNextDepartureIndex(14.0, 0.0, {483.0, 739.0, 780.0}) == 0,
                 "after today's final departure, buses roll over to the first time tomorrow");
+        openbus::app::ScheduledBusState rebasedBus;
+        rebasedBus.scheduledDepartureMinutes = {390.0, 780.0};
+        rebasedBus.scheduledTripActive = true;
+        rebasedBus.activeScheduledDepartureElapsedSeconds = 1800.0;
+        openbus::app::rebaseScheduledBusClock(rebasedBus, 8.0, 3600.0);
+        require(rebasedBus.nextScheduledDepartureIndex == 1,
+                "rebasing selects the next departure at the updated map time");
+        requireNear(rebasedBus.nextScheduledDepartureElapsedSeconds, 18000.0,
+                    "rebased next departure uses the new clock epoch");
+        requireNear(rebasedBus.activeScheduledDepartureElapsedSeconds, -1800.0,
+                    "rebasing preserves the elapsed time of an active trip");
+        openbus::app::ScheduledBusState rebasedSuppression;
+        rebasedSuppression.scheduledDepartureMinutes = {390.0, 780.0};
+        rebasedSuppression.suppressedDeparture =
+            openbus::app::ScheduledDepartureSuppression{0, 1800.0};
+        openbus::app::rebaseScheduledBusClock(rebasedSuppression, 8.0, 3600.0);
+        require(rebasedSuppression.suppressedDeparture.has_value() &&
+                    rebasedSuppression.suppressedDeparture->departureIndex == 1 &&
+                    rebasedSuppression.suppressedDeparture->departureElapsedSeconds == 18000.0,
+                "rebasing keeps player-trip suppression aligned with its next departure");
         require(!mapTrafficScheduledDepartureDue(2699.0, 2700.0),
                 "a queued bus is held before its departure time");
         require(mapTrafficScheduledDepartureDue(2700.0, 2700.0) &&

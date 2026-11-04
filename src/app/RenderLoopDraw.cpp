@@ -2228,7 +2228,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                                       start[1] - forwardY * 0.75, start[2] + 0.16};
             const std::optional<int> phase = openbus::map::mapTrafficSignalStateAtTime(
                 *segment.trafficSignal,
-                mapTrafficSignalClockSeconds(simulation.simulationTime(),
+                mapTrafficSignalClockSeconds(mapTrafficElapsedSeconds(simulation.simulationTime()),
                                              trafficFleet_.mapTrafficStartHour));
             const bool permissive =
                 phase.has_value() && openbus::map::mapTrafficSignalPhasePermissive(*phase);
@@ -2250,8 +2250,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         }
         const auto appendSignalStopBox = [&](const openbus::map::MapTrafficActor& actor) {
             const auto stop = openbus::map::mapTrafficNextSignalStopDebugInfo(
-                actor, mapTrafficSignalClockSeconds(simulation.simulationTime(),
-                                                    trafficFleet_.mapTrafficStartHour));
+                actor,
+                mapTrafficSignalClockSeconds(mapTrafficElapsedSeconds(simulation.simulationTime()),
+                                             trafficFleet_.mapTrafficStartHour));
             if (!stop.has_value() || stop->distanceAheadMeters > 50.0 ||
                 !openbus::map::mapTrafficPoseOnActiveTile(stop->pose, activeTiles, tileSize)) {
                 return;
@@ -3130,7 +3131,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         signalStats.modelsWithoutPhase);
             const auto signalHeads =
                 mapRenderer_->trafficSignalHeadDebugInfo(mapTrafficSignalClockSeconds(
-                    simulation.simulationTime(), trafficFleet_.mapTrafficStartHour));
+                    mapTrafficElapsedSeconds(simulation.simulationTime()),
+                    trafficFleet_.mapTrafficStartHour));
             ImGui::Text("Signal heads (including unresolved links):");
             if (signalHeads.empty()) {
                 ImGui::TextDisabled("No traffic-light model objects found in active tiles");
@@ -3190,7 +3192,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         continue;
                     }
                     const double signalClockSeconds = mapTrafficSignalClockSeconds(
-                        simulation.simulationTime(), trafficFleet_.mapTrafficStartHour);
+                        mapTrafficElapsedSeconds(simulation.simulationTime()),
+                        trafficFleet_.mapTrafficStartHour);
                     const auto lines =
                         trafficSignalDebugLabel(segment, fallbackId, signalClockSeconds);
                     if (lines.empty()) {
@@ -3266,7 +3269,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
             const auto worldSignalHeads =
                 mapRenderer_->trafficSignalHeadDebugInfo(mapTrafficSignalClockSeconds(
-                    simulation.simulationTime(), trafficFleet_.mapTrafficStartHour));
+                    mapTrafficElapsedSeconds(simulation.simulationTime()),
+                    trafficFleet_.mapTrafficStartHour));
             for (const auto& head : worldSignalHeads) {
                 std::array<double, 3> labelPosition = head.position;
                 labelPosition[2] += 2.2;
@@ -3502,6 +3506,8 @@ void RenderLoop::endFrame() {
     if (imguiEnabled_) {
         drawOnFootUi();
         drawPlayerTimetableUi();
+        drawPauseMenuUi();
+        drawDebugMenuUi();
         imguiLayer_->render();
     }
     glfwSwapBuffers(window_);

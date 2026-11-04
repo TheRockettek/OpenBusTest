@@ -13,6 +13,7 @@
 #include "core/Utf8Path.h"
 #include "app/RenderLoop.h"
 #include "app/SteamPresence.h"
+#include "app/vehicle/Vehicle.h"
 
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -782,6 +783,21 @@ std::string formatPlacement(const VehiclePlacement& placement) {
     return formatted.str();
 }
 
+VehiclePlacement placementFromPose(const BodyPose& pose) {
+    return {pose.position,
+            std::atan2(pose.rotation[0], pose.rotation[3]) * 180.0 / std::numbers::pi};
+}
+
+VehiclePlacement onFootExitPlacement(const VehiclePlacement& busPlacement,
+                                     double busWidthMeters) {
+    VehiclePlacement placement = busPlacement;
+    const double yawRadians = busPlacement.yawDegrees * std::numbers::pi / 180.0;
+    const double sideOffset = std::max(2.0, busWidthMeters * 0.5 + 0.75);
+    placement.position[0] -= std::sin(yawRadians) * sideOffset;
+    placement.position[1] += std::cos(yawRadians) * sideOffset;
+    return placement;
+}
+
 VehiclePlacement aiVehiclePlacement(int index, int vehicleCount) {
     if (vehicleCount == 1) {
         return {{5.0, 5.0, 0.0}, 0.0};
@@ -842,6 +858,7 @@ int main() {
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus", steamPresence);
 
         const std::filesystem::path omsiRoot = omsiRootPath();
+        while (!renderer.shouldClose()) {
         StartupSelection startupSelection;
         if (benchmarkMode) {
             const std::string configuredMap = environmentValue("OPENBUS_MAP_PATH");
@@ -872,9 +889,11 @@ int main() {
                            : openbus::map::selectMapSpawnPoint(startupSelection.mapDefinition, {}));
         } else if (!renderer.runStartupMenu(omsiRoot, startupSelection)) {
             applicationLog.Log("Startup menu cancelled.");
-            return 0;
+            break;
         }
 
+        bool returnToMenu = false;
+        {
         renderer.showStartupStatus("Resolving the selected map, bus, and vehicle configurations.");
         // Resolve configuration paths for the bus and model.
         std::filesystem::path busConfigPath;
@@ -912,12 +931,12 @@ int main() {
         applicationLog.Log("Using selected map manifest: " + pathToUtf8(mapDirectory));
         openbus::map::MapDefinition mapDefinition = std::move(startupSelection.mapDefinition);
         SystemVariables mapCalendar;
-        const double mapAiStartHour = startupSelection.timeSeconds / 3600.0;
+        double mapAiStartHour = startupSelection.timeSeconds / 3600.0;
         mapCalendar.configureSimulationClock(startupSelection.year, startupSelection.month,
                                              startupSelection.day, startupSelection.timeSeconds);
-        const int mapCalendarYear = static_cast<int>(mapCalendar.get("year"));
-        const int mapCalendarMonth = static_cast<int>(mapCalendar.get("month"));
-        const int mapCalendarDay = static_cast<int>(mapCalendar.get("day"));
+        int mapCalendarYear = static_cast<int>(mapCalendar.get("year"));
+        int mapCalendarMonth = static_cast<int>(mapCalendar.get("month"));
+        int mapCalendarDay = static_cast<int>(mapCalendar.get("day"));
         const std::chrono::year_month_day mapCalendarDate{
             std::chrono::year{mapCalendarYear},
             std::chrono::month{static_cast<unsigned>(mapCalendarMonth)},
@@ -929,8 +948,9 @@ int main() {
             mapDefinition, mapCalendarYear * 10000 + mapCalendarMonth * 100 + mapCalendarDay);
         applicationLog.Log("Active Chrono timetable scenarios: " +
                            std::to_string(chronoTimetableCount));
-        const int mapAiStartWeekdayIndex = static_cast<int>(
+        int mapAiStartWeekdayIndex = static_cast<int>(
             std::chrono::weekday{std::chrono::sys_days{mapCalendarDate}}.c_encoding());
+        double mapAiStartSimulationTime = 0.0;
         applicationLog.Log("Chrono map tile overrides are disabled; using base map tile files.");
         const std::size_t terrainSidecars = static_cast<std::size_t>(std::count_if(
             mapDefinition.tiles.begin(), mapDefinition.tiles.end(),
@@ -1137,6 +1157,8 @@ int main() {
         mapSceneTrace.finish();
         std::size_t reportedCollisionTileCount = collisionStreamer->loadedTileCount();
         Vehicle* playerVehicle = nullptr;
+        Vehicle* mapBusVehicle = nullptr;
+        std::filesystem::path playerBusConfigPath;
         renderer.showStartupStatus("Preparing the player vehicle and map traffic.");
         openbus::rendering::TraceScope preFrameSetupTrace("startup",
                                                           "main.prepareInitialVehiclesAndTraffic");
@@ -1148,6 +1170,8 @@ int main() {
                 renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                     {AssetLoadingMode::Deferred, AssetLoadingMode::Eager}, false,
                                     startupSelection.vehicleSetup);
+            mapBusVehicle = playerVehicle;
+            playerBusConfigPath = busConfigPath;
             renderer.SetPlayerVehicle(playerVehicle);
             applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
         } else {
@@ -1852,10 +1876,12 @@ int main() {
         std::optional<int> lastTrafficPopulationMinute;
         std::optional<int> lastTrafficPopulationWeekdayMask;
         const auto updateMapTrafficPopulation = [&] {
+            const double elapsedSinceMapClockChange =
+                std::max(0.0, simulation->simulationTime() - mapAiStartSimulationTime);
             const double trafficHour = openbus::map::mapTrafficHourAtElapsedSeconds(
-                mapAiStartHour, simulation->simulationTime());
+                mapAiStartHour, elapsedSinceMapClockChange);
             const int trafficWeekdayMask = openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(
-                mapAiStartWeekdayIndex, mapAiStartHour, simulation->simulationTime());
+                mapAiStartWeekdayIndex, mapAiStartHour, elapsedSinceMapClockChange);
             const int trafficMinute = static_cast<int>(std::floor(trafficHour * 60.0));
             if (lastTrafficPopulationMinute == trafficMinute &&
                 lastTrafficPopulationWeekdayMask == trafficWeekdayMask) {
@@ -1884,6 +1910,43 @@ int main() {
                                                    passengerDensity, mapTrafficDensityMultiplier));
             lastTrafficPopulationMinute = trafficMinute;
             lastTrafficPopulationWeekdayMask = trafficWeekdayMask;
+        };
+        const auto applyMapCalendarRequest = [&](const MapCalendarRequest& request) {
+            const double simulationTime = simulation->simulationTime();
+            renderer.SetMapCalendar(request.year, request.month, request.day,
+                                    request.timeSeconds, simulationTime);
+            mapCalendar.configureSimulationClock(request.year, request.month, request.day,
+                                                 request.timeSeconds);
+            mapCalendarYear = static_cast<int>(mapCalendar.get("year"));
+            mapCalendarMonth = static_cast<int>(mapCalendar.get("month"));
+            mapCalendarDay = static_cast<int>(mapCalendar.get("day"));
+            const std::chrono::year_month_day date{
+                std::chrono::year{mapCalendarYear},
+                std::chrono::month{static_cast<unsigned>(mapCalendarMonth)},
+                std::chrono::day{static_cast<unsigned>(mapCalendarDay)}};
+            mapAiStartHour = request.timeSeconds / 3600.0;
+            mapAiStartWeekdayIndex = static_cast<int>(
+                std::chrono::weekday{std::chrono::sys_days{date}}.c_encoding());
+            mapAiStartSimulationTime = simulationTime;
+            lastTrafficPopulationMinute.reset();
+            lastTrafficPopulationWeekdayMask.reset();
+            updateMapTrafficPopulation();
+        };
+        const auto rebaseMapClockAfterSimulationReplacement = [&](double previousSimulationTime) {
+            const double simulationTime = simulation->simulationTime();
+            renderer.ResetMapClockEpoch(previousSimulationTime, simulationTime);
+            const MapCalendarRequest current = renderer.currentMapCalendar();
+            mapAiStartHour = current.timeSeconds / 3600.0;
+            const std::chrono::year_month_day date{
+                std::chrono::year{current.year}, std::chrono::month{static_cast<unsigned>(
+                                                     current.month)},
+                std::chrono::day{static_cast<unsigned>(current.day)}};
+            mapAiStartWeekdayIndex = static_cast<int>(
+                std::chrono::weekday{std::chrono::sys_days{date}}.c_encoding());
+            mapAiStartSimulationTime = simulationTime;
+            lastTrafficPopulationMinute.reset();
+            lastTrafficPopulationWeekdayMask.reset();
+            updateMapTrafficPopulation();
         };
         applicationLog.Log("Map traffic clock starts at " + std::to_string(mapAiStartHour) +
                            "h on " + std::to_string(mapCalendarYear) + "-" +
@@ -2036,9 +2099,112 @@ int main() {
                 if (!renderer.isPaused()) {
                     renderer.updateOnFoot(*world, elapsed);
                 }
+                if (const std::optional<MapCalendarRequest> calendarRequest =
+                        renderer.consumeMapCalendarRequest();
+                    calendarRequest.has_value()) {
+                    applyMapCalendarRequest(*calendarRequest);
+                }
+                if (const std::optional<VehiclePlacement> teleportRequest =
+                        renderer.consumeMapBusTeleportRequest();
+                    teleportRequest.has_value() && mapBusVehicle != nullptr) {
+                    try {
+                        const std::filesystem::path busModelConfig =
+                            modelConfigurationPathForBusFromConfig(playerBusConfigPath);
+                        BusConfiguration replacementConfiguration =
+                            loadBusConfiguration(playerBusConfigPath, busModelConfig);
+                        renderer.updateMapStreaming(teleportRequest->position[0],
+                                                    teleportRequest->position[1]);
+                        const std::vector<std::pair<int, int>> teleportGeometryTiles =
+                            renderer.loadedMapTiles();
+                        collisionStreamer->update(teleportRequest->position[0],
+                                                  teleportRequest->position[1],
+                                                  teleportGeometryTiles);
+                        collisionStreamer->waitForTileCollision(
+                            teleportRequest->position[0], teleportRequest->position[1],
+                            teleportGeometryTiles);
+                        auto replacementSimulation = std::make_unique<BusSimulation>(
+                            *world, std::move(replacementConfiguration), *teleportRequest, 60.0, 8);
+                        const double previousSimulationTime = simulation->simulationTime();
+                        const bool busIsOccupied = playerVehicle != nullptr;
+                        replacementSimulation->setFrozen(!busIsOccupied);
+                        mapBusVehicle->placement = *teleportRequest;
+                        if (!busIsOccupied) {
+                            mapBusVehicle->odeSimulation = nullptr;
+                        }
+                        auto previousSimulation = std::move(simulation);
+                        simulation = std::move(replacementSimulation);
+                        previousSimulation.reset();
+                        rebaseMapClockAfterSimulationReplacement(previousSimulationTime);
+                        reportedCollisionTileCount = collisionStreamer->loadedTileCount();
+                        applicationLog.Log("Player bus teleported to " +
+                                           formatPlacement(*teleportRequest) + ".");
+                    } catch (const std::exception& error) {
+                        applicationLog.Error("Unable to teleport player bus: " +
+                                              std::string(error.what()));
+                    }
+                }
+                if (renderer.consumeEnterMapBusRequest() && playerVehicle == nullptr &&
+                    mapBusVehicle != nullptr) {
+                    renderer.SetPlayerVehicle(mapBusVehicle);
+                    playerVehicle = mapBusVehicle;
+                    simulation->setFrozen(false);
+                    applicationLog.Log("Entered the parked player bus.");
+                }
+                if (renderer.consumeLeaveMapBusRequest() && playerVehicle != nullptr) {
+                    const VehiclePlacement busPlacement =
+                        placementFromPose(simulation->chassisPose());
+                    mapBusVehicle->placement = busPlacement;
+                    mapBusVehicle->odeSimulation = nullptr;
+                    simulation->setFrozen(true);
+                    renderer.SetPlayerVehicle(nullptr);
+                    playerVehicle = nullptr;
+                    renderer.SetNoBusSpawnPoint(
+                        onFootExitPlacement(busPlacement, mapBusVehicle->trafficWidthMeters));
+                    applicationLog.Log("Left the player bus; it remains parked.");
+                }
+                if (renderer.consumeRemovePlayerBusRequest() && mapBusVehicle != nullptr) {
+                    const double previousSimulationTime = simulation->simulationTime();
+                    const bool wasDriving = playerVehicle != nullptr;
+                    const VehiclePlacement busPlacement =
+                        wasDriving ? placementFromPose(simulation->chassisPose())
+                                   : mapBusVehicle->placement;
+                    const std::array<double, 3> currentPosition =
+                        renderer.streamingPosition(*simulation);
+                    const VehiclePlacement placement =
+                        wasDriving ? busPlacement
+                                   : VehiclePlacement{currentPosition, busPlacement.yawDegrees};
+                    const std::filesystem::path playerModelConfig =
+                        modelConfigurationPathForBusFromConfig(playerBusConfigPath);
+                    BusConfiguration replacementConfiguration =
+                        loadBusConfiguration(playerBusConfigPath, playerModelConfig);
+                    renderer.updateMapStreaming(placement.position[0], placement.position[1]);
+                    const std::vector<std::pair<int, int>> removalGeometryTiles =
+                        renderer.loadedMapTiles();
+                    collisionStreamer->update(placement.position[0], placement.position[1],
+                                              removalGeometryTiles);
+                    collisionStreamer->waitForTileCollision(
+                        placement.position[0], placement.position[1], removalGeometryTiles);
+
+                    renderer.RemovePlayerVehicle();
+                    playerVehicle = nullptr;
+                    mapBusVehicle = nullptr;
+                    playerBusConfigPath.clear();
+                    if (wasDriving) {
+                        renderer.SetNoBusSpawnPoint(busPlacement);
+                    }
+                    auto previousSimulation = std::move(simulation);
+                    previousSimulation.reset();
+                    simulation = std::make_unique<BusSimulation>(
+                        *world, std::move(replacementConfiguration), placement, 60.0, 8);
+                    simulation->setFrozen(true);
+                    rebaseMapClockAfterSimulationReplacement(previousSimulationTime);
+                    reportedCollisionTileCount = collisionStreamer->loadedTileCount();
+                    applicationLog.Log("Player bus removed; returned to on-foot mode.");
+                }
                 if (const std::optional<SpawnBusRequest> spawnRequest =
                         renderer.consumeSpawnBusRequest();
-                    spawnRequest.has_value() && playerVehicle == nullptr) {
+                    spawnRequest.has_value() && playerVehicle == nullptr &&
+                    mapBusVehicle == nullptr) {
                     openbus::rendering::TraceScope spawnTrace("startup",
                                                               "main.spawnSelectedMapBus");
                     try {
@@ -2078,7 +2244,8 @@ int main() {
                                 *world, std::move(selectedConfiguration), spawnRequest->placement,
                                 60.0, 8);
                         }
-                        replacementSimulation->setFrozen(false);
+                        const double previousSimulationTime = simulation->simulationTime();
+                        replacementSimulation->setFrozen(!spawnRequest->spawnInBus);
                         Vehicle* selectedPlayerVehicle = nullptr;
                         {
                             openbus::rendering::TraceScope vehicleTrace(
@@ -2095,14 +2262,23 @@ int main() {
                             simulation = std::move(replacementSimulation);
                             previousSimulation.reset();
                         }
-                        playerVehicle = selectedPlayerVehicle;
-                        {
+                        mapBusVehicle = selectedPlayerVehicle;
+                        playerBusConfigPath = selectedBusConfig;
+                        if (spawnRequest->spawnInBus) {
+                            playerVehicle = selectedPlayerVehicle;
                             openbus::rendering::TraceScope playerTrace(
                                 "startup", "spawnSelectedMapBus.initializePlayerVehicle");
                             renderer.SetPlayerVehicle(playerVehicle);
+                        } else {
+                            playerVehicle = nullptr;
+                            renderer.SetParkedPlayerBus(selectedPlayerVehicle);
                         }
+                        rebaseMapClockAfterSimulationReplacement(previousSimulationTime);
                         reportedCollisionTileCount = collisionStreamer->loadedTileCount();
-                        applicationLog.Log("Selected bus physics initialized; simulation resumed.");
+                        applicationLog.Log(
+                            spawnRequest->spawnInBus
+                                ? "Selected bus physics initialized; player entered the bus."
+                                : "Selected bus spawned parked; player remains on foot.");
                     } catch (const std::exception& error) {
                         const std::string message = error.what();
                         applicationLog.Error("Unable to spawn selected bus: " + message);
@@ -2156,7 +2332,18 @@ int main() {
                 }
 
                 renderer.endFrame();
+                if (renderer.consumeQuitToMenuRequest()) {
+                    returnToMenu = true;
+                    break;
+                }
             }
+        }
+        }
+        if (returnToMenu) {
+            renderer.ResetForStartupMenu();
+            continue;
+        }
+        break;
         }
         applicationLog.Log("OpenBus shut down cleanly");
     } catch (const std::exception& error) {
