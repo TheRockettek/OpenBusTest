@@ -11,27 +11,27 @@
 
 namespace openbus::app::vehicle {
 
+inline std::string normalizeCtcTextureKey(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return character == '\\' ? '/' : static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
 inline std::unordered_map<std::string, std::string>
 buildCtcTextureReplacements(
     const std::vector<ModelCtcTexture>& modelTextures,
     const std::unordered_map<std::string, std::string>& appearanceReplacements) {
-    const auto lowercase = [](std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(),
-                       [](unsigned char character) {
-                           return static_cast<char>(std::tolower(character));
-                       });
-        return value;
-    };
     std::unordered_map<std::string, std::string> selectedBySlot;
     selectedBySlot.reserve(appearanceReplacements.size());
     for (const auto& [slot, replacement] : appearanceReplacements) {
-        selectedBySlot[lowercase(slot)] = replacement;
+        selectedBySlot[normalizeCtcTextureKey(slot)] = replacement;
     }
     std::unordered_map<std::string, std::string> replacements;
     replacements.reserve(modelTextures.size() * 2);
     for (const auto& texture : modelTextures) {
-        const std::string slot = lowercase(texture.slot);
-        const std::string textureName = lowercase(texture.textureName);
+        const std::string slot = normalizeCtcTextureKey(texture.slot);
+        const std::string textureName = normalizeCtcTextureKey(texture.textureName);
         if (slot.empty() || textureName.empty()) {
             continue;
         }
@@ -48,11 +48,7 @@ buildCtcTextureReplacements(
 inline std::string
 resolveCtcTextureName(const std::string& textureName,
                       const std::unordered_map<std::string, std::string>& replacements) {
-    std::string key = textureName;
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    const auto found = replacements.find(key);
+    const auto found = replacements.find(normalizeCtcTextureKey(textureName));
     return found == replacements.end() ? textureName : found->second;
 }
 

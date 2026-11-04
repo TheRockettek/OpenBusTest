@@ -18,6 +18,15 @@ int main() {
         std::cerr << "CTI slots were not mapped to model CTC texture names\n";
         return 1;
     }
+    const std::vector<ModelCtcTexture> pathTextures = {
+        {"Body", "Texture\\body.dds"}};
+    const auto pathReplacements = openbus::app::vehicle::buildCtcTextureReplacements(
+        pathTextures, appearanceReplacements);
+    if (openbus::app::vehicle::resolveCtcTextureName("texture/body.DDS", pathReplacements) !=
+        "C:/Vehicles/Bus/Texture/Paints/red_body.dds") {
+        std::cerr << "CTC texture paths were not matched across separator styles\n";
+        return 1;
+    }
 
     const std::unordered_map<std::string, std::string> replacements = {
         {"body.dds", "custom_body.dds"}, {"window.bmp", "custom_window.bmp"}};
