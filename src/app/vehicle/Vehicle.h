@@ -6,6 +6,7 @@
 
 #include "app/RenderLoop.h"
 #include "app/vehicle/PassengerState.h"
+#include "app/vehicle/VehicleMaterialSelection.h"
 #include "app/vehicle/VehicleDefinition.h"
 #include "assets/ObjLoader.h"
 #include "assets/ScreenshotWriter.h"
@@ -747,6 +748,8 @@ struct Vehicle {
         for (const std::string& name : definition->modelStringVariables) {
             variables.declareString(name);
         }
+        openbus::app::vehicle::applyCtiVariableReplacements(
+            variables, setupOptions.appearanceVariableReplacements);
         if (deferTrafficInitialization) {
             deferredDefinition = definition;
             if (!definition->modelConfiguration.textTextures.empty()) {

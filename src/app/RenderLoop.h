@@ -65,6 +65,7 @@ struct ModelLoadingPolicy {
 
 struct VehicleSetupOptions {
     std::unordered_map<std::string, std::string> ctcTextureReplacements;
+    std::unordered_map<std::string, float> appearanceVariableReplacements;
     std::string appearanceKey;
     std::optional<std::string> vehicleNumber;
     std::optional<std::string> registration;

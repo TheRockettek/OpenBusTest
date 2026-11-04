@@ -7,6 +7,7 @@
 #include <array>
 #include <cctype>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 #include <unordered_set>
@@ -212,32 +213,64 @@ discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
             throw std::runtime_error("Could not open appearance configuration: " +
                                      ctiPath.string());
         }
+        std::optional<std::size_t> currentAppearance;
         Line line;
         while (reader.next(line)) {
-            if (!line.isKeyword() || lower(line.keyword()) != "item") {
+            if (!line.isKeyword()) {
+                continue;
+            }
+            const std::string keyword = lower(line.keyword());
+            if (keyword == "item") {
+                std::vector<std::string> values;
+                ConfigurationDiagnostics diagnostics;
+                if (!reader.readPayloads(3, values, diagnostics, keyword)) {
+                    currentAppearance.reset();
+                    continue;
+                }
+                const std::string name = trim(values[0]);
+                const std::string slot = lower(trim(values[1]));
+                const std::string texture = trim(values[2]);
+                if (name.empty() || slot.empty() || texture.empty()) {
+                    currentAppearance.reset();
+                    continue;
+                }
+                auto appearance =
+                    std::find_if(appearances.begin(), appearances.end(),
+                                 [&](const VehicleAppearance& candidate) {
+                                     return lower(candidate.name) == lower(name);
+                                 });
+                if (appearance == appearances.end()) {
+                    appearances.push_back({name, ctiPath, {}, {}});
+                    currentAppearance = appearances.size() - 1;
+                } else {
+                    currentAppearance =
+                        static_cast<std::size_t>(std::distance(appearances.begin(), appearance));
+                }
+                appearances[*currentAppearance].textureReplacements[slot] =
+                    resolveCtiTexture(ctiPath, texture).generic_string();
+                continue;
+            }
+            if (keyword != "setvar") {
                 continue;
             }
             std::vector<std::string> values;
             ConfigurationDiagnostics diagnostics;
-            if (!reader.readPayloads(3, values, diagnostics, "item")) {
-                continue;
+            if (!reader.readPayloads(2, values, diagnostics, keyword)) {
+                throw std::runtime_error("Invalid CTI [setvar] payload in '" + ctiPath.string() +
+                                         "' at line " + std::to_string(line.number));
             }
-            const std::string name = trim(values[0]);
-            const std::string slot = lower(trim(values[1]));
-            const std::string texture = trim(values[2]);
-            if (name.empty() || slot.empty() || texture.empty()) {
-                continue;
+            if (!currentAppearance) {
+                throw std::runtime_error("CTI [setvar] has no preceding [item] in '" +
+                                         ctiPath.string() + "' at line " +
+                                         std::to_string(line.number));
             }
-            auto appearance = std::find_if(appearances.begin(), appearances.end(),
-                                           [&](const VehicleAppearance& candidate) {
-                                               return lower(candidate.name) == lower(name);
-                                           });
-            if (appearance == appearances.end()) {
-                appearances.push_back({name, ctiPath, {}});
-                appearance = std::prev(appearances.end());
+            const std::string variable = trim(values[0]);
+            float value = 0.0F;
+            if (variable.empty() || !parseFloat(values[1], value)) {
+                throw std::runtime_error("Invalid CTI [setvar] in '" + ctiPath.string() +
+                                         "' at line " + std::to_string(line.number));
             }
-            appearance->textureReplacements[slot] =
-                resolveCtiTexture(ctiPath, texture).generic_string();
+            appearances[*currentAppearance].variableReplacements[variable] = value;
         }
     }
     std::sort(appearances.begin(), appearances.end(),

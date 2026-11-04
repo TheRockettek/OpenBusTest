@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 
 int main() {
     const std::filesystem::path root =
@@ -29,8 +30,10 @@ int main() {
     const std::filesystem::path ctiPath = textureDirectory / "paint.cti";
     std::ofstream cti(ctiPath);
     cti << "[item]\nDefault Paint\nBody\ndefault.dds\n"
+           "[setvar]\nvis_default_paint\n1\n"
            "[item]\nRed Livery\nBody\nred.dds\n"
-           "[item]\nRed Livery\nInterior\nred.dds\n";
+           "[item]\nRed Livery\nInterior\nred.dds\n"
+           "[setvar]\nvis_red_livery\n0.5\n";
     cti.close();
 
     const std::filesystem::path parentTexturePath = busDirectory.parent_path() / "blue.dds";
@@ -76,16 +79,30 @@ int main() {
                      });
     const auto* defaultAppearance =
         openbus::config::findVehicleAppearance(appearances, "default paint");
+    const std::filesystem::path invalidCtiPath = textureDirectory / "invalid.cti";
+    std::ofstream invalidCti(invalidCtiPath);
+    invalidCti << "[item]\nInvalid Paint\nBody\ndefault.dds\n"
+                  "[setvar]\ninvalid_repaint_variable\nnot-a-number\n";
+    invalidCti.close();
+    bool invalidSetvarRejected = false;
+    try {
+        (void)openbus::config::discoverVehicleAppearances(busPath, vehiclesDirectory);
+    } catch (const std::runtime_error&) {
+        invalidSetvarRejected = true;
+    }
     const bool passed =
+        invalidSetvarRejected &&
         vehicles.size() == 1 && vehicles[0].manufacturer == "Example Motors" &&
         vehicles[0].type == "City Bus" && vehicles[0].defaultAppearance == "Default Paint" &&
         appearances.size() == 3 && defaultAppearance != nullptr &&
         defaultAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(textureDirectory / "default.dds").generic_string() &&
+        defaultAppearance->variableReplacements.at("vis_default_paint") == 1.0F &&
         redAppearance != appearances.end() &&
         redAppearance->textureReplacements.size() == 2 &&
         redAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(textureDirectory / "red.dds").generic_string() &&
+        redAppearance->variableReplacements.at("vis_red_livery") == 0.5F &&
         blueAppearance != appearances.end() &&
         blueAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(parentTexturePath).generic_string() &&

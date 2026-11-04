@@ -435,6 +435,7 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
     request.spawnInBus = mapSpawnInBus_;
     const auto applyAppearance = [&](const openbus::config::VehicleAppearance& appearance) {
         request.setupOptions.ctcTextureReplacements = appearance.textureReplacements;
+        request.setupOptions.appearanceVariableReplacements = appearance.variableReplacements;
         request.setupOptions.appearanceKey =
             appearance.sourcePath.generic_string() + "|" + appearance.name;
     };

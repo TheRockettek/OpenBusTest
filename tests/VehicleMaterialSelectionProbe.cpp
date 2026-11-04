@@ -27,6 +27,13 @@ int main() {
         std::cerr << "CTC texture paths were not matched across separator styles\n";
         return 1;
     }
+    Variables variables(ScriptObjectKind::Vehicle);
+    openbus::app::vehicle::applyCtiVariableReplacements(
+        variables, {{"visibility_red", 1.0F}, {"paint_variant", 0.5F}});
+    if (variables.get("visibility_red") != 1.0F || variables.get("paint_variant") != 0.5F) {
+        std::cerr << "CTI setvar values were not applied to vehicle variables\n";
+        return 1;
+    }
 
     const std::unordered_map<std::string, std::string> replacements = {
         {"body.dds", "custom_body.dds"}, {"window.bmp", "custom_window.bmp"}};

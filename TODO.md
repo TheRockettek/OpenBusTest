@@ -157,9 +157,11 @@ change from their controlling variables without manual texture replacement.
   display against the OMSI reference capture.
 - [~] Startup appearance selection now applies CTI slot replacements through
   model `[CTCTexture]` entries to the mesh's base texture names; the bus
-  `[friendlyname]` default paint uses its matching CTI item when present.
-  Probes cover slot-to-texture resolution, but full `[CTC]` template selection
-  and E400 dashboard/body variant parity remain unverified.
+  `[friendlyname]` default paint uses its matching CTI item when present. CTI
+  `[setvar]` overrides are applied before script initialization, covering
+  repaint-specific visibility variables. Probes cover slot-to-texture and
+  variable resolution, but full `[CTC]` template selection and E400
+  dashboard/body variant parity remain unverified.
 - [~] Basic `[illumination_interior]`/`[interiorlight]` emission is active
   for assigned meshes, and `[light_enh_2]` renders a base bloom. `[spotlight]`
   remains storage-only with an unsupported-runtime warning. E400-specific
@@ -541,9 +543,11 @@ for alignment is not mistaken for supporting it.
 - [~] Startup paint selection maps CTI texture slots through each model's
   `[CTCTexture]` default filename before resolving mesh textures. Matching
   default paints use their CTI item when available; the base model appearance
-  remains the fallback. Slot substitution has focused regression coverage,
-  while full `[CTC]` template behavior and representative-asset parity remain
-  unverified. Template/mapping metadata is also retained in model-config JSON.
+  remains the fallback. CTI `[setvar]` values are applied to vehicle variables
+  before script initialization. Slot and variable substitution have focused
+  regression coverage, while full `[CTC]` template behavior and
+  representative-asset parity remain unverified. Template/mapping metadata is
+  also retained in model-config JSON.
 - [~] `[texchanges]`, `[newtexchangemaster]`, and `[entries]` payloads are
   retained in source order and serialized in model-config JSON. Count
   validation and runtime replacement behavior remain unimplemented.

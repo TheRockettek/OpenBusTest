@@ -1,10 +1,13 @@
 #pragma once
 
 #include "config/ModelConfigTypes.h"
+#include "core/Variables.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cmath>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -43,6 +46,16 @@ buildCtcTextureReplacements(
         replacements[textureName] = replacement;
     }
     return replacements;
+}
+
+inline void applyCtiVariableReplacements(
+    Variables& variables, const std::unordered_map<std::string, float>& replacements) {
+    for (const auto& [name, value] : replacements) {
+        if (name.empty() || !std::isfinite(value)) {
+            throw std::invalid_argument("CTI variable replacements must be named and finite");
+        }
+        variables.set(name, value);
+    }
 }
 
 inline std::string

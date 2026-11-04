@@ -18,6 +18,7 @@ struct VehicleAppearance {
     std::string name;
     std::filesystem::path sourcePath;
     std::unordered_map<std::string, std::string> textureReplacements;
+    std::unordered_map<std::string, float> variableReplacements;
 };
 
 struct VehicleDepot {
