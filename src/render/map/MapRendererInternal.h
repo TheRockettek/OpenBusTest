@@ -234,6 +234,8 @@ struct MapRenderer::Impl {
         GLuint buffer = 0;
         GLuint indexBuffer = 0;
         GLuint skinWeightBuffer = 0;
+        GLuint seatedSkinWeightBuffer = 0;
+        bool seatedSkinUsesFallback = false;
         std::size_t vertexCount = 0;
         std::size_t indexCount = 0;
         ModelMaterial material;

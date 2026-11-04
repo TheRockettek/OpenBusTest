@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -26,6 +27,11 @@ Matrix4 rotateAt(const std::array<double, 3>& pivot, double angle, double x, dou
 
 std::array<double, 3> sideJoint(const std::array<double, 3>& joint, double side) {
     return {side * std::abs(joint[0]), joint[1], joint[2]};
+}
+
+double smoothWeight(double lower, double upper, double value) {
+    const double t = std::clamp((value - lower) / (upper - lower), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
 }
 
 } // namespace
@@ -76,10 +82,50 @@ HumanSkinWeights resolveHumanSkinWeights(const ParsedObj& mesh,
     return result;
 }
 
-HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGaitParameters& gait) {
+HumanJoints approximateHumanJoints(const HumanGaitParameters& gait) {
+    const double height = gait.heightMeters;
+    return {{gait.hipXHeightFraction * height, 0.0, gait.hipZHeightFraction * height},
+            {gait.kneeXHeightFraction * height, gait.kneeYHeightFraction * height,
+             gait.kneeZHeightFraction * height},
+            {gait.shoulderXHeightFraction * height, 0.0, gait.shoulderZHeightFraction * height},
+            {gait.elbowXHeightFraction * height, 0.0, gait.elbowZHeightFraction * height},
+            {gait.handXHeightFraction * height, 0.0, gait.handZHeightFraction * height},
+            {0.0, gait.waistYHeightFraction * height, gait.waistZHeightFraction * height},
+            {0.0, gait.neckYHeightFraction * height, gait.neckZHeightFraction * height}};
+}
+
+HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
+                                         const HumanJoints& joints, double height) {
+    if (!std::isfinite(height) || height <= 0.0) {
+        throw std::invalid_argument("Human skin inference requires a positive finite height");
+    }
+    HumanVertexWeights weights = {};
+    const std::size_t side = position[0] < 0.0 ? 0 : 1;
+    const double x = std::abs(position[0]);
+    const double leg = 1.0 - smoothWeight(joints.hip[2] - 0.04 * height,
+                                          joints.hip[2] + 0.04 * height, position[2]);
+    const double lowerLeg = 1.0 - smoothWeight(joints.knee[2] - 0.03 * height,
+                                               joints.knee[2] + 0.03 * height, position[2]);
+    const double arm = (1.0 - leg) *
+                       smoothWeight(std::abs(joints.shoulder[0]) + 0.02 * height,
+                                    std::abs(joints.shoulder[0]) + 0.12 * height, x) *
+                       smoothWeight(joints.hip[2], joints.hip[2] + 0.15 * height, position[2]);
+    const double lowerArm = smoothWeight(std::abs(joints.elbow[0]) - 0.03 * height,
+                                         std::abs(joints.elbow[0]) + 0.03 * height, x);
+    weights[side] = static_cast<float>(leg * (1.0 - lowerLeg));
+    weights[2 + side] = static_cast<float>(leg * lowerLeg);
+    weights[4 + side] = static_cast<float>(arm * (1.0 - lowerArm));
+    weights[6 + side] = static_cast<float>(arm * lowerArm);
+    weights[8] = static_cast<float>(1.0 - leg - arm);
+    return weights;
+}
+
+HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGaitParameters& gait,
+                                      double seatedFraction) {
     HumanBonePalette palette;
+    const double seated = std::clamp(seatedFraction, 0.0, 1.0);
     const double weight = std::clamp(gait.weight, 0.0, 1.0);
-    const double sway = std::sin(gait.phaseRadians) * weight;
+    const double sway = std::sin(gait.phaseRadians) * weight * (1.0 - seated);
     const Matrix4 hip =
         rotateAt({0.0, joints.hip[1], joints.hip[2]}, sway * 5.0 * gait.hipSway, 0, 1, 0);
     const Matrix4 chest =
@@ -90,13 +136,14 @@ HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGait
     for (std::size_t index = 0; index < 2; ++index) {
         const double side = index == 0 ? -1.0 : 1.0;
         const double phase = gait.phaseRadians + (index == 0 ? std::numbers::pi : 0.0);
-        const double swing = std::sin(phase) * weight;
-        const double kneeBend = std::max(0.0, std::cos(phase)) * weight;
-        const Matrix4 upperLeg =
-            multiplyMatrix4(hip, rotateAt(sideJoint(joints.hip, side), swing * 24.0, 1, 0, 0));
+        const double swing = std::sin(phase) * weight * (1.0 - seated);
+        const double kneeBend = std::max(0.0, std::cos(phase)) * weight * (1.0 - seated);
+        const Matrix4 upperLeg = multiplyMatrix4(
+            hip, rotateAt(sideJoint(joints.hip, side), swing * 24.0 + seated * 90.0, 1, 0, 0));
         palette[index] = upperLeg;
-        palette[2 + index] = multiplyMatrix4(
-            upperLeg, rotateAt(sideJoint(joints.knee, side), -kneeBend * 28.0, 1, 0, 0));
+        palette[2 + index] =
+            multiplyMatrix4(upperLeg, rotateAt(sideJoint(joints.knee, side),
+                                               -kneeBend * 28.0 - seated * 90.0, 1, 0, 0));
         const Matrix4 shoulderSwing =
             rotateAt(sideJoint(joints.shoulder, side), -swing * 18.0 * gait.armSwing, 1, 0, 0);
         const Matrix4 shoulderLower =
@@ -112,6 +159,10 @@ HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGait
             lowerArm, rotateAt(sideJoint(joints.hand, side), swing * 4.0 * gait.armSwing, 1, 0, 0));
     }
     return palette;
+}
+
+double humanSeatAnchorOffset(double seatHeight, const HumanJoints& joints, double seatedFraction) {
+    return (seatHeight - joints.hip[2]) * std::clamp(seatedFraction, 0.0, 1.0);
 }
 
 } // namespace openbus::rendering

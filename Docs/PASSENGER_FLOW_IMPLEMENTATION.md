@@ -24,8 +24,11 @@ configuration and a routable, matched timetable route.
 
 Waiting passengers render using the configured human models.
 Cabin positions use the vehicle model's coordinate convention and model-root
-height. Until seated human animation is supported, occupied seats use standing
-models with their feet at the authored seat position minus its seat height.
+height. Occupied seats use a skeletal sitting pose with the hips aligned to
+the authored seat height; zero-height positions remain standing. Passengers
+walk to the seat before sitting and stand up before alighting. Missing or
+incomplete model skin weights use an approximate seated-only geometric rig,
+while normal walking retains its existing animation.
 Queues are shared by stop ID across registered scheduled routes and replenished
 to at least their initial size when a scheduled AI bus departs or the player bus
 leaves a served stop. When multiple calls share an ID, their queue renders at
@@ -125,8 +128,8 @@ coordinates set the lower-leg gait pivot. Right-elbow and right-hand
 coordinates set approximate forearm and wrist flex pivots while walking; neck
 Y/Z coordinates set an approximate head-stabilization pivot, and waist Y/Z
 coordinates anchor gait-linked torso lean. These controls drive approximate
-mesh deformations, not authored skeletal joints; remaining `[links]` geometry,
-seat height, mass, voice, and native limb animation are not yet applied.
+mesh deformations rather than native limb animation; human `[seatheight]`,
+mass, and voice are not yet applied.
 Scheduled AI buses stop at mapped timetable calls and board waiting
 passengers into available seats during an eight-second dwell. Queue consumption
 is serialized each update against the shared remaining count, preventing two

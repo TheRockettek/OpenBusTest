@@ -60,7 +60,8 @@ bool depthOcclusionQueriesAvailable() {
 
 void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                         const openbus::map::MapTrafficPose& pose,
-                                        double gaitPhaseRadians, double gaitWeight) const {
+                                        double gaitPhaseRadians, double gaitWeight,
+                                        std::optional<HumanSeatPose> seat) const {
     const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     auto model = impl_->humanTrafficModels.find(cacheKey);
     if (model == impl_->humanTrafficModels.end()) {
@@ -128,15 +129,29 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
         imageRequest = {};
         impl_->humanTextureRequests.erase(textureKey);
     }
-    const double headingDegrees = pose.headingRadians * 180.0 / std::acos(-1.0);
-    const Matrix4 transform =
-        makeSceneryInstanceTransform(pose.position[0], pose.position[1], pose.position[2],
-                                     {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
+    if (seat && (!std::isfinite(seat->seatHeight) || !std::isfinite(seat->fraction))) {
+        throw std::invalid_argument("Human seated pose requires finite height and fraction");
+    }
+    bool canSit = seat && seat->seatHeight > 0.0 && seat->fraction > 0.0;
     for (const std::size_t batchIndex : model->second.batchIndexes) {
         if (batchIndex >= impl_->sceneryBatches.size()) {
             throw std::logic_error("Human traffic model references an invalid mesh batch");
         }
+        const auto& batch = impl_->sceneryBatches[batchIndex];
+        canSit = canSit && (batch.seatedSkinUsesFallback ? batch.seatedSkinWeightBuffer != 0
+                                                         : batch.skinWeightBuffer != 0);
     }
+
+    const HumanJoints seatedJoints =
+        model->second.joints.value_or(approximateHumanJoints(model->second.gait));
+    const double seatedFraction = canSit ? std::clamp(seat->fraction, 0.0, 1.0) : 0.0;
+    const double heightOffset =
+        canSit ? humanSeatAnchorOffset(seat->seatHeight, seatedJoints, seatedFraction) : 0.0;
+    const double headingDegrees = pose.headingRadians * 180.0 / std::acos(-1.0);
+    const Matrix4 transform =
+        makeSceneryInstanceTransform(pose.position[0], pose.position[1],
+                                     pose.position[2] + heightOffset,
+                                     {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
 
     pushMatrix();
     multiplyMatrix(transform);
@@ -148,7 +163,9 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
     gait.phaseRadians = gaitPhaseRadians;
     gait.weight = gaitWeight;
     const std::optional<HumanBonePalette> palette =
-        model->second.joints
+        canSit ? std::optional<HumanBonePalette>(
+                     makeHumanBonePalette(seatedJoints, gait, seatedFraction))
+        : model->second.joints
             ? std::optional<HumanBonePalette>(makeHumanBonePalette(*model->second.joints, gait))
             : std::nullopt;
     const auto drawBatches = [&](bool transparent) {
@@ -158,10 +175,13 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             if (isTransparent != transparent) {
                 continue;
             }
-            const HumanSkinDraw skin{batch.skinWeightBuffer, palette ? &*palette : nullptr};
+            const GLuint weightBuffer = canSit && batch.seatedSkinWeightBuffer != 0
+                                            ? batch.seatedSkinWeightBuffer
+                                            : batch.skinWeightBuffer;
+            const HumanSkinDraw skin{weightBuffer, palette ? &*palette : nullptr};
             drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
                            batch.alpha, batch.alphaMode, batch.cullBackFaces, gait, 1.0,
-                           batch.skinWeightBuffer != 0 && palette ? &skin : nullptr);
+                           weightBuffer != 0 && palette ? &skin : nullptr);
         }
     };
     drawBatches(false);

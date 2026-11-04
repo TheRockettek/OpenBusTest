@@ -1144,6 +1144,35 @@ void verifyPassengerServiceBehavior() {
         requireNear(modelPoint[0], 4.3534, "seat forward coordinate follows the vehicle mesh");
         requireNear(modelPoint[1], 0.8875, "seat lateral coordinate follows the vehicle mesh");
         requireNear(modelPoint[2], 2.6057, "standing model feet are at the cabin floor");
+        requireNear(openbus::app::passengerCabinHeading(std::numbers::pi / 2.0, 0.0),
+                    std::numbers::pi / 2.0, "forward-facing seats follow the bus heading");
+        requireNear(openbus::app::passengerCabinHeading(0.0, 180.0), std::numbers::pi,
+                    "rear-facing seats turn passengers around");
+        const auto boardingWalk = openbus::app::passengerSeatTransition(0.4, true, true);
+        const auto boardingSit = openbus::app::passengerSeatTransition(0.9, true, true);
+        const auto alightingStand = openbus::app::passengerSeatTransition(0.1, false, true);
+        const auto alightingWalk = openbus::app::passengerSeatTransition(0.6, false, true);
+        const auto standingWalk = openbus::app::passengerSeatTransition(0.5, true, false);
+        requireNear(boardingWalk.pathProgress, 0.5, "boarding walks before sitting");
+        requireNear(boardingWalk.seatedFraction, 0.0, "boarding does not sit in the aisle");
+        requireNear(boardingSit.pathProgress, 1.0, "boarding reaches its seat before sitting");
+        requireNear(boardingSit.seatedFraction, 0.5, "boarding blends into a seated pose");
+        requireNear(alightingStand.pathProgress, 0.0, "alighting stands up before walking");
+        requireNear(alightingStand.seatedFraction, 0.5, "alighting blends out of sitting");
+        requireNear(alightingWalk.pathProgress, 0.5, "alighting walks after standing up");
+        requireNear(standingWalk.pathProgress, 0.5, "standing positions retain the walking timing");
+        requireNear(standingWalk.seatedFraction, 0.0, "standing positions never sit down");
+        const std::vector<std::pair<double, std::optional<std::size_t>>> links{
+            {0.5, std::size_t{2}}, {1.0, std::size_t{3}}};
+        const auto boardingLinks = openbus::app::passengerSeatPathLinkProfile(links, true, true);
+        const auto alightingLinks = openbus::app::passengerSeatPathLinkProfile(links, false, true);
+        require(boardingLinks.size() == 3 && alightingLinks.size() == 3 &&
+                    !boardingLinks.back().second && !alightingLinks.front().second,
+                "seating transitions do not claim a cabin path link");
+        requireNear(boardingLinks[0].first, 0.4, "boarding link timing follows walking progress");
+        requireNear(alightingLinks[1].first, 0.6, "alighting link timing follows walking progress");
+        require(openbus::app::passengerSeatPathLinkProfile(links, true, false) == links,
+                "standing positions retain the original path timing");
         const MapTrafficPose bus{{10.0, 20.0, 1.0}, 0.0};
         const auto right = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, false, 0);
         const auto left = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, true, 0);

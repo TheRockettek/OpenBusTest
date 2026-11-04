@@ -130,6 +130,14 @@ int main() {
     const HumanSkinDraw skin{skinBuffer, &palette};
     const auto unskinned = skinFrame(nullptr);
     const auto bindPose = skinFrame(&skin);
+    HumanJoints sittingJoints;
+    sittingJoints.hip = {0.0, 0.0, -1.5};
+    sittingJoints.knee = {0.0, 0.0, -2.0};
+    HumanGaitParameters sittingGait;
+    sittingGait.upperArmBetaDegrees = 0.0;
+    palette = makeHumanBonePalette(sittingJoints, sittingGait, 0.5);
+    const auto sitting = skinFrame(&skin);
+    palette.fill(identityMatrix());
     palette[0] = translationMatrix({0.7, 0.0, 0.0});
     const auto moved = skinFrame(&skin);
     for (auto& vertex : weights) {
@@ -177,7 +185,9 @@ int main() {
         return count == 0 ? -1.0 : sum / count;
     };
     const std::size_t centerPixel = (16 * 32 + 16) * 4;
-    if (bindPose != unskinned || moved == bindPose || restored != unskinned ||
+    if (bindPose != unskinned || moved == bindPose || sitting == bindPose ||
+        std::none_of(sitting.begin(), sitting.end(), [](std::uint8_t value) { return value != 0; }) ||
+        restored != unskinned ||
         indexed != unskinned ||
         zeroWeights != bindPose ||
         horizontalCentroid(blended) <= horizontalCentroid(bindPose) ||

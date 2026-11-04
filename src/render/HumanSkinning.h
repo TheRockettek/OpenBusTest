@@ -33,6 +33,11 @@ struct HumanJoints {
 
 HumanSkinWeights resolveHumanSkinWeights(const ParsedObj& mesh,
                                          const std::vector<ModelBoneBinding>& bindings);
-HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGaitParameters& gait);
+HumanJoints approximateHumanJoints(const HumanGaitParameters& gait);
+HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
+                                         const HumanJoints& joints, double height);
+HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGaitParameters& gait,
+                                      double seatedFraction = 0.0);
+double humanSeatAnchorOffset(double seatHeight, const HumanJoints& joints, double seatedFraction);
 
 } // namespace openbus::rendering

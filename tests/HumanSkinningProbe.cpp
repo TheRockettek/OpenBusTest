@@ -7,6 +7,10 @@
 #include <numbers>
 #include <stdexcept>
 
+#ifdef near
+#undef near
+#endif
+
 using namespace openbus::rendering;
 
 namespace {
@@ -78,6 +82,58 @@ void runProbe() {
     const auto rightLeg = transformPoint(walking[1], {0.1, -0.02, 0.6, 1.0});
     require((leftLeg[1] + 0.02) * (rightLeg[1] + 0.02) < 0.0,
             "walking legs did not swing in opposite directions");
+
+    gait.weight = 0.0;
+    gait.upperArmBetaDegrees = 0.0;
+    const auto standingWithoutSeat = makeHumanBonePalette(*joints, gait);
+    const auto standingWithSeat = makeHumanBonePalette(*joints, gait, 0.0);
+    require(standingWithoutSeat == standingWithSeat,
+            "zero seated fraction preserves the existing standing palette");
+    const auto seated = makeHumanBonePalette(*joints, gait, 1.0);
+    for (std::size_t side = 0; side < 2; ++side) {
+        const double x = side == 0 ? -joints->knee[0] : joints->knee[0];
+        const auto knee = transformPoint(
+            seated[side], {x, joints->knee[1], joints->knee[2], 1.0});
+        require(near(knee[2], joints->hip[2] + joints->knee[1] - joints->hip[1]) &&
+                    near(knee[1], joints->hip[1] + joints->hip[2] - joints->knee[2]),
+                "seated thighs point forward and remain attached at the hip");
+        const auto ankle = transformPoint(
+            seated[2 + side], {x, joints->knee[1], joints->knee[2] - 0.4, 1.0});
+        require(near(ankle[1], knee[1]) && near(ankle[2], knee[2] - 0.4),
+                "seated lower legs hang vertically from the knees");
+    }
+    require(near(humanSeatAnchorOffset(0.45, *joints, 1.0), 0.45 - joints->hip[2]) &&
+                near(humanSeatAnchorOffset(0.45, *joints, 0.5),
+                     (0.45 - joints->hip[2]) * 0.5) &&
+                near(humanSeatAnchorOffset(0.45, *joints, 0.0), 0.0),
+            "seated hips align with the cushion while the transition remains continuous");
+    const auto halfway = makeHumanBonePalette(*joints, gait, 0.5);
+    const auto halfwayKnee = transformPoint(
+        halfway[1], {joints->knee[0], joints->knee[1], joints->knee[2], 1.0});
+    require(halfwayKnee[1] > joints->knee[1] && halfwayKnee[2] < joints->hip[2],
+            "sitting transition bends the thigh gradually");
+
+    const auto legWeights = inferHumanSkinWeights({0.1, 0.0, 0.2}, *joints, 1.7);
+    const auto bodyWeights = inferHumanSkinWeights({0.0, 0.0, 1.1}, *joints, 1.7);
+    const auto armWeights = inferHumanSkinWeights({0.6, 0.0, 1.3}, *joints, 1.7);
+    require(near(legWeights[3], 1.0) && near(bodyWeights[8], 1.0) &&
+                armWeights[7] > 0.99F,
+            "fallback skinning assigns legs, torso and arms to their respective bones");
+    const auto blendedWeights = inferHumanSkinWeights({-0.1, 0.0, joints->hip[2]}, *joints, 1.7);
+    double weightSum = 0.0;
+    for (const float value : blendedWeights) {
+        require(value >= 0.0F, "inferred skin weights must not be negative");
+        weightSum += value;
+    }
+    require(near(weightSum, 1.0) && blendedWeights[0] > 0.0F && blendedWeights[8] > 0.0F,
+            "inferred hip weights blend continuously and sum to one");
+    bool invalidHeightRejected = false;
+    try {
+        (void)inferHumanSkinWeights({}, *joints, 0.0);
+    } catch (const std::invalid_argument&) {
+        invalidHeightRejected = true;
+    }
+    require(invalidHeightRejected, "fallback skinning rejects invalid model height");
 }
 
 } // namespace

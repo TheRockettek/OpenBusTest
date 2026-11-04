@@ -80,6 +80,7 @@ MapRenderer::Impl::~Impl() {
     deleteBatchBuffers(roadBatches);
     for (const auto& batch : sceneryBatches) {
         deleteBuffer(batch.skinWeightBuffer);
+        deleteBuffer(batch.seatedSkinWeightBuffer);
     }
     for (const GLuint ownedTexture : ownedTextures) {
         if (ownedTexture != 0) {
@@ -784,10 +785,12 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
         return firstError;
     };
     bool loggedPriorUploadError = false;
+    const HumanJoints seatedJoints = joints.value_or(approximateHumanJoints(gait));
     for (const ParsedHumanPart& parsedPart : parsedParts) {
         const ModelPart& part = *parsedPart.part;
         std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
         std::unordered_map<int, std::vector<HumanVertexWeights>> weightsByMaterial;
+        std::unordered_map<int, std::vector<HumanVertexWeights>> seatedWeightsByMaterial;
         HumanSkinWeights skin;
         if (joints && !parsedPart.mesh->bones.empty() && !part.boneBindings.empty()) {
             skin = resolveHumanSkinWeights(*parsedPart.mesh, part.boneBindings);
@@ -801,6 +804,11 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
         } else if (!parsedPart.mesh->bones.empty() || !part.boneBindings.empty()) {
             gameLog.Warning("Human mesh cannot use bone skinning without valid [links] and bone "
                             "bindings: " +
+                            openbus::pathToUtf8(part.objPath));
+        }
+        const bool inferSeatedWeights = !skin.hasWeights || skin.unweightedVertices != 0;
+        if (inferSeatedWeights) {
+            gameLog.Warning("Using approximate seated skin weights for human mesh: " +
                             openbus::pathToUtf8(part.objPath));
         }
         for (const ObjTriangle& triangle : parsedPart.mesh->triangles) {
@@ -852,6 +860,23 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                 if (skin.hasWeights) {
                     weightsByMaterial[materialIndex].push_back(skin.vertices[positionIndex]);
                 }
+                if (inferSeatedWeights) {
+                    HumanVertexWeights seatedWeights = {};
+                    if (skin.hasWeights) {
+                        seatedWeights = skin.vertices[positionIndex];
+                    }
+                    const bool weighted = std::any_of(
+                        seatedWeights.begin(), seatedWeights.begin() + HUMAN_BONE_COUNT,
+                        [](float weight) { return weight > 0.0F; });
+                    if (!weighted) {
+                        seatedWeights = inferHumanSkinWeights(
+                            {(sourcePosition.x - horizontalCenter[0]) * modelScale,
+                             (sourcePosition.y - horizontalCenter[1]) * modelScale,
+                             (sourcePosition.z - minimum[2]) * modelScale},
+                            seatedJoints, gait.heightMeters);
+                    }
+                    seatedWeightsByMaterial[materialIndex].push_back(seatedWeights);
+                }
             }
         }
         for (auto& [materialIndex, vertices] : verticesByMaterial) {
@@ -880,6 +905,7 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
             }
 
             Impl::ModelBatch batch;
+            batch.seatedSkinUsesFallback = inferSeatedWeights;
             batch.vertexCount = vertices.size();
             batch.color = sourceMaterial == parsedPart.mesh->materials.end()
                               ? part.color
@@ -964,24 +990,31 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                 ", OpenGL error=" + std::to_string(uploadError));
                 continue;
             }
-            if (skin.hasWeights) {
-                const auto& weights = weightsByMaterial.at(materialIndex);
-                pglGenBuffers(1, &batch.skinWeightBuffer);
-                pglBindBuffer(GL_ARRAY_BUFFER, batch.skinWeightBuffer);
+            const auto uploadWeights = [&](GLuint& buffer,
+                                           const std::vector<HumanVertexWeights>& weights) {
+                pglGenBuffers(1, &buffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, buffer);
                 pglBufferData(
                     GL_ARRAY_BUFFER,
                     static_cast<std::ptrdiff_t>(weights.size() * sizeof(HumanVertexWeights)),
                     weights.data(), GL_STATIC_DRAW);
                 const GLenum skinUploadError = drainGlErrors();
-                if (batch.skinWeightBuffer == 0 || skinUploadError != GL_NO_ERROR) {
-                    if (batch.skinWeightBuffer != 0) {
-                        deleteRendererBuffers(1, &batch.skinWeightBuffer);
-                        batch.skinWeightBuffer = 0;
+                if (buffer == 0 || skinUploadError != GL_NO_ERROR) {
+                    if (buffer != 0) {
+                        deleteRendererBuffers(1, &buffer);
+                        buffer = 0;
                     }
                     gameLog.Warning("Could not upload human skin weights for " +
                                     openbus::pathToUtf8(part.objPath) +
                                     ", OpenGL error=" + std::to_string(skinUploadError));
                 }
+            };
+            if (skin.hasWeights) {
+                uploadWeights(batch.skinWeightBuffer, weightsByMaterial.at(materialIndex));
+            }
+            if (inferSeatedWeights) {
+                uploadWeights(batch.seatedSkinWeightBuffer,
+                              seatedWeightsByMaterial.at(materialIndex));
             }
             texturePaths.push_back(texturePath);
             textureImages.push_back(std::move(textureImage));

@@ -23,6 +23,11 @@ class MapSceneLoader;
 class AssetRequestManager;
 struct HumanGaitParameters;
 
+struct HumanSeatPose {
+    double seatHeight = 0.0;
+    double fraction = 0.0;
+};
+
 struct MapRenderStats {
     std::size_t activeTiles = 0;
     std::size_t totalTiles = 0;
@@ -150,7 +155,8 @@ class MapRenderer {
     void loadHumanTrafficModel(const std::filesystem::path& humanConfigPath);
     void drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                const openbus::map::MapTrafficPose& pose, double gaitPhaseRadians,
-                               double gaitWeight) const;
+                               double gaitWeight,
+                               std::optional<HumanSeatPose> seat = std::nullopt) const;
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
     trafficSignalControllers() const;
     std::vector<openbus::map::MapTrafficSignalRequest>
