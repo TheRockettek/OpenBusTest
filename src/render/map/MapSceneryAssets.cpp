@@ -20,6 +20,32 @@ std::filesystem::path MapSceneLoader::resolveSceneryConfigPath(const std::string
     return std::filesystem::path{};
 }
 
+const SceneryObjectConfig*
+MapSceneLoader::loadSceneryObjectMetadata(const std::string& assetPath) {
+    const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
+    if (configPath.empty()) {
+        return nullptr;
+    }
+    const std::string cacheKey = openbus::pathToUtf8(configPath.lexically_normal());
+    const auto cached = sceneryObjectMetadata.find(cacheKey);
+    if (cached != sceneryObjectMetadata.end()) {
+        return &cached->second;
+    }
+    try {
+        const auto [entry, inserted] =
+            sceneryObjectMetadata.emplace(cacheKey, loadSceneryObjectFile(configPath));
+        if (!inserted) {
+            throw std::logic_error("Scenery metadata cache insertion failed");
+        }
+        return &entry->second;
+    } catch (const std::exception& error) {
+        recordSkipped(skipped, "scenery object metadata unavailable for map indexing",
+                      openbus::pathToUtf8(configPath) + ": " + error.what(), 1,
+                      LogLevel::Warning);
+        return nullptr;
+    }
+}
+
 const std::vector<std::size_t>&
 MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
     const std::string cacheKey = openbus::pathToUtf8(configPath.lexically_normal());

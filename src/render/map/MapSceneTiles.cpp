@@ -6,6 +6,109 @@
 
 namespace openbus::rendering {
 
+void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
+    const auto addPaths = [&](int objectId, int tileX, int tileY, const std::string& assetPath,
+                              const openbus::map::MapSceneryPose& pose,
+                              const std::vector<openbus::map::MapTileRule>& rules) {
+        if (ambiguousMapObjectIds.contains(objectId)) {
+            return;
+        }
+        const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(assetPath);
+        if (metadata == nullptr) {
+            return;
+        }
+        for (const SceneryObjectTrafficPath& path : metadata->trafficPaths) {
+            const std::vector<openbus::map::MapSplineSample> samples =
+                openbus::map::tessellateMapSpline(path.startPosition[0], path.startPosition[1],
+                                                  path.headingDegrees, path.length, path.radius);
+            if (samples.size() < 2) {
+                continue;
+            }
+            openbus::map::MapTrafficRouteSegment segment;
+            segment.points.reserve(samples.size());
+            const auto toWorldPosition = [&](const std::array<double, 3>& localPosition) {
+                const auto offset = openbus::map::transformMapSceneryVector(pose, localPosition);
+                return std::array<double, 3>{pose.x + offset[0], pose.y + offset[1],
+                                             pose.z + offset[2]};
+            };
+            for (const openbus::map::MapSplineSample& sample : samples) {
+                const double localZ = openbus::map::mapSplineElevation(
+                    path.startPosition[2], path.length, path.gradientStartPercent,
+                    path.gradientEndPercent, std::nullopt, sample.distance);
+                segment.points.push_back(toWorldPosition({sample.x, sample.y, localZ}));
+            }
+            segment.spline.tileX = tileX;
+            segment.spline.tileY = tileY;
+            segment.spline.coordinates = map.coordinates;
+            segment.spline.placement.splineId = objectId;
+            segment.pathRules = openbus::map::mapTrafficRulesForPath(rules, path.pathIndex);
+            if (path.trafficSignal) {
+                segment.trafficSignal = path.trafficSignal;
+                auto& signal = *segment.trafficSignal;
+                if (signal.hasConditionalOverrides && signal.program != nullptr) {
+                    signal.controller =
+                        std::make_shared<openbus::map::MapTrafficSignalController>(signal.program);
+                    impl_->trafficSignalControllers.push_back(signal.controller);
+                }
+            }
+            if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+                segment.sceneryPathIndex = path.pathIndex;
+                const auto water =
+                    indexedTrafficWaterByTile.find(tileKey(tileX, tileY));
+                if (water != indexedTrafficWaterByTile.end() &&
+                    !openbus::map::mapTrafficRouteSegmentClearsWater(
+                        segment, water->second, map.coordinates.tileSize)) {
+                    recordSkipped(skipped, "map-wide scenery road paths without water clearance",
+                                  "object ID=" + std::to_string(objectId) +
+                                      " path=" + std::to_string(path.pathIndex));
+                    continue;
+                }
+                impl_->roadTrafficLaneNetwork.addSegment(std::move(segment));
+                mapWideRoadSceneryPathIndexes[objectId].insert(path.pathIndex);
+                roadTrafficLaneNetworkDirty = true;
+            } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+                segment.pathWidthMeters =
+                    std::isfinite(path.widthMeters) ? std::max(1.0, path.widthMeters) : 1.0;
+                impl_->humanTrafficLaneNetwork.addSegment(std::move(segment));
+                mapWideHumanSceneryPathIndexes[objectId].insert(path.pathIndex);
+                humanTrafficLaneNetworkDirty = true;
+            }
+        }
+    };
+
+    for (const auto& [objectId, object] : sceneryObjectsById) {
+        if (const auto placement = resolveMapSceneryPlacement(objectId, false)) {
+            addPaths(objectId, object.tileX, object.tileY, placement->assetPath, placement->pose,
+                     object.rules);
+        }
+    }
+    for (const auto& [objectId, object] : attachedObjectsById) {
+        if (const auto placement = resolveMapSceneryPlacement(objectId, false)) {
+            addPaths(objectId, object.tileX, object.tileY, placement->assetPath, placement->pose,
+                     object.rules);
+        }
+    }
+    for (const auto& [tileIndex, tile] : splineAttachmentParentTiles) {
+        for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
+            if (ambiguousMapObjectIds.contains(attachment.id)) {
+                continue;
+            }
+            const auto poses = openbus::map::placeMapSplineAttachment(
+                attachment, tile.splines, tile.reference.x, tile.reference.y, mapSplineResolver,
+                splineCantWidth, map.coordinates);
+            for (const openbus::map::MapSceneryPose& authoredPose : poses) {
+                openbus::map::MapSceneryPose pose = authoredPose;
+                applyTerrainAlignment(pose, attachment.splineTerrainAlign,
+                                      "spline attachment ID=" +
+                                          std::to_string(attachment.id));
+                addPaths(attachment.id, tile.reference.x, tile.reference.y, attachment.assetPath,
+                         pose, attachment.rules);
+            }
+        }
+        (void)tileIndex;
+    }
+}
+
 void MapSceneLoader::applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
                                            const std::string& description) {
     if (!requested) {
@@ -19,15 +122,17 @@ void MapSceneLoader::applyTerrainAlignment(openbus::map::MapSceneryPose& pose, b
 }
 
 std::optional<MapSceneLoader::ResolvedSceneryPlacement>
-MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
+MapSceneLoader::resolveMapSceneryPlacement(int objectId, bool useCache) {
     if (ambiguousMapObjectIds.contains(objectId)) {
         recordSkipped(skipped, "map placements with ambiguous object IDs",
                       "object ID=" + std::to_string(objectId));
         return std::nullopt;
     }
-    const auto cached = resolvedPlacements.find(objectId);
-    if (cached != resolvedPlacements.end()) {
-        return cached->second;
+    if (useCache) {
+        const auto cached = resolvedPlacements.find(objectId);
+        if (cached != resolvedPlacements.end()) {
+            return cached->second;
+        }
     }
     if (!resolvingPlacementIds.insert(objectId).second) {
         recordSkipped(skipped, "[attachObj] parent cycles",
@@ -55,18 +160,16 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
             terrainTileX, terrainTileY,
             pose.x - static_cast<double>(terrainTileX) * map.coordinates.tileSize,
             pose.y - static_cast<double>(terrainTileY) * map.coordinates.tileSize);
-        const std::filesystem::path configPath = resolveSceneryConfigPath(object.assetPath);
-        bool absoluteHeight = false;
-        if (!configPath.empty()) {
-            static_cast<void>(loadSceneryAsset(configPath));
-            absoluteHeight = absoluteHeightSceneryAssets.contains(
-                openbus::pathToUtf8(configPath.lexically_normal()));
-        }
+        const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(object.assetPath);
+        const bool absoluteHeight = metadata != nullptr && metadata->absoluteHeight;
         pose.z = openbus::map::mapSceneryWorldHeight(pose.z, ground.value_or(0.0), absoluteHeight);
         applyTerrainAlignment(pose, object.splineTerrainAlign,
                               "object ID=" + std::to_string(objectId));
-        ResolvedSceneryPlacement resolved{object.assetPath, pose};
-        resolvedPlacements.emplace(objectId, resolved);
+        ResolvedSceneryPlacement resolved{object.assetPath, pose,
+                                          absoluteHeight || ground.has_value()};
+        if (useCache && resolved.worldHeightResolved) {
+            resolvedPlacements.emplace(objectId, resolved);
+        }
         return resolved;
     }
 
@@ -77,7 +180,7 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
         }
         const IndexedAttachedObject& object = attached->second;
         const std::optional<ResolvedSceneryPlacement> parent =
-            resolveMapSceneryPlacement(object.parentId);
+            resolveMapSceneryPlacement(object.parentId, useCache);
         if (!parent.has_value()) {
             return std::nullopt;
         }
@@ -85,34 +188,34 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
         if (object.attachmentIndex < 0) {
             return std::nullopt;
         }
-        const std::filesystem::path parentConfig = resolveSceneryConfigPath(parent->assetPath);
-        if (!parentConfig.empty()) {
-            static_cast<void>(loadSceneryAsset(parentConfig));
-            const auto attachmentDefinitions =
-                sceneryAttachmentPoints.find(openbus::pathToUtf8(parentConfig.lexically_normal()));
-            if (attachmentDefinitions != sceneryAttachmentPoints.end() &&
-                !attachmentDefinitions->second.empty()) {
+        const SceneryObjectConfig* parentMetadata =
+            loadSceneryObjectMetadata(parent->assetPath);
+        if (parentMetadata != nullptr) {
+            if (!parentMetadata->attachmentPoints.empty()) {
                 const std::optional<std::size_t> attachmentOffset =
                     openbus::map::mapSceneryAttachmentPointOffset(
-                        object.attachmentIndex, attachmentDefinitions->second.size());
+                        object.attachmentIndex, parentMetadata->attachmentPoints.size());
                 if (!attachmentOffset.has_value()) {
                     return std::nullopt;
                 }
-                attachment = attachmentDefinitions->second[*attachmentOffset];
+                attachment = parentMetadata->attachmentPoints[*attachmentOffset];
             } else if (object.attachmentIndex != 0) {
                 return std::nullopt;
             }
         } else if (object.attachmentIndex != 0) {
             return std::nullopt;
         }
-        ResolvedSceneryPlacement resolved;
-        resolved.assetPath = object.assetPath;
-        resolved.pose = openbus::map::composeMapAttachedObjectPose(
-            parent->pose, attachment.translation, attachment.rotationDegrees,
-            object.rotationDegrees);
+        ResolvedSceneryPlacement resolved{
+            object.assetPath,
+            openbus::map::composeMapAttachedObjectPose(
+                parent->pose, attachment.translation, attachment.rotationDegrees,
+                object.rotationDegrees),
+            parent->worldHeightResolved};
         applyTerrainAlignment(resolved.pose, object.splineTerrainAlign,
                               "attached object ID=" + std::to_string(objectId));
-        resolvedPlacements.emplace(objectId, resolved);
+        if (useCache && resolved.worldHeightResolved) {
+            resolvedPlacements.emplace(objectId, resolved);
+        }
         return resolved;
     }
 
@@ -141,10 +244,12 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
     if (!parentPose.has_value()) {
         return std::nullopt;
     }
-    ResolvedSceneryPlacement resolved{record->assetPath, *parentPose};
+    ResolvedSceneryPlacement resolved{record->assetPath, *parentPose, true};
     applyTerrainAlignment(resolved.pose, record->splineTerrainAlign,
                           "spline attachment parent ID=" + std::to_string(objectId));
-    resolvedPlacements.emplace(objectId, resolved);
+    if (useCache) {
+        resolvedPlacements.emplace(objectId, resolved);
+    }
     return resolved;
 }
 
@@ -437,22 +542,39 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                             openbus::map::mapTrafficRulesForPath(*placementRules, path.pathIndex);
                     }
                     segment.pathRules = lane.pathRules;
-                    if (tileWater && !openbus::map::mapTrafficRouteSegmentClearsWater(
-                                         lane, *tileWater, map.coordinates.tileSize)) {
+                    const auto indexedPaths =
+                        mapObjectId ? mapWideRoadSceneryPathIndexes.find(*mapObjectId)
+                                    : mapWideRoadSceneryPathIndexes.end();
+                    const bool indexedMapWide =
+                        indexedPaths != mapWideRoadSceneryPathIndexes.end() &&
+                        indexedPaths->second.contains(path.pathIndex);
+                    if (!indexedMapWide && tileWater &&
+                               !openbus::map::mapTrafficRouteSegmentClearsWater(
+                                   lane, *tileWater, map.coordinates.tileSize)) {
                         recordSkipped(skipped, "scenery road paths without water clearance",
                                       tileName +
                                           " object ID=" + std::to_string(mapObjectId.value_or(0)) +
                                           " path=" + std::to_string(path.pathIndex));
-                    } else {
+                    } else if (!indexedMapWide) {
                         roadTrafficLaneNetworkDirty = true;
                         impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
                     }
                 } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
                     openbus::map::MapTrafficRouteSegment lane;
                     lane.points = segment.points;
+                    lane.pathWidthMeters =
+                        std::isfinite(path.widthMeters) ? std::max(1.0, path.widthMeters) : 1.0;
                     lane.trafficSignal = pathSignal;
-                    humanTrafficLaneNetworkDirty = true;
-                    impl_->humanTrafficLaneNetwork.addSegment(std::move(lane));
+                    const auto indexedPaths =
+                        mapObjectId ? mapWideHumanSceneryPathIndexes.find(*mapObjectId)
+                                    : mapWideHumanSceneryPathIndexes.end();
+                    const bool indexedMapWide =
+                        indexedPaths != mapWideHumanSceneryPathIndexes.end() &&
+                        indexedPaths->second.contains(path.pathIndex);
+                    if (!indexedMapWide) {
+                        humanTrafficLaneNetworkDirty = true;
+                        impl_->humanTrafficLaneNetwork.addSegment(std::move(lane));
+                    }
                 }
                 impl_->sceneryTrafficPathSegments.push_back(segment);
             }

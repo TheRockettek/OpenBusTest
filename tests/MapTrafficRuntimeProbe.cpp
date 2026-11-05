@@ -1203,31 +1203,19 @@ void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
     MapPassengerQueueIdentities queueIdentities;
     {
-        MapTrafficRoute curvedPedestrianRoute;
-        MapTrafficRouteSegment curvedPedestrianSegment;
-        curvedPedestrianSegment.points = {{0.0, 0.0, 2.0}, {5.0, 5.0, 2.0}, {10.0, 0.0, 2.0}};
-        const double curvedPedestrianLength = 2.0 * std::hypot(5.0, 5.0);
-        curvedPedestrianRoute.segments.push_back(curvedPedestrianSegment);
-        curvedPedestrianRoute.cumulativeEndDistances.push_back(curvedPedestrianLength);
-        curvedPedestrianRoute.totalLength = curvedPedestrianLength;
-        const MapPassengerPedestrianJourney curvedJourney{
-            std::make_shared<const MapTrafficRoute>(curvedPedestrianRoute), 0.0,
-            curvedPedestrianLength, {10.0, 0.0, 2.0}};
         MapTrafficPose approachStart;
         approachStart.position = {0.0, 0.0, 2.0};
         MapTrafficPose approachEnd;
         approachEnd.position = {10.0, 0.0, 2.0};
-        const auto roadApproach = openbus::app::makePassengerRoadApproach(
-            curvedJourney, approachStart, approachEnd);
-        require(roadApproach.has_value(),
-                "nearby queue and door poses connect to a pedestrian path");
-        const auto roadApproachMidpoint = openbus::app::passengerQueueApproachPose(
-            roadApproach, approachStart, approachEnd,
-            openbus::app::passengerQueueApproachDuration(roadApproach, approachStart,
+        const auto queueApproachMidpoint = openbus::app::passengerQueueApproachPose(
+            std::nullopt, approachStart, approachEnd,
+            openbus::app::passengerQueueApproachDuration(std::nullopt, approachStart,
                                                         approachEnd) *
                 0.5);
-        require(roadApproachMidpoint.position[1] > 4.9,
-                "passenger approach follows the authored pedestrian path instead of crossing it");
+        requireNear(queueApproachMidpoint.position[0], 5.0,
+                    "queue-to-door movement follows the direct approach");
+        requireNear(queueApproachMidpoint.position[1], 0.0,
+                    "queue-to-door movement is not constrained to a pedestrian spline");
         MapTrafficPose smallDoorShift = approachEnd;
         smallDoorShift.position[0] += 0.5;
         require(!openbus::app::passengerApproachTargetChanged(approachEnd, smallDoorShift),
@@ -1240,10 +1228,6 @@ void verifyPassengerServiceBehavior() {
         movedDoor.headingRadians = 0.2;
         require(openbus::app::passengerApproachTargetChanged(approachEnd, movedDoor),
                 "material door rotation triggers passenger approach replanning");
-        MapTrafficPose unsafeEnd = approachEnd;
-        unsafeEnd.position[1] = 3.0;
-        require(!openbus::app::makePassengerRoadApproach(curvedJourney, approachStart, unsafeEnd),
-                "road approach is rejected when a safe path connector is not nearby");
 
         MapTrafficLaneNetwork lanes;
         auto spline = makeSpline(9901, 0, 0, 0.0);
@@ -1254,6 +1238,8 @@ void verifyPassengerServiceBehavior() {
         require(journey && journey->route && journey->destinationDistanceMeters >
                                                  journey->startDistanceMeters,
                 "nearby directed human lane produces a forward pedestrian destination");
+        require(std::abs(journey->lateralOffsetMeters) <= 0.5,
+                "pedestrian movement remains within a one-metre-wide path");
         require(std::hypot(journey->destination[0] - 5.0, journey->destination[1]) <= 200.0,
                 "generated pedestrian destination is within 200 metres of the stop");
         require(!lanes.passengerJourneyNear({9901}, {500.0, 0.0, 2.0}, 5),
@@ -1274,19 +1260,6 @@ void verifyPassengerServiceBehavior() {
         require(std::hypot(connectedJourney->destination[0] - 15.0,
                            connectedJourney->destination[1] - 10.0) <= 2.0,
                 "alternate pedestrian route reaches a safe connector near the door");
-        MapTrafficPose alternateApproachStart;
-        alternateApproachStart.position = {5.0, 0.0, 2.0};
-        MapTrafficPose alternateApproachEnd;
-        alternateApproachEnd.position = {15.0, 10.0, 2.0};
-        const auto alternateApproach = openbus::app::makePassengerRoadApproach(
-            *connectedJourney, alternateApproachStart, alternateApproachEnd);
-        require(alternateApproach.has_value(),
-                "door-aware alternate route builds a complete queue-to-door approach");
-        const auto alternateApproachMidpoint = openbus::app::passengerRoadApproachPose(
-            *alternateApproach,
-            openbus::app::passengerRoadApproachDuration(*alternateApproach) * 0.5);
-        require(alternateApproachMidpoint.position[1] > 5.2,
-                "alternate queue-to-door movement follows the selected pedestrian lane");
         const auto strictJourney = destinationLanes.passengerJourneyBetween(
             {9910, 9911}, {5.0, 1.1, 2.0}, {15.0, 10.0, 2.0}, 4, 0.5, 50.0);
         require(strictJourney && strictJourney->route &&
@@ -1988,25 +1961,27 @@ void verifyPassengerServiceBehavior() {
                         20.0, "each repeated stop call retains its own spaced queue");
             previousCallQueue = firstCallSlot;
         }
-        requireNear(right.position[0], 11.9, "right-hand traffic queues at the right door");
-        requireNear(left.position[0], 8.1, "left-hand traffic queues at the left door");
+        requireNear(right.position[0], 11.8, "right-hand traffic queues at the right door");
+        requireNear(left.position[0], 8.2, "left-hand traffic queues at the left door");
         requireNear(right.position[1], 23.0, "queue follows the actual front entry");
         for (std::size_t slot = 1; slot < 5; ++slot) {
             const auto rightQueued =
                 openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, false, slot);
             const auto leftQueued = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, true, slot);
-            requireNear(rightQueued.position[0], right.position[0],
-                        "right-hand queue stays in a single line beside the bus");
-            requireNear(leftQueued.position[0], left.position[0],
-                        "left-hand queue stays in a single line beside the bus");
-            requireNear(rightQueued.position[1], right.position[1] - 0.7 * slot,
-                        "each passenger queues behind the previous passenger");
+            const double expectedLateral = right.position[0] + 0.75 * (slot % 2);
+            const double expectedForward = right.position[1] - 0.55 * (slot / 2);
+            requireNear(rightQueued.position[0], expectedLateral,
+                        "right-hand queue forms compact columns beside the door");
+            requireNear(leftQueued.position[0], 20.0 - expectedLateral,
+                        "left-hand queue mirrors the compact crowd layout");
+            requireNear(rightQueued.position[1], expectedForward,
+                        "additional queue rows remain compact behind the door");
             requireNear(leftQueued.position[1], rightQueued.position[1],
-                        "both traffic directions preserve the same queue order");
-            requireNear(rightQueued.headingRadians, bus.headingRadians,
-                        "queued passengers face the front of the line");
+                        "both traffic directions preserve the same crowd layout");
+            requireNear(rightQueued.headingRadians, -std::numbers::pi * 0.5,
+                        "queued passengers face the bus door");
         }
-        const MapTrafficPose start{{11.9, 9.0, 1.0}, 0.0};
+        const MapTrafficPose start{{right.position[0], 9.0, 1.0}, 0.0};
         const double duration = openbus::app::passengerApproachDuration(start, right);
         requireNear(duration, 10.0, "approach time follows walking distance");
         requireNear(openbus::app::passengerApproachPose(start, right, 5.0).position[1], 16.0,
@@ -2803,7 +2778,8 @@ void verifyIntegratedPassengerJourney() {
     require(pedestrian && pedestrian->route,
             "integrated passenger fixture resolves a directed pedestrian journey");
     const auto destinationPose = sampleMapTrafficRoute(
-        *pedestrian->route, pedestrian->destinationDistanceMeters, 0.0);
+        *pedestrian->route, pedestrian->destinationDistanceMeters,
+        pedestrian->lateralOffsetMeters);
     require(destinationPose.has_value(), "integrated passenger destination can be sampled");
 
     openbus::app::PassengerNetwork network;

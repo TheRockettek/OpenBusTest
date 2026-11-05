@@ -113,6 +113,14 @@ void runProbe() {
                      (0.45 - joints->hip[2]) * 0.5) &&
                 near(humanSeatAnchorOffset(0.45, *joints, 0.0), 0.0),
             "seated hips align with the cushion while the transition remains continuous");
+    require(near(humanConfiguredSeatHeightOffset(0.75, *joints, 1.0),
+                 joints->hip[2] - 0.75) &&
+                humanConfiguredSeatHeightOffset(0.65, *joints, 1.0) >
+                    humanConfiguredSeatHeightOffset(0.75, *joints, 1.0) &&
+                near(humanConfiguredSeatHeightOffset(0.65, *joints, 0.5),
+                     (joints->hip[2] - 0.65) * 0.5) &&
+                near(humanConfiguredSeatHeightOffset(0.65, *joints, 0.0), 0.0),
+            "lower human seat heights raise the passenger through the seated transition");
     const auto halfway = makeHumanBonePalette(*joints, gait, 0.5);
     const auto halfwayKnee = transformPoint(
         halfway[1], {joints->knee[0], joints->knee[1], joints->knee[2], 1.0});

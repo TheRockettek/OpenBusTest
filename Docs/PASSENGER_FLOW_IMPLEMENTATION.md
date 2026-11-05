@@ -226,8 +226,10 @@ coordinates set the lower-leg gait pivot. Right-elbow and right-hand
 coordinates set approximate forearm and wrist flex pivots while walking; neck
 Y/Z coordinates set an approximate head-stabilization pivot, and waist Y/Z
 coordinates anchor gait-linked torso lean. These controls drive approximate
-mesh deformations rather than native limb animation; human `[seatheight]` and
-voice are not yet applied.
+mesh deformations rather than native limb animation. Human `[seatheight]`
+applies an inverse vertical correction through the seated transition, so lower
+values raise the passenger; representative OMSI visual parity remains
+unverified. Human voice is not yet applied.
 Scheduled AI buses stop at mapped timetable calls and board waiting
 passengers into available seats during an eight-second dwell. Queue consumption
 is serialized each update against the shared remaining count, preventing two

@@ -1413,7 +1413,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         mapRenderer_->drawHumanTrafficActor(
                             scheduledPassengerHumanModels_[passenger.modelIndex %
                                                           scheduledPassengerHumanModels_.size()],
-                            pose, simulation.simulationTime() * 2.0, 1.0);
+                            pose,
+                            openbus::app::passengerWalkingGaitPhase(
+                                passenger.travelledMeters /
+                                openbus::app::passengerApproachSpeedMetersPerSecond),
+                            1.0);
                     }
                 }
             }
@@ -1759,11 +1763,12 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         }
                         mapRenderer_->drawHumanTrafficActor(
                             scheduledPassengerHumanModels_[modelIndex], *passengerPose,
-                            simulation.simulationTime() *
-                                    (gaitWeight == 1.0
-                                         ? 2.0
-                                         : waitingPassengerIdleCycleRadiansPerSecond) +
-                                static_cast<double>(passenger) * 1.7,
+                            gaitWeight == 1.0 && queueApproach
+                                ? openbus::app::passengerWalkingGaitPhase(
+                                      queueApproach->elapsedSeconds)
+                                : simulation.simulationTime() *
+                                          waitingPassengerIdleCycleRadiansPerSecond +
+                                      static_cast<double>(passenger) * 1.7,
                             gaitWeight);
                     }
                 }
@@ -1979,9 +1984,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     if (stopInRange) {
                         const auto passengerPose = samplePassengerTravelPath(
                             path.positions, transition.pathProgress, startHeading, endHeading);
+                        double pathLength = 0.0;
+                        for (std::size_t index = 1; index < path.positions.size(); ++index) {
+                            pathLength += std::hypot(
+                                path.positions[index][0] - path.positions[index - 1][0],
+                                path.positions[index][1] - path.positions[index - 1][1],
+                                path.positions[index][2] - path.positions[index - 1][2]);
+                        }
+                        const double gaitPhase = openbus::app::passengerWalkingGaitPhase(
+                            pathLength * transition.pathProgress /
+                            openbus::app::passengerApproachSpeedMetersPerSecond);
                         mapRenderer_->drawHumanTrafficActor(
                             scheduledPassengerHumanModels_[modelIndex], passengerPose,
-                            simulation.simulationTime() * 2.0,
+                            gaitPhase,
                             1.0 - transition.seatedFraction,
                             openbus::rendering::HumanSeatPose{seatHeight,
                                                              transition.seatedFraction});

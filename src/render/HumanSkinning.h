@@ -44,5 +44,7 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
 HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGaitParameters& gait,
                                       double seatedFraction = 0.0);
 double humanSeatAnchorOffset(double seatHeight, const HumanJoints& joints, double seatedFraction);
+double humanConfiguredSeatHeightOffset(double seatHeight, const HumanJoints& joints,
+                                       double seatedFraction);
 
 } // namespace openbus::rendering

@@ -880,6 +880,8 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
     if (!actor) {
         return false;
     }
+    actor->lateralOffsetMeters = openbus::map::mapTrafficPedestrianLateralOffset(
+        actor->route, humanTrafficActors_.size());
     if (!openbus::map::placeMapTrafficActorNearLooping(*actor, startDistanceMeters, centerX,
                                                        centerY, maximumDistanceMeters, 0.01)) {
         return false;

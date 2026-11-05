@@ -8,6 +8,7 @@
 #include "render/map/PreparedTerrainTexturePaths.h"
 #include "render/map/SharedMapTextureImages.h"
 #include "render/AssetRequestManager.h"
+#include "config/SceneryObjectConfigLoader.h"
 
 #include <exception>
 #include <future>
@@ -160,6 +161,9 @@ class MapSceneLoader {
     struct IndexedSceneryObject {
         std::string assetPath;
         openbus::map::MapSceneryPose pose;
+        std::vector<openbus::map::MapTileRule> rules;
+        int tileX = 0;
+        int tileY = 0;
         bool transformValid = false;
         bool splineTerrainAlign = false;
     };
@@ -168,6 +172,9 @@ class MapSceneLoader {
         int parentId = 0;
         int attachmentIndex = 0;
         std::array<double, 3> rotationDegrees = {};
+        std::vector<openbus::map::MapTileRule> rules;
+        int tileX = 0;
+        int tileY = 0;
         bool transformValid = false;
         bool splineTerrainAlign = false;
     };
@@ -179,6 +186,7 @@ class MapSceneLoader {
     struct ResolvedSceneryPlacement {
         std::string assetPath;
         openbus::map::MapSceneryPose pose;
+        bool worldHeightResolved = true;
     };
 
     // Phases, in execution order.
@@ -188,6 +196,7 @@ class MapSceneLoader {
                           const openbus::map::MapTileCoordinate& priorityCenter,
                           bool waitForCompletion);
     void indexMapContent();
+    void indexSceneryTrafficPathsMapWide();
     bool finishTrafficLaneNetworkPreparation(bool waitForCompletion);
     void buildTileContent(const openbus::map::MapTileReference& tileReference,
                           const openbus::map::MapTileData& tile, PreparedRoadTile& preparedRoads);
@@ -225,11 +234,13 @@ class MapSceneLoader {
                                                                            double worldY) const;
     [[nodiscard]] std::filesystem::path
     resolveSceneryConfigPath(const std::string& assetPath) const;
+    const SceneryObjectConfig* loadSceneryObjectMetadata(const std::string& assetPath);
     const std::vector<std::size_t>& loadSceneryAsset(const std::filesystem::path& configPath);
     const openbus::map::MapSplineProfile* cachedSplineProfile(const std::filesystem::path& path);
     void applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
                                const std::string& description);
-    std::optional<ResolvedSceneryPlacement> resolveMapSceneryPlacement(int objectId);
+    std::optional<ResolvedSceneryPlacement> resolveMapSceneryPlacement(int objectId,
+                                                                       bool useCache = true);
 
     const openbus::map::MapDefinition& map;
     std::size_t centerTileIndex;
@@ -270,6 +281,7 @@ class MapSceneLoader {
     bool loadFinished_ = false;
 
     std::unordered_map<std::string, std::vector<std::size_t>> sceneryAssetBatches;
+    std::unordered_map<std::string, SceneryObjectConfig> sceneryObjectMetadata;
     std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
     std::unordered_map<std::string, std::vector<ModelAttachmentPoint>> sceneryAttachmentPoints;
     std::unordered_map<std::string, std::vector<SceneryObjectTrafficPath>> sceneryTrafficPaths;
@@ -324,6 +336,9 @@ class MapSceneLoader {
     std::unordered_map<int, IndexedSceneryObject> sceneryObjectsById;
     std::unordered_map<int, IndexedAttachedObject> attachedObjectsById;
     std::unordered_map<int, std::size_t> splineAttachmentTileById;
+    std::unordered_map<int, std::unordered_set<std::size_t>> mapWideRoadSceneryPathIndexes;
+    std::unordered_map<int, std::unordered_set<std::size_t>> mapWideHumanSceneryPathIndexes;
+    std::unordered_map<std::uint64_t, openbus::map::WaterData> indexedTrafficWaterByTile;
     std::unordered_map<int, MapObjectRecordKind> mapObjectRecordKindsById;
     std::unordered_set<int> ambiguousMapObjectIds;
     std::unordered_map<int, std::uint64_t> mapObjectTileKeysById;

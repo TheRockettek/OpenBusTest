@@ -89,16 +89,15 @@ inline openbus::map::MapTrafficPose
 passengerDoorQueuePose(const openbus::map::MapTrafficPose& busPose, double entryForward,
                        double vehicleWidth, bool leftHandTraffic, std::size_t queueSlot) {
     const double side = openbus::map::mapTrafficPassengerSideSign(leftHandTraffic);
-    const double lateral = vehicleWidth * 0.5 + 0.7;
-    const double forward = entryForward - 0.7 * static_cast<double>(queueSlot);
+    const double lateral = vehicleWidth * 0.5 + 0.6 +
+                           0.75 * static_cast<double>(queueSlot % 2);
+    const double forward = entryForward - 0.55 * static_cast<double>(queueSlot / 2);
     const auto offset = openbus::map::mapTrafficPassengerWorldOffset(
         leftHandTraffic, busPose.headingRadians, lateral, forward);
     auto result = busPose;
     result.position[0] += offset[0];
     result.position[1] += offset[1];
-    if (queueSlot == 0) {
-        result.headingRadians -= side * std::numbers::pi * 0.5;
-    }
+    result.headingRadians -= side * std::numbers::pi * 0.5;
     return result;
 }
 
@@ -121,6 +120,17 @@ inline double passengerApproachDuration(const openbus::map::MapTrafficPose& star
                                         const openbus::map::MapTrafficPose& end) {
     return std::hypot(end.position[0] - start.position[0], end.position[1] - start.position[1]) /
            passengerApproachSpeedMetersPerSecond;
+}
+
+inline double passengerWalkingGaitPhase(double elapsedSeconds,
+                                        double strideLengthMeters = 1.4) {
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
+        !std::isfinite(strideLengthMeters) || strideLengthMeters <= 0.0) {
+        throw std::invalid_argument("Passenger walking gait inputs are invalid");
+    }
+    return std::fmod(elapsedSeconds * passengerApproachSpeedMetersPerSecond *
+                         2.0 * std::numbers::pi / strideLengthMeters,
+                     2.0 * std::numbers::pi);
 }
 
 inline openbus::map::MapTrafficPose passengerApproachPose(const openbus::map::MapTrafficPose& start,
@@ -374,7 +384,8 @@ inline std::optional<PassengerPedestrianHandoff> makePassengerPedestrianHandoff(
         std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil((last - first) / 0.25)));
     for (std::size_t index = 0; index <= samples; ++index) {
         const double distance = first + (last - first) * static_cast<double>(index) / samples;
-        const auto pose = openbus::map::sampleMapTrafficRoute(*journey.route, distance, 0.0);
+        const auto pose = openbus::map::sampleMapTrafficRoute(
+            *journey.route, distance, journey.lateralOffsetMeters);
         if (!pose) {
             throw std::runtime_error("Cannot sample passenger pedestrian handoff route");
         }
@@ -416,7 +427,7 @@ passengerPedestrianHandoffPose(const PassengerPedestrianHandoff& passenger) {
         passenger.laneStartMeters + std::max(0.0, passenger.travelledMeters - passenger.connectorMeters);
     const auto lanePose = openbus::map::sampleMapTrafficRoute(
         *passenger.journey.route, std::min(routeDistance, passenger.journey.destinationDistanceMeters),
-        0.0);
+        passenger.journey.lateralOffsetMeters);
     if (!lanePose) {
         throw std::runtime_error("Cannot sample passenger pedestrian route");
     }

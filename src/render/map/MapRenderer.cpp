@@ -693,7 +693,7 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
         }
         return Impl::HumanModelConfiguration{modelConfigPath, std::move(configuration),
                                              makeHumanGaitProfile(humanConfig, geometry->values[1]),
-                                             makeHumanJoints(humanConfig)};
+                                             makeHumanJoints(humanConfig), humanConfig.seatHeight};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -737,7 +737,8 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
     Impl::HumanModelConfiguration configuration = std::move(*pendingModel.configuration);
     impl_->pendingHumanTrafficModels.erase(pending);
     loadHumanTrafficModelNow(humanConfigPath, configuration.modelConfigPath,
-                             configuration.configuration, configuration.gait, configuration.joints);
+                             configuration.configuration, configuration.gait, configuration.joints,
+                             configuration.seatHeight);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
@@ -745,7 +746,8 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                            const std::filesystem::path& modelConfigPath,
                                            const ModelConfig& configuration,
                                            const HumanGaitParameters& gait,
-                                           const std::optional<HumanJoints>& joints) const {
+                                           const std::optional<HumanJoints>& joints,
+                                           const std::optional<double>& seatHeight) const {
     const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -1104,6 +1106,7 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     asset.textureImages = std::move(textureImages);
     asset.gait = gait;
     asset.joints = joints;
+    asset.seatHeight = seatHeight;
     asset.standingSkinningReliable = standingSkinningReliable;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {

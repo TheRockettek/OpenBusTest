@@ -954,7 +954,13 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   checkpoint, spline 10813/path 5, is not reachable directly from spline 10810
   either. This points to an absent map source record and a real graph break,
   rather than a turn-radius limit; do not silently skip it and label the route
-  complete.
+  complete. Scenery placement resolution now reads SCO metadata without
+  loading off-window render assets. Direct, `[attachObj]`, and spline-attached
+  scenery road/human paths are indexed map-wide with their authored object and
+  path selectors, and active-tile loading avoids duplicating those lanes.
+  Water clearance is retained; off-window terrain-height and terrain-alignment
+  parity still need validation before treating disconnected timetable routes
+  as complete.
   A live HK West Kowloon 8P diagnostic matches only 5 of 53 represented
   checkpoints and reports a 68.3 m horizontal gap from spline 1596658 to
   1583971. Map-wide indexing currently adds map-spline lanes, but scenery
@@ -1115,9 +1121,12 @@ the outstanding implementation and validation tasks:
   parsing, mesh parsing, and texture decoding are asynchronous; OpenGL upload
   remains on the render thread. Pedestrian skinning uses an approximate gait;
   native animation parity and AI driver model rendering remain open.
-- [ ] **Use remaining `.hum` behavior:** validate and apply links, walk
-  parameters, seat height, mass, and voice; verify human-path field meanings,
-  route continuity, density behavior, and placement on representative maps.
+- [~] **Use remaining `.hum` behavior:** links and walk parameters drive the
+  approximate gait, seated passenger mass affects player-bus physics, and
+  `[seatheight]` now applies an inverse vertical correction during the seated
+  transition (lower values raise the passenger). Voice behavior and native
+  visual parity remain incomplete; verify human-path field meanings, route
+  continuity, density behavior, and placement on representative maps.
 - [ ] **Define contact policy:** reconcile physical player-to-AI collision
   response with the requirement that AI and human traffic remain independent of
   the main bus's state; preserve avoidance without state mutation until that

@@ -186,7 +186,8 @@ class MapRenderer {
     void loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
                                   const std::filesystem::path& modelConfigPath,
                                   const ModelConfig& configuration, const HumanGaitParameters& gait,
-                                  const std::optional<HumanJoints>& joints) const;
+                                  const std::optional<HumanJoints>& joints,
+                                  const std::optional<double>& seatHeight) const;
 
     openbus::map::MapDefinition mapDefinition_;
     struct Impl;

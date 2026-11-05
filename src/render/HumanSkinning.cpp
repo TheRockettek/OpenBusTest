@@ -165,4 +165,12 @@ double humanSeatAnchorOffset(double seatHeight, const HumanJoints& joints, doubl
     return (seatHeight - joints.hip[2]) * std::clamp(seatedFraction, 0.0, 1.0);
 }
 
+double humanConfiguredSeatHeightOffset(double seatHeight, const HumanJoints& joints,
+                                       double seatedFraction) {
+    if (!std::isfinite(seatHeight) || !std::isfinite(seatedFraction)) {
+        throw std::invalid_argument("Human configured seat height must be finite");
+    }
+    return (joints.hip[2] - seatHeight) * std::clamp(seatedFraction, 0.0, 1.0);
+}
+
 } // namespace openbus::rendering

@@ -3790,6 +3790,26 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
                             0.0, 0.0);
 }
 
+double mapTrafficPedestrianLateralOffset(const MapTrafficRoute& route, std::size_t seed) {
+    if (route.segments.empty()) {
+        return 0.0;
+    }
+    double halfWidth = std::numeric_limits<double>::infinity();
+    for (const MapTrafficRouteSegment& segment : route.segments) {
+        if (!std::isfinite(segment.pathWidthMeters) || segment.pathWidthMeters <= 0.0) {
+            return 0.0;
+        }
+        halfWidth = std::min(halfWidth, segment.pathWidthMeters * 0.5);
+    }
+    if (!std::isfinite(halfWidth) || halfWidth <= 0.0) {
+        return 0.0;
+    }
+    constexpr std::size_t bucketCount = 1001;
+    const std::size_t bucket = (seed * 2654435761ULL + 1013904223ULL) % bucketCount;
+    const double position = static_cast<double>(bucket) / static_cast<double>(bucketCount - 1);
+    return (position * 2.0 - 1.0) * halfWidth;
+}
+
 std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourneyBetween(
     const std::vector<int>& splineIds, const std::array<double, 3>& startPosition,
     const std::array<double, 3>& destinationPosition, std::size_t seed,
@@ -3876,6 +3896,8 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
             if (!route) {
                 continue;
             }
+            const double lateralOffsetMeters =
+                mapTrafficPedestrianLateralOffset(*route, seed);
             if (!destinationPosition) {
                 if (route->totalLength - candidate.distanceAlongLane < 5.0) {
                     continue;
@@ -3883,13 +3905,15 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
                 const double destinationDistance = std::min(
                     route->totalLength - 0.01,
                     candidate.distanceAlongLane + 15.0 + static_cast<double>(seed % 31));
-                const auto destination = sampleMapTrafficRoute(*route, destinationDistance, 0.0);
+                const auto destination =
+                    sampleMapTrafficRoute(*route, destinationDistance, lateralOffsetMeters);
                 if (!destination) {
                     throw std::runtime_error("Cannot sample a pedestrian destination");
                 }
                 return MapPassengerPedestrianJourney{
                     std::make_shared<const MapTrafficRoute>(std::move(*route)),
-                    candidate.distanceAlongLane, destinationDistance, destination->position};
+                    candidate.distanceAlongLane, destinationDistance, destination->position,
+                    lateralOffsetMeters};
             }
 
             const double lastRouteDistance =
@@ -3906,8 +3930,8 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
                 const double destinationDistance =
                     candidate.distanceAlongLane +
                     routeSpan * static_cast<double>(sample) / static_cast<double>(sampleCount);
-                const auto destination =
-                    sampleMapTrafficRoute(*route, destinationDistance, 0.0);
+                const auto destination = sampleMapTrafficRoute(
+                    *route, destinationDistance, lateralOffsetMeters);
                 if (!destination) {
                     throw std::runtime_error("Cannot sample a pedestrian destination");
                 }
@@ -3928,7 +3952,7 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
                     bestJourney = MapPassengerPedestrianJourney{
                         routeView,
                         candidate.distanceAlongLane, destinationDistance,
-                        destination->position};
+                        destination->position, lateralOffsetMeters};
                 }
             }
         }

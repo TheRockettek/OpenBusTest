@@ -68,6 +68,7 @@ struct MapTrafficRouteSegment {
     bool reversed = false;
     double pathLateralMeters = 0.0;
     double pathHeightMeters = 0.0;
+    double pathWidthMeters = 1.0;
     MapTrafficPathRules pathRules;
     std::optional<MapTrafficSignalSchedule> trafficSignal;
     std::optional<std::size_t> sceneryPathIndex;
@@ -94,7 +95,10 @@ struct MapPassengerPedestrianJourney {
     double startDistanceMeters = 0.0;
     double destinationDistanceMeters = 0.0;
     std::array<double, 3> destination = {};
+    double lateralOffsetMeters = 0.0;
 };
+
+double mapTrafficPedestrianLateralOffset(const MapTrafficRoute& route, std::size_t seed);
 
 struct MapTrafficDrivingRouteMetadata {
     // Reuse only while the route is unchanged; sampling also depends on each actor's offset.

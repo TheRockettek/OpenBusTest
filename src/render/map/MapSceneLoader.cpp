@@ -1998,6 +1998,10 @@ void MapSceneLoader::indexMapContent() {
                               tileName + ": " + error.what());
             }
         }
+        if (trafficWater) {
+            indexedTrafficWaterByTile.emplace(tileKey(tileReference.x, tileReference.y),
+                                              *trafficWater);
+        }
         impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y,
                                                   map.coordinates);
         std::vector<openbus::map::MapSplinePlacement> roadTrafficSplines;
@@ -2057,6 +2061,7 @@ void MapSceneLoader::indexMapContent() {
                             segment.reversed = pathOffset.reversed;
                             segment.pathLateralMeters = pathOffset.lateralMeters;
                             segment.pathHeightMeters = pathOffset.heightMeters;
+                            segment.pathWidthMeters = 1.0;
                             impl_->humanTrafficLaneNetwork.addSegment(segment);
                             if (pathOffset.bidirectional) {
                                 impl_->humanTrafficLaneNetwork.addSegment(
@@ -2094,6 +2099,9 @@ void MapSceneLoader::indexMapContent() {
             }
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
+            indexed.rules = object.rules;
+            indexed.tileX = tileReference.x;
+            indexed.tileY = tileReference.y;
             indexed.transformValid = object.transformValid;
             indexed.splineTerrainAlign = object.splineTerrainAlign;
             if (const auto pose = openbus::map::placeMapSceneryObject(
@@ -2119,6 +2127,9 @@ void MapSceneLoader::indexMapContent() {
             indexed.parentId = object.attachedToObjectId;
             indexed.attachmentIndex = object.attachPointIndexValue;
             indexed.rotationDegrees = object.rotationDegrees;
+            indexed.rules = object.rules;
+            indexed.tileX = tileReference.x;
+            indexed.tileY = tileReference.y;
             indexed.transformValid = object.transformValid;
             indexed.splineTerrainAlign = object.splineTerrainAlign;
             if (!attachedObjectsById.try_emplace(object.id, std::move(indexed)).second) {
@@ -2162,6 +2173,7 @@ void MapSceneLoader::indexMapContent() {
             ++tile;
         }
     }
+    indexSceneryTrafficPathsMapWide();
     gameLog.Log("Map tile index parsed; connecting road and traffic route networks.");
     roadConnections.finalize();
     impl_->trafficRouteNetwork.finalize();

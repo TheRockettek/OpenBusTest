@@ -223,7 +223,8 @@ void RenderLoop::refreshPassengerWaitingPositions() {
                     startDistance + direction * 0.8 * static_cast<double>(slot), 0.0,
                     maximumDistance);
                 const auto pose =
-                    openbus::map::sampleMapTrafficRoute(*pedestrian->route, distance, 0.0);
+                    openbus::map::sampleMapTrafficRoute(
+                        *pedestrian->route, distance, pedestrian->lateralOffsetMeters);
                 if (!pose) {
                     throw std::runtime_error(
                         "Cannot sample pedestrian queue position near passenger stop");
@@ -386,22 +387,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
             }
             return destination;
         };
-        const auto makeQueueRoadApproach =
-            [this](const openbus::map::MapTrafficPose& start,
-                   const openbus::map::MapTrafficPose& destination,
-                   std::size_t modelIndex)
-            -> std::optional<openbus::app::PassengerRoadApproach> {
-            if (!mapRenderer_ || !mapRenderer_->humanTrafficLaneNetworkReady()) {
-                return std::nullopt;
-            }
-            const auto journey = mapRenderer_->passengerPedestrianJourneyBetween(
-                start.position, destination.position, modelIndex);
-            return journey ? openbus::app::makePassengerRoadApproach(
-                                 *journey, start, destination)
-                           : std::nullopt;
-        };
         const auto updateQueueRoadApproach =
-            [this, &queueDoorPose, &makeQueueRoadApproach](
+            [this, &queueDoorPose](
                 Vehicle* vehicle, int stopId,
                 const openbus::app::WaitingPassenger& rider,
                 PassengerQueueApproachProgress& approach) {
@@ -438,16 +425,6 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                     approach.elapsedSeconds = 0.0;
                     approach.roadApproach.reset();
                     approach.roadApproachAttempted = false;
-                }
-                if (!approach.roadApproachAttempted && mapRenderer_ &&
-                    mapRenderer_->humanTrafficLaneNetworkReady()) {
-                    if (approach.elapsedSeconds > 0.0) {
-                        approach.originPose = currentRenderedPose();
-                        approach.elapsedSeconds = 0.0;
-                    }
-                    approach.roadApproach = makeQueueRoadApproach(
-                        approach.originPose, approach.destinationPose, rider.modelIndex);
-                    approach.roadApproachAttempted = true;
                 }
             };
         if (playerVehicle_ != nullptr && activePlayerPassengerStop_) {
@@ -686,12 +663,16 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                             std::optional<openbus::map::MapPassengerPedestrianJourney> pedestrian;
                             if (cached != passengerPedestrianPaths_.end()) {
                                 pedestrian = cached->second;
+                                pedestrian->lateralOffsetMeters =
+                                    openbus::map::mapTrafficPedestrianLateralOffset(
+                                        *pedestrian->route, rider.modelIndex);
                                 pedestrian->destinationDistanceMeters = std::min(
                                     pedestrian->route->totalLength - 0.01,
                                     pedestrian->startDistanceMeters + 15.0 +
                                         static_cast<double>(rider.modelIndex % 31));
                                 const auto destination = openbus::map::sampleMapTrafficRoute(
-                                    *pedestrian->route, pedestrian->destinationDistanceMeters, 0.0);
+                                    *pedestrian->route, pedestrian->destinationDistanceMeters,
+                                    pedestrian->lateralOffsetMeters);
                                 if (!destination) {
                                     throw std::runtime_error(
                                         "Cannot sample passenger pedestrian destination");
