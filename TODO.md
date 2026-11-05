@@ -729,9 +729,8 @@ for alignment is not mistaken for supporting it.
   `FF_Vib_*`, `Snd_*`,
   `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Brakeforce_*`,
   `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
-  `contactshoe_*`. `PAX_Entry#_Open` and `PAX_Exit#_Open` remain script-owned;
-  OpenBus consumes them for passenger service but does not derive them from
-  door mechanics.
+  `contactshoe_*`. After vehicle scripts update the `door_N` state, OpenBus
+  mirrors it into `PAX_Entry#_Open` and `PAX_Exit#_Open` for passenger service.
 - [~] `PAX_Entry#_Req` and `PAX_Exit#_Req` follow the selected door even on
   multi-door buses. Boarding uses the first configured entry; each alighter
   uses a reachable exit selected from the seat's cabin path, with a nearest-door

@@ -34,6 +34,30 @@ double smoothWeight(double lower, double upper, double value) {
     return t * t * (3.0 - 2.0 * t);
 }
 
+double distanceToSegment(const std::array<double, 3>& point,
+                         const std::array<double, 3>& start,
+                         const std::array<double, 3>& end) {
+    std::array<double, 3> segment;
+    std::array<double, 3> offset;
+    double segmentLengthSquared = 0.0;
+    double projection = 0.0;
+    for (std::size_t axis = 0; axis < point.size(); ++axis) {
+        segment[axis] = end[axis] - start[axis];
+        offset[axis] = point[axis] - start[axis];
+        segmentLengthSquared += segment[axis] * segment[axis];
+        projection += offset[axis] * segment[axis];
+    }
+    const double t = segmentLengthSquared > 1.0e-12
+                         ? std::clamp(projection / segmentLengthSquared, 0.0, 1.0)
+                         : 0.0;
+    double distanceSquared = 0.0;
+    for (std::size_t axis = 0; axis < point.size(); ++axis) {
+        const double difference = point[axis] - (start[axis] + segment[axis] * t);
+        distanceSquared += difference * difference;
+    }
+    return std::sqrt(distanceSquared);
+}
+
 } // namespace
 
 HumanSkinWeights resolveHumanSkinWeights(const ParsedObj& mesh,
@@ -110,13 +134,40 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
                        smoothWeight(std::abs(joints.shoulder[0]) + 0.02 * height,
                                     std::abs(joints.shoulder[0]) + 0.12 * height, x) *
                        smoothWeight(joints.hip[2], joints.hip[2] + 0.15 * height, position[2]);
-    const double lowerArm = smoothWeight(std::abs(joints.elbow[0]) - 0.03 * height,
-                                         std::abs(joints.elbow[0]) + 0.03 * height, x);
+    const double sideSign = side == 0 ? -1.0 : 1.0;
+    const auto shoulder = sideJoint(joints.shoulder, sideSign);
+    const auto elbow = sideJoint(joints.elbow, sideSign);
+    const auto hand = sideJoint(joints.hand, sideSign);
+    const double upperArmDistance = distanceToSegment(position, shoulder, elbow);
+    const double lowerArmDistance = distanceToSegment(position, elbow, hand);
+    const double upperArmAffinity =
+        1.0 - smoothWeight(0.025 * height, 0.10 * height, upperArmDistance);
+    const double lowerArmAffinity =
+        1.0 - smoothWeight(0.025 * height, 0.10 * height, lowerArmDistance);
+    const double armProximity = std::max(upperArmAffinity, lowerArmAffinity) * (1.0 - leg);
+    const double armWeight = std::max(arm, armProximity);
+    const double armAffinity = upperArmAffinity + lowerArmAffinity;
+    const double upperArmFraction =
+        armAffinity > 1.0e-6 ? upperArmAffinity / armAffinity : 1.0;
     weights[side] = static_cast<float>(leg * (1.0 - lowerLeg));
     weights[2 + side] = static_cast<float>(leg * lowerLeg);
-    weights[4 + side] = static_cast<float>(arm * (1.0 - lowerArm));
-    weights[6 + side] = static_cast<float>(arm * lowerArm);
-    weights[8] = static_cast<float>(1.0 - leg - arm);
+    weights[4 + side] = static_cast<float>(armWeight * upperArmFraction);
+    weights[6 + side] = static_cast<float>(armWeight * (1.0 - upperArmFraction));
+    const double torso = std::max(0.0, 1.0 - leg - armWeight);
+    const double waistHeight = std::max(joints.hip[2], joints.waist[2]);
+    double pelvisFraction = 1.0 - smoothWeight(waistHeight - 0.05 * height,
+                                               waistHeight + 0.05 * height, position[2]);
+    double neckFraction =
+        smoothWeight(joints.neck[2] - 0.08 * height, joints.neck[2] + 0.02 * height,
+                     position[2]);
+    const double spineFraction = pelvisFraction + neckFraction;
+    if (spineFraction > 1.0) {
+        pelvisFraction /= spineFraction;
+        neckFraction /= spineFraction;
+    }
+    weights[8] = static_cast<float>(torso * pelvisFraction);
+    weights[9] = static_cast<float>(torso * (1.0 - pelvisFraction - neckFraction));
+    weights[10] = static_cast<float>(torso * neckFraction);
     return weights;
 }
 

@@ -14,12 +14,14 @@
 int main(int argc, char** argv) {
     const bool invalidPath = argc > 1 && std::string(argv[1]) == "invalid-path";
     const bool writeFailure = argc > 1 && std::string(argv[1]) == "write-failure";
+    const bool traceMode = argc > 1 && std::string(argv[1]) == "trace";
     if (writeFailure && !std::filesystem::exists("/dev/full")) {
         return 77;
     }
     const auto directory = openbus::probe::makeProbeDirectory(
         invalidPath ? "openbus_logger_invalid_path_probe"
         : writeFailure ? "openbus_logger_write_failure_probe"
+        : traceMode   ? "openbus_logger_trace_probe"
                        : "openbus_logger_probe");
     const std::filesystem::path path =
         invalidPath ? directory : writeFailure ? std::filesystem::path("/dev/full")
@@ -31,6 +33,16 @@ int main(int argc, char** argv) {
 #endif
     if (environmentResult != 0) {
         std::cerr << "Could not configure log path\n";
+        openbus::probe::removeProbeDirectory(directory);
+        return 1;
+    }
+#ifdef _WIN32
+    const int levelResult = _putenv_s("OPENBUS_LOG_LEVEL", traceMode ? "TRACE" : "DEBUG");
+#else
+    const int levelResult = setenv("OPENBUS_LOG_LEVEL", traceMode ? "TRACE" : "DEBUG", 1);
+#endif
+    if (levelResult != 0) {
+        std::cerr << "Could not configure log level\n";
         openbus::probe::removeProbeDirectory(directory);
         return 1;
     }
@@ -57,6 +69,7 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    logger.Trace("trace message");
     logger.Debug("debug message");
     logger.Info("info message");
     logger.Warning("warning message");
@@ -82,7 +95,7 @@ int main(int argc, char** argv) {
     std::ifstream file(path);
     const std::string contents{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     bool passed = file.is_open() && errors.str().empty() && contents == console.str();
-    const std::regex prefix(R"(^\[[0-9]+\] \[(DEBUG|INFO|WARNING|ERROR)\] Probe .+$)");
+    const std::regex prefix(R"(^\[[0-9]+\] \[(TRACE|DEBUG|INFO|WARNING|ERROR)\] Probe .+$)");
     std::istringstream lines(contents);
     std::string line;
     int count = 0;
@@ -96,6 +109,8 @@ int main(int argc, char** argv) {
              "[INFO] Probe legacy message", "[WARNING] Probe explicit warning"}) {
         passed = passed && contents.find(expected + '\n') != std::string::npos;
     }
+    passed = passed &&
+             ((contents.find("[TRACE] Probe trace message\n") != std::string::npos) == traceMode);
     for (int writer = 0; writer < 4; ++writer) {
         for (int entry = 0; entry < 20; ++entry) {
             const std::string expected = "[DEBUG] Probe worker " + std::to_string(writer) + ":" +
@@ -105,7 +120,7 @@ int main(int argc, char** argv) {
                      contents.find(expected, position + expected.size()) == std::string::npos;
         }
     }
-    passed = passed && count == 86;
+    passed = passed && count == (traceMode ? 87 : 86);
     file.close();
     openbus::probe::removeProbeDirectory(directory);
     if (!passed) {

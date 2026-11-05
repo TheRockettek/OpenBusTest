@@ -259,7 +259,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     const auto tileStart = std::chrono::steady_clock::now();
     const int tileX = tileReference.x;
     const int tileY = tileReference.y;
-    gameLog.Debug("Map content tile " + tileLabel(tileX, tileY) + ": " +
+    gameLog.Trace("Map content tile " + tileLabel(tileX, tileY) + ": " +
                   openbus::pathToUtf8(tileReference.textPath));
     TraceScope tileTrace("map", "MapRenderer.processTile");
     ++tilesProcessed;
@@ -787,7 +787,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     for (auto& [batchKey, geometry] : preparedRoads.geometryByBatch) {
         roadVertices.emplace(batchKey, std::move(geometry));
     }
-    gameLog.Debug("Map content tile loaded: " + tileName +
+    gameLog.Trace("Map content tile loaded: " + tileName +
                   "; loaded tiles=" + std::to_string(tilesProcessed) +
                   ", scenery=" + std::to_string(sceneryPlacementsParsed) +
                   ", splines=" + std::to_string(splinePlacementsParsed) +

@@ -455,12 +455,16 @@ bool PlayerTimetableCatalog::update(const std::vector<PassengerStopRouteState>& 
         const auto& routeByKey = routeByLineAndKey.at(line.name);
         for (std::size_t courseIndex = 0; courseIndex < courses.size(); ++courseIndex) {
             PlayerTimetableCatalogCourse course{courseIndex, {}};
+            std::vector<openbus::map::MapAiTimetableCourseTrip> includedTrips;
             for (std::size_t tripIndex = 0; tripIndex < courses[courseIndex].trips.size();
                  ++tripIndex) {
                 const auto& trip = courses[courseIndex].trips[tripIndex];
                 const auto route = routeByKey.find(trip.timetableKey);
-                if (route != routeByKey.end())
+                if (route != routeByKey.end() &&
+                    std::ranges::find(includedTrips, trip) == includedTrips.end()) {
                     course.trips.push_back({tripIndex, route->second});
+                    includedTrips.push_back(trip);
+                }
             }
             std::ranges::stable_sort(course.trips, [&](const PlayerTimetableCatalogTrip& first,
                                                        const PlayerTimetableCatalogTrip& second) {

@@ -53,6 +53,21 @@ void requireNear(double actual, double expected, const char* message) {
     }
 }
 
+void verifyPlayerPassengerApproachSpeedLimit() {
+    using openbus::app::playerPassengerCanApproachStop;
+    require(playerPassengerCanApproachStop(0.0, 0.0),
+            "passengers approach a stationary bus");
+    require(playerPassengerCanApproachStop(5.0, 10.0) &&
+                playerPassengerCanApproachStop(-5.0, 10.0),
+            "passengers approach at the speed and distance limits");
+    require(!playerPassengerCanApproachStop(5.01, 5.0),
+            "passengers do not approach a bus above the speed limit");
+    require(!playerPassengerCanApproachStop(1.0, 10.01),
+            "passengers do not approach a bus outside the arrival radius");
+    require(!playerPassengerCanApproachStop(1.0, -1.0),
+            "passenger approach rejects invalid negative distances");
+}
+
 void verifyRearAxleTrafficPose() {
     using namespace openbus::map;
     for (const double direction : {-1.0, 1.0}) {
@@ -1185,6 +1200,16 @@ void verifyPlayerTimetableController() {
                 catalog.lines[0].courses[0].trips[1].tripIndex == 0 &&
                 catalog.lines[0].courses[0].trips[1].routeIndex == 1,
             "catalog sorts matched course trips by departure time");
+    const std::vector<openbus::map::MapAiTimetableCourse> duplicateTrips{
+        {"duplicate entries",
+         {{"hof-trip", 0, 480.0}, {"hof-trip", 0, 480.0}, {"hof-trip", 1, 480.0}}}};
+    catalog.invalidate();
+    require(catalog.update(hofRoutes, duplicateTrips, hof) &&
+                catalog.lines.size() == 1 &&
+                catalog.lines[0].courses[0].trips.size() == 2 &&
+                catalog.lines[0].courses[0].trips[0].tripIndex == 0 &&
+                catalog.lines[0].courses[0].trips[1].tripIndex == 2,
+            "catalog drops exact duplicate Tour trips but retains distinct profile variants");
     const auto ambiguousMatch = analyzePassengerRouteHof(tripKeyLine, ambiguousHof);
     require(ambiguousMatch.status == PassengerHofMatchStatus::AmbiguousLines &&
                 ambiguousMatch.matchingSequences == 2,
@@ -1885,10 +1910,10 @@ void verifyPassengerServiceBehavior() {
         }
     }
     {
-        require(openbus::app::playerPassengerStopArrivalRadiusMeters == 20.0 &&
+        require(openbus::app::playerPassengerStopArrivalRadiusMeters == 10.0 &&
                     openbus::app::playerPassengerStopReleaseRadiusMeters >
                         openbus::app::playerPassengerStopArrivalRadiusMeters,
-                "player stop allows a 20-metre approach with a larger release radius");
+                "player stop allows a 10-metre approach with a larger release radius");
         const auto floor = openbus::app::passengerCabinStandingPoint(
             {-0.8875, 4.3534, 3.0557}, 0.45);
         const auto modelPoint = openbus::app::passengerCabinModelPoint(floor);
@@ -8013,6 +8038,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--passenger-service") {
+            verifyPlayerPassengerApproachSpeedLimit();
             verifyPassengerSideOffsets();
             verifyPassengerStopDepartureHandshake();
             verifyPassengerDoorGating();
@@ -8039,6 +8065,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         using namespace openbus::map;
+        verifyPlayerPassengerApproachSpeedLimit();
         verifyRearAxleTrafficPose();
         verifyPassengerSideOffsets();
         verifyPassengerStopDepartureHandshake();

@@ -50,6 +50,7 @@ void Vehicle::updateScripts(bool isAiVehicle) {
             }
         }
     }
+    openbus::app::vehicle::synchronizePassengerDoorOpenVariables(variables);
 }
 
 Vehicle::DeferredTrafficInitializationStep Vehicle::finishDeferredTrafficInitialization() {

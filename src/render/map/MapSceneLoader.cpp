@@ -1291,7 +1291,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
             pendingTileRoadRequests.erase(roadRequest);
         }
         tilePreparationFailures.erase(key);
-        gameLog.Debug("Map phase: loading active tile " +
+        gameLog.Trace("Map phase: loading active tile " +
                       tileLabel(tileReference->x, tileReference->y) + ".");
         const auto roadData = preparedTileRoads.find(key);
         if (roadData == preparedTileRoads.end()) {
@@ -1813,7 +1813,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                     preparedTextureErrors.try_emplace(imageKey, std::move(error));
                 }
             }
-            gameLog.Debug("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
+            gameLog.Trace("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
                           openbus::pathToUtf8(tile.terrainPath) +
                           "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
                           ", elapsed=" + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
@@ -1983,7 +1983,7 @@ void MapSceneLoader::indexMapContent() {
     for (std::size_t tileReferenceIndex = 0; tileReferenceIndex < map.tiles.size();
          ++tileReferenceIndex) {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
-        gameLog.Debug("Map index tile " + std::to_string(tileReferenceIndex + 1) + "/" +
+        gameLog.Trace("Map index tile " + std::to_string(tileReferenceIndex + 1) + "/" +
                       std::to_string(map.tiles.size()) + ": " +
                       openbus::pathToUtf8(tileReference.textPath) +
                       "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");

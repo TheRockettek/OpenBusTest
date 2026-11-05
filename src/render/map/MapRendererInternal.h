@@ -282,7 +282,6 @@ struct MapRenderer::Impl {
         HumanGaitParameters gait;
         std::optional<HumanJoints> joints;
         std::optional<double> seatHeight;
-        bool standingSkinningReliable = false;
     };
 
     struct HumanModelConfiguration {

@@ -16,8 +16,18 @@ namespace openbus::app {
 
 inline constexpr double passengerApproachSpeedMetersPerSecond = 1.4;
 inline constexpr double passengerSeatTransitionPortion = 0.2;
-inline constexpr double playerPassengerStopArrivalRadiusMeters = 20.0;
+inline constexpr double playerPassengerStopArrivalRadiusMeters = 10.0;
 inline constexpr double playerPassengerStopReleaseRadiusMeters = 25.0;
+inline constexpr double playerPassengerApproachSpeedLimitMetersPerSecond = 5.0;
+
+inline bool playerPassengerCanApproachStop(double speedMetersPerSecond,
+                                           double distanceMeters) {
+    return std::isfinite(speedMetersPerSecond) && std::isfinite(distanceMeters) &&
+           std::abs(speedMetersPerSecond) <=
+               playerPassengerApproachSpeedLimitMetersPerSecond &&
+           distanceMeters >= 0.0 &&
+           distanceMeters <= playerPassengerStopArrivalRadiusMeters;
+}
 
 inline std::size_t passengerCoinVisualBurstCount(double previousCount, double currentCount) {
     if (!std::isfinite(previousCount) || !std::isfinite(currentCount) || previousCount < 0.0 ||

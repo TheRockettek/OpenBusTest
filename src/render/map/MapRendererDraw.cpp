@@ -168,11 +168,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
     gait.phaseRadians = gaitPhaseRadians;
     gait.weight = gaitWeight;
     const std::optional<HumanBonePalette> palette =
-        canSit ? std::optional<HumanBonePalette>(
-                     makeHumanBonePalette(seatedJoints, gait, seatedFraction))
-        : model->second.joints
-            ? std::optional<HumanBonePalette>(makeHumanBonePalette(*model->second.joints, gait))
-            : std::nullopt;
+        makeHumanBonePalette(seatedJoints, gait, seatedFraction);
     const auto drawBatches = [&](bool transparent) {
         for (const std::size_t batchIndex : model->second.batchIndexes) {
             const Impl::ModelBatch& batch = impl_->sceneryBatches[batchIndex];
@@ -182,9 +178,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             }
             const GLuint weightBuffer = canSit && batch.seatedSkinWeightBuffer != 0
                                             ? batch.seatedSkinWeightBuffer
-                                        : model->second.standingSkinningReliable
-                                            ? batch.skinWeightBuffer
-                                            : 0;
+                                            : batch.skinWeightBuffer;
             const HumanSkinDraw skin{weightBuffer, palette ? &*palette : nullptr};
             drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
                            batch.alpha, batch.alphaMode, batch.cullBackFaces, gait, 1.0,

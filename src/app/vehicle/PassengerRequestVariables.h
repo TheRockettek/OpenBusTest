@@ -27,6 +27,14 @@ inline bool passengerDoorIsOpen(const Variables& variables, PassengerDoorKind ki
     return variables.get(prefix + std::to_string(*doorIndex) + "_open") > 0.5F;
 }
 
+inline void synchronizePassengerDoorOpenVariables(Variables& variables) {
+    for (std::size_t index = 0; index < openbus::scripting::passengerDoorSlotCount; ++index) {
+        const float open = variables.get("door_" + std::to_string(index)) > 0.5F ? 1.0F : 0.0F;
+        variables.set("pax_entry" + std::to_string(index) + "_open", open);
+        variables.set("pax_exit" + std::to_string(index) + "_open", open);
+    }
+}
+
 inline PassengerRequestVariables
 passengerRequestVariables(std::optional<std::size_t> entryDoor,
                           std::optional<std::size_t> exitDoor, bool atPassengerStop,

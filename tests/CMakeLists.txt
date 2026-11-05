@@ -54,6 +54,7 @@ if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 add_test(NAME OpenBusLoggerProbe.invalid-path COMMAND OpenBusLoggerProbe invalid-path)
 add_test(NAME OpenBusLoggerProbe.write-failure COMMAND OpenBusLoggerProbe write-failure)
+add_test(NAME OpenBusLoggerProbe.trace COMMAND OpenBusLoggerProbe trace)
 set_tests_properties(OpenBusLoggerProbe.write-failure PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusVariablesProbe VariablesProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp

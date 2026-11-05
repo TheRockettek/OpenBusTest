@@ -53,6 +53,23 @@ int main() {
         std::cerr << "door gating did not use the selected configured slot\n";
         return 1;
     }
+    variables.set("door_0", 1.0F);
+    variables.set("door_1", 0.0F);
+    openbus::app::vehicle::synchronizePassengerDoorOpenVariables(variables);
+    if (!passengerDoorIsOpen(variables, PassengerDoorKind::Entry, 0) ||
+        !passengerDoorIsOpen(variables, PassengerDoorKind::Exit, 0) ||
+        passengerDoorIsOpen(variables, PassengerDoorKind::Entry, 1) ||
+        passengerDoorIsOpen(variables, PassengerDoorKind::Exit, 1)) {
+        std::cerr << "vehicle door state was not synchronized to passenger door variables\n";
+        return 1;
+    }
+    variables.set("door_0", 0.0F);
+    openbus::app::vehicle::synchronizePassengerDoorOpenVariables(variables);
+    if (passengerDoorIsOpen(variables, PassengerDoorKind::Entry, 0) ||
+        passengerDoorIsOpen(variables, PassengerDoorKind::Exit, 0)) {
+        std::cerr << "closed vehicle door left passenger door variables open\n";
+        return 1;
+    }
     const std::string unsupportedSuffix =
         std::to_string(openbus::scripting::passengerDoorSlotCount) + "_req";
     if (variables.has("pax_entry" + unsupportedSuffix) ||

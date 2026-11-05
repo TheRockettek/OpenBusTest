@@ -130,9 +130,13 @@ void runProbe() {
     const auto legWeights = inferHumanSkinWeights({0.1, 0.0, 0.2}, *joints, 1.7);
     const auto bodyWeights = inferHumanSkinWeights({0.0, 0.0, 1.1}, *joints, 1.7);
     const auto armWeights = inferHumanSkinWeights({0.6, 0.0, 1.3}, *joints, 1.7);
-    require(near(legWeights[3], 1.0) && near(bodyWeights[8], 1.0) &&
+    const auto upperArmWeights = inferHumanSkinWeights({0.2, -0.03, 1.34}, *joints, 1.7);
+    const auto headWeights = inferHumanSkinWeights({0.0, 0.0, 1.6}, *joints, 1.7);
+    require(near(legWeights[3], 1.0) && near(bodyWeights[9], 1.0) &&
                 armWeights[7] > 0.99F,
-            "fallback skinning assigns legs, torso and arms to their respective bones");
+            "fallback skinning assigns legs, chest and lower arms to their respective bones");
+    require(upperArmWeights[5] > 0.99F && headWeights[10] > 0.99F,
+            "fallback skinning animates upper arms and head separately from the pelvis");
     const auto blendedWeights = inferHumanSkinWeights({-0.1, 0.0, joints->hip[2]}, *joints, 1.7);
     double weightSum = 0.0;
     for (const float value : blendedWeights) {

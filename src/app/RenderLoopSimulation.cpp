@@ -351,16 +351,30 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
             }
         }
         const auto queueDoorPose = [this, &simulation, &scheduledStopVehicles](
-                                       Vehicle* vehicle, std::size_t queueSlot)
+                                       Vehicle* vehicle, std::size_t queueSlot,
+                                       const openbus::map::MapTrafficPose* targetBusPose)
             -> std::optional<openbus::map::MapTrafficPose> {
             if (!mapRenderer_) {
                 return std::nullopt;
             }
             std::optional<openbus::map::MapTrafficPose> destination;
             if (vehicle == playerVehicle_) {
-                destination = playerPassengerDoorQueuePose(
-                    *vehicle, simulation.chassisPose(), mapRenderer_->leftHandTraffic(),
-                    queueSlot);
+                if (targetBusPose) {
+                    destination = passengerConfiguredDoorQueuePose(
+                        *vehicle, *targetBusPose, mapRenderer_->leftHandTraffic(),
+                        vehicle->passengers->configuration().passengerEntryPathPoints,
+                        vehicle->passengers->entryDoor(), queueSlot);
+                    if (!destination) {
+                        destination = passengerDoorQueuePose(
+                            *targetBusPose, vehicle->trafficLengthMeters * 0.3,
+                            vehicle->trafficWidthMeters, mapRenderer_->leftHandTraffic(),
+                            queueSlot);
+                    }
+                } else {
+                    destination = playerPassengerDoorQueuePose(
+                        *vehicle, simulation.chassisPose(), mapRenderer_->leftHandTraffic(),
+                        queueSlot);
+                }
             } else {
                 const auto scheduled = scheduledStopVehicles.find(vehicle);
                 if (scheduled == scheduledStopVehicles.end()) {
@@ -388,11 +402,28 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
             return destination;
         };
         const auto updateQueueRoadApproach =
-            [this, &queueDoorPose](
+            [this, &queueDoorPose, &simulation](
                 Vehicle* vehicle, int stopId,
                 const openbus::app::WaitingPassenger& rider,
                 PassengerQueueApproachProgress& approach) {
-                const auto destination = queueDoorPose(vehicle, rider.queueSlot);
+                std::optional<openbus::map::MapTrafficPose> predictedStopPose;
+                if (vehicle == playerVehicle_ && activePlayerPassengerStop_ != stopId &&
+                    std::abs(simulation.speed()) <=
+                        openbus::app::playerPassengerApproachSpeedLimitMetersPerSecond) {
+                    const auto& route = passengerNetwork_.routes.at(approach.routeIndex);
+                    if (approach.stopCallIndex >= route.stops.size()) {
+                        throw std::logic_error(
+                            "Passenger approach references a missing route stop");
+                    }
+                    predictedStopPose = route.stopPose(approach.stopCallIndex);
+                    if (!predictedStopPose) {
+                        throw std::runtime_error(
+                            "Cannot locate the predicted player passenger stop");
+                    }
+                }
+                const auto destination = queueDoorPose(
+                    vehicle, rider.queueSlot,
+                    predictedStopPose ? &*predictedStopPose : nullptr);
                 if (!destination) {
                     return;
                 }
@@ -445,7 +476,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
             const auto chassis = simulation.chassisPose();
             const double heading = std::atan2(chassis.rotation[0], chassis.rotation[3]);
             nearbyPlayerPassengerStop = passengerNetwork_.findNearestStop(
-                chassis.position, heading, playerPassengerServiceRouteIndex_, 0,
+                chassis.position, heading, playerPassengerServiceRouteIndex_,
+                playerPassengerServiceNextStopIndex_,
                 [this](const auto& stop) {
                     return mapRenderer_ ? mapRenderer_->editorOnlyBusStopPosition(stop.stopId)
                                         : std::nullopt;
@@ -711,8 +743,7 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                 }
             }
             if (activeStop != sharedQueueStops.end() && queue != passengerNetwork_.queues.end() &&
-                serviceRouteIndex && serviceStopIndex && !passengerDestinationPending &&
-                !service.alightingPassenger()) {
+                serviceRouteIndex && serviceStopIndex && !service.alightingPassenger()) {
                 auto& approaches = passengerQueueApproachProgress_[vehicle.get()];
                 std::unordered_set<std::size_t> eligibleModels;
                 const auto& waiting = passengerNetwork_.waitingPassengers(activeStop->second);
@@ -744,8 +775,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                     passengerQueueApproachProgress_.erase(vehicle.get());
                 }
             } else if (vehicle.get() == playerVehicle_ &&
-                       nearbyPlayerPassengerStop.distanceMeters <=
-                           PLAYER_PASSENGER_STOP_ARRIVAL_RADIUS_METERS) {
+                       openbus::app::playerPassengerCanApproachStop(
+                           simulation.speed(), nearbyPlayerPassengerStop.distanceMeters)) {
                 const auto& route =
                     passengerNetwork_.routes.at(nearbyPlayerPassengerStop.routeIndex);
                 const auto& stop = route.stops[nearbyPlayerPassengerStop.stopIndex];
@@ -1679,7 +1710,8 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                     throw std::logic_error("Player passenger-service route is outside its catalog");
                 }
                 nearestStop = passengerNetwork_.findNearestStop(
-                    chassis.position, chassisHeading, playerPassengerServiceRouteIndex_, 0,
+                    chassis.position, chassisHeading, playerPassengerServiceRouteIndex_,
+                    playerPassengerServiceNextStopIndex_,
                     [this](const auto& stop) {
                         return mapRenderer_ ? mapRenderer_->editorOnlyBusStopPosition(stop.stopId)
                                             : std::nullopt;

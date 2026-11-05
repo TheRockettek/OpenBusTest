@@ -5,15 +5,24 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-linux}"
 MEMORY_TRACE_FILE="${OPENBUS_MEMORY_TRACE_FILE:-${ROOT_DIR}/openbus-memory.heaptrack}"
 
+memory_profiling=0
 memory_only=0
 heaptrack_options=()
 for argument in "$@"; do
     case "$argument" in
-        --memory-only) memory_only=1 ;;
-        --raw) heaptrack_options+=(--raw) ;;
+        --memory) memory_profiling=1 ;;
+        --memory-only)
+            memory_profiling=1
+            memory_only=1
+            ;;
+        --raw)
+            memory_profiling=1
+            heaptrack_options+=(--raw)
+            ;;
         -h|--help)
-            printf 'Usage: %s [--memory-only] [--raw]\n' "${BASH_SOURCE[0]}"
-            printf '  --memory-only  Disable automatic CPU trace recording.\n'
+            printf 'Usage: %s [--memory] [--memory-only] [--raw]\n' "${BASH_SOURCE[0]}"
+            printf '  --memory       Capture memory allocations with Heaptrack.\n'
+            printf '  --memory-only  Capture memory without automatic CPU trace recording.\n'
             printf '  --raw          Record raw Heaptrack data for later interpretation.\n'
             exit 0
             ;;
@@ -25,7 +34,7 @@ for argument in "$@"; do
 done
 
 cd "$ROOT_DIR"
-if ! command -v heaptrack >/dev/null 2>&1; then
+if (( memory_profiling )) && ! command -v heaptrack >/dev/null 2>&1; then
     printf 'Heaptrack is required for memory profiling. Install heaptrack, then rerun %s.\n' \
         "${BASH_SOURCE[0]}" >&2
     exit 1
@@ -70,5 +79,9 @@ export OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=2
 
 export OPENBUS_MAP_AI_SPAWN_VISIBLE=1
 
-printf 'Heaptrack output base: %s\n' "$MEMORY_TRACE_FILE"
-exec heaptrack "${heaptrack_options[@]}" -o "$MEMORY_TRACE_FILE" "$BUILD_DIR/OpenBus"
+if (( memory_profiling )); then
+    printf 'Heaptrack output base: %s\n' "$MEMORY_TRACE_FILE"
+    exec heaptrack "${heaptrack_options[@]}" -o "$MEMORY_TRACE_FILE" "$BUILD_DIR/OpenBus"
+fi
+
+exec "$BUILD_DIR/OpenBus"

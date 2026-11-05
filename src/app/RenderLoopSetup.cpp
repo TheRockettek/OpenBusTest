@@ -1064,11 +1064,9 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                         selectedPlayerCourseTripIndex_ = trips.front().tripIndex;
                         selectedPlayerFirstStopIndex_ = 0;
                     }
-                    const auto& trip = course.trips[selectedPlayerCourseTripIndex_];
                     const auto cachedTrip =
                         std::ranges::find(trips, selectedPlayerCourseTripIndex_,
                                           &openbus::app::PlayerTimetableCatalogTrip::tripIndex);
-                    const auto& route = passengerNetwork_.routes[cachedTrip->routeIndex];
                     {
                         const auto tripDisplayLabel = [](const std::string& tripName,
                                                          double departureMinutes) {
@@ -1078,17 +1076,34 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                                    std::to_string((minuteOfDay / 60) % 24) + ":" +
                                    (minute < 10 ? "0" : "") + std::to_string(minute) + ")";
                         };
-                        const std::string tripLabel =
-                            tripDisplayLabel(route.tripName, trip.departureMinutes);
+                        const auto tripOptionLabel = [&](const auto& option) {
+                            const auto& optionTrip = course.trips[option.tripIndex];
+                            const auto& optionRoute =
+                                passengerNetwork_.routes[option.routeIndex];
+                            std::string label = tripDisplayLabel(
+                                optionRoute.tripName, optionTrip.departureMinutes);
+                            const std::size_t duplicateLabelCount = static_cast<std::size_t>(
+                                std::ranges::count_if(trips, [&](const auto& candidate) {
+                                    const auto& candidateTrip = course.trips[candidate.tripIndex];
+                                    const auto& candidateRoute =
+                                        passengerNetwork_.routes[candidate.routeIndex];
+                                    return tripDisplayLabel(candidateRoute.tripName,
+                                                            candidateTrip.departureMinutes) ==
+                                           label;
+                                }));
+                            if (duplicateLabelCount > 1) {
+                                label += " [" + optionRoute.timetableKey + " / profile " +
+                                         std::to_string(optionTrip.profileIndex) + "]";
+                            }
+                            return label;
+                        };
+                        const std::string tripLabel = tripOptionLabel(*cachedTrip);
                         if (ImGui::BeginCombo("Trip", tripLabel.c_str())) {
                             for (const auto& option : trips) {
                                 const std::size_t tripIndex = option.tripIndex;
-                                const auto& optionTrip = course.trips[tripIndex];
-                                const auto& optionRoute =
-                                    passengerNetwork_.routes[option.routeIndex];
-                                const std::string label = tripDisplayLabel(
-                                    optionRoute.tripName, optionTrip.departureMinutes);
+                                const std::string label = tripOptionLabel(option);
                                 const bool selected = tripIndex == selectedPlayerCourseTripIndex_;
+                                ImGui::PushID(static_cast<int>(tripIndex));
                                 if (ImGui::Selectable(label.c_str(), selected)) {
                                     selectedPlayerCourseTripIndex_ = tripIndex;
                                     selectedPlayerFirstStopIndex_ = 0;
@@ -1096,6 +1111,7 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                                 if (selected) {
                                     ImGui::SetItemDefaultFocus();
                                 }
+                                ImGui::PopID();
                             }
                             ImGui::EndCombo();
                         }
@@ -1142,6 +1158,26 @@ void RenderLoop::drawPlayerTimetableSelectionUi() {
                                 selectedTrip->routeIndex, selectedPlayerCourseIndex_,
                                 selectedPlayerCourseTripIndex_, selectedPlayerFirstStopIndex_,
                                 selectedPlayerDriveAsAdditionalBus_};
+                            const auto startingPose =
+                                selectedRoute.stopPose(selectedPlayerFirstStopIndex_);
+                            ImGui::BeginDisabled(!mapBusVehicle_ || !startingPose);
+                            if (ImGui::Button("Teleport bus to selected starting point") &&
+                                startingPose) {
+                                mapBusTeleportRequestPending_ = VehiclePlacement{
+                                    startingPose->position,
+                                    openbus::map::mapTrafficHeadingToVehicleYawDegrees(
+                                        startingPose->headingRadians),
+                                    startingPose->pitchRadians * 180.0 / std::numbers::pi,
+                                    startingPose->rollRadians * 180.0 / std::numbers::pi};
+                            }
+                            ImGui::EndDisabled();
+                            if (!startingPose) {
+                                ImGui::TextUnformatted(
+                                    "The selected starting stop has no usable map position.");
+                            } else if (!mapBusVehicle_) {
+                                ImGui::TextUnformatted(
+                                    "Teleport is available when using the parked map bus.");
+                            }
                         }
                     }
                 } else {
