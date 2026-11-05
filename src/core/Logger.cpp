@@ -2,6 +2,8 @@
 
 #include "core/Environment.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -15,6 +17,36 @@ using namespace std::chrono;
 namespace {
 
 const auto startTime = system_clock::now();
+
+LogLevel configuredMinimumLogLevel() {
+    const char* configuredLevel = openbus::getEnvironment("OPENBUS_LOG_LEVEL");
+    if (configuredLevel == nullptr || *configuredLevel == '\0') {
+        return LogLevel::Debug;
+    }
+    std::string level(configuredLevel);
+    std::transform(level.begin(), level.end(), level.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::toupper(character));
+                   });
+    if (level == "TRACE") {
+        return LogLevel::Trace;
+    }
+    if (level == "DEBUG") {
+        return LogLevel::Debug;
+    }
+    if (level == "INFO") {
+        return LogLevel::Info;
+    }
+    if (level == "WARNING") {
+        return LogLevel::Warning;
+    }
+    if (level == "ERROR") {
+        return LogLevel::Error;
+    }
+    std::cerr << "[WARNING] Logger invalid OPENBUS_LOG_LEVEL '" << configuredLevel
+              << "'; expected TRACE, DEBUG, INFO, WARNING, or ERROR. Using DEBUG.\n";
+    return LogLevel::Debug;
+}
 
 struct LogEntry {
     std::string message;
@@ -32,7 +64,7 @@ class LoggerState {
   public:
     LoggerState()
         : logPath(logFilePath()), logFile(logPath, std::ios::out | std::ios::trunc),
-          worker(&LoggerState::run, this) {
+          minimumLevel(configuredMinimumLogLevel()), worker(&LoggerState::run, this) {
         if (!logFile.is_open()) {
             std::cerr << "[ERROR] Logger could not open log file: " << logPath << '\n';
         }
@@ -64,6 +96,10 @@ class LoggerState {
         condition.notify_one();
     }
 
+    bool shouldLog(LogLevel level) const {
+        return static_cast<int>(level) >= static_cast<int>(minimumLevel);
+    }
+
   private:
     void run() {
         std::unique_lock<std::mutex> lock(mutex);
@@ -93,6 +129,7 @@ class LoggerState {
 
     std::string logPath;
     std::ofstream logFile;
+    LogLevel minimumLevel;
     std::mutex mutex;
     std::condition_variable condition;
     std::deque<LogEntry> entries;
@@ -107,6 +144,8 @@ LoggerState& loggerState() {
 
 const char* levelName(LogLevel level) {
     switch (level) {
+    case LogLevel::Trace:
+        return "TRACE";
     case LogLevel::Debug:
         return "DEBUG";
     case LogLevel::Info:
@@ -135,9 +174,17 @@ void Logger::Log(const std::string& message) {
 }
 
 void Logger::Log(LogLevel level, const std::string& message) {
+    LoggerState& state = loggerState();
+    if (!state.shouldLog(level)) {
+        return;
+    }
     const auto elapsed = duration_cast<milliseconds>(system_clock::now() - startTime).count();
-    loggerState().enqueue("[" + std::to_string(elapsed) + "] [" + levelName(level) + "] " +
-                          moduleName_ + " " + message);
+    state.enqueue("[" + std::to_string(elapsed) + "] [" + levelName(level) + "] " + moduleName_ +
+                  " " + message);
+}
+
+void Logger::Trace(const std::string& message) {
+    Log(LogLevel::Trace, message);
 }
 
 void Logger::Debug(const std::string& message) {

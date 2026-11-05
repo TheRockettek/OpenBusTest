@@ -29,17 +29,17 @@ including bus model CFG keywords selected by `OPENBUS_MODEL_CONFIG`, see the
 ### Map runtime scope
 
 Startup progress is written to the console and `game.log`, including
-configuration loading, renderer initialization, map phases, and each
-terrain/index/content tile. Each log entry includes elapsed milliseconds, a
-severity (`DEBUG`, `INFO`, `WARNING`, or `ERROR`), and its module, for example
-`[123] [WARNING] Game Texture missing`. All levels are written to both outputs;
-severity labels do not filter messages. Set `OPENBUS_LOG_FILE` to change the log
-file path (the file is replaced at startup). If the log file cannot be opened or
-written, the logger reports the failure on standard error and continues writing
-entries to the console. Tile messages include the current file and counts; phase
-summaries and content tile completions include elapsed milliseconds. If loading
-appears stuck after an unhandled-configuration-tag warning, check the subsequent
-progress messages for the active stage or tile. These logs do not require
+configuration loading, renderer initialization, and map phases. Each log entry
+includes elapsed milliseconds, a severity (`TRACE`, `DEBUG`, `INFO`, `WARNING`,
+or `ERROR`), and its module, for example `[123] [WARNING] Game Texture missing`.
+By default, `DEBUG` and more severe messages are written. Set
+`OPENBUS_LOG_LEVEL=TRACE` to include detailed sound-source and per-tile map
+messages, or use `DEBUG`, `INFO`, `WARNING`, or `ERROR` to set another minimum
+severity. Set `OPENBUS_LOG_FILE` to change the log file path (the file is
+replaced at startup). If the log file cannot be opened or written, the logger
+reports the failure on standard error and continues writing entries to the
+console. Periodic map progress summaries remain at `DEBUG`; detailed tile
+messages include the current file and counts. These logs do not require
 performance tracing.
 
 Interactive startup opens an ImGui setup screen. It lists maps with a

@@ -2,13 +2,14 @@
 
 #include <string>
 
-enum class LogLevel { Debug, Info, Warning, Error };
+enum class LogLevel { Trace, Debug, Info, Warning, Error };
 
 class Logger {
   public:
     explicit Logger(const std::string& moduleName);
     void Log(const std::string& message);
     void Log(LogLevel level, const std::string& message);
+    void Trace(const std::string& message);
     void Debug(const std::string& message);
     void Info(const std::string& message);
     void Warning(const std::string& message);

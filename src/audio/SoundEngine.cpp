@@ -393,7 +393,7 @@ struct SoundEngine::Backend {
                         << " rolloff=" << parameters.rolloffFactor
                         << " listener_world=" << formatWorldPosition(lastListenerPosition)
                         << " listener_distance=" << std::setprecision(2) << distance << 'm';
-                soundLog.Debug(message.str());
+                soundLog.Trace(message.str());
             }
         }
         // soundLog.Log("OpenAL playback started: file=" + path.string() + " loop=" +
@@ -490,7 +490,7 @@ struct SoundEngine::Backend {
                         << " reference_distance=" << parameters.referenceDistance
                         << " listener_world=" << formatWorldPosition(lastListenerPosition)
                         << " listener_distance=" << std::setprecision(2) << distance << 'm';
-                soundLog.Debug(message.str());
+                soundLog.Trace(message.str());
             }
         }
     }
