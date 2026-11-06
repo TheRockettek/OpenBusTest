@@ -52,6 +52,7 @@ openbus_add_module(openbus_config
         config/ModelConfigJson.cpp
         config/ModelConfigLoader.cpp
         config/SceneryObjectConfigLoader.cpp
+        config/TextureSurfaceConfigLoader.cpp
         config/VehicleCatalog.cpp
         config/VehicleConfigLoader.cpp
     DEPENDS

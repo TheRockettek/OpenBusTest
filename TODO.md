@@ -623,12 +623,11 @@ for alignment is not mistaken for supporting it.
 
 #### General CFG dialects
 
-- [ ] Add a surface/material CFG path for `[puddles]`, `[moisture]`,
-  texture `[surface]`, and `[NightMapMode]`, including wetness and
-  surface-type data. Scenery `[surface]` and `[nocollision]` affect supported
-  collision geometry, but do not implement texture surface/material physics;
-  SCO `[NightMapMode]` is parsed and retained but not applied. `[maplight]`
-  is consumed without generating tile lightmaps.
+- [~] Add an image-adjacent texture surface CFG loader for `[puddles]`,
+  `[moisture]`, `[surface]`, and `[NightMapMode]`. Wetness markers and
+  validated surface types 0-7 are retained; runtime texture discovery,
+  wetness/material physics, night-map behavior, and SCO `[maplight]` lightmap
+  generation remain unimplemented.
 - [~] Passenger-cabin `[noticketsale]`, `[ticket_sale]`,
   `[ticket_sale_money_point_2]`, and `[ticket_sale_change_point_2]` locations
   and parameters are retained with unsupported-behavior diagnostics. Ticket

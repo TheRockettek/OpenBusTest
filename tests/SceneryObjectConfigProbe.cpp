@@ -1,5 +1,6 @@
 #include "config/SceneryObjectConfigLoader.h"
 #include "config/ModelConfigLoader.h"
+#include "config/TextureSurfaceConfigLoader.h"
 #include "core/Logger.h"
 #include "core/Variables.h"
 #include "ProbeTempDirectory.h"
@@ -87,6 +88,9 @@ int main(int argc, char** argv) {
     const std::filesystem::path externalModelPath = directory / "external.cfg";
     const std::filesystem::path statusPath = directory / "status.sco";
     const std::filesystem::path statusLogPath = directory / "diagnostics.log";
+    const std::filesystem::path surfaceTexturePath = directory / "2_strasse2.bmp";
+    const std::filesystem::path invalidSurfaceTexturePath = directory / "invalid_surface.dds";
+    const std::filesystem::path missingSurfaceTexturePath = directory / "missing_surface.png";
     const std::string statusLogPathText = statusLogPath.string();
 #ifdef _WIN32
     if (_putenv_s("OPENBUS_LOG_FILE", statusLogPathText.c_str()) != 0) {
@@ -276,6 +280,12 @@ int main(int argc, char** argv) {
                   "[maplight]\n0\n0\n0\n0\n0\n0\n0\n"
                   "[unknown_probe_keyword]\n";
     }
+    {
+        std::ofstream output(surfaceTexturePath.string() + ".cfg");
+        output << "[puddles]\n[moisture]\n[surface]\n0\n[NightMapMode]\n1\n";
+        std::ofstream invalid(invalidSurfaceTexturePath.string() + ".cfg");
+        invalid << "[surface]\n8\n[NightMapMode]\n1x\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
     const SceneryObjectConfig cycleFallbackConfiguration =
@@ -297,6 +307,12 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig invalidDetail = loadSceneryObjectFile(invalidDetailPath);
     const SceneryObjectConfig missingDetail = loadSceneryObjectFile(missingDetailPath);
     const SceneryObjectConfig statusConfiguration = loadSceneryObjectFile(statusPath);
+    const auto surfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(surfaceTexturePath);
+    const auto invalidSurfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(invalidSurfaceTexturePath);
+    const auto missingSurfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(missingSurfaceTexturePath);
     openbus::scripting::SceneryObject textureAddressVariables;
     const ModelConfig textureAddressModel =
         loadSceneryObjectConfig(textureAddressPath, directory, textureAddressVariables);
@@ -334,8 +350,16 @@ int main(int argc, char** argv) {
                          statusLog.find("Configuration tag [nightmapmode] recognized but ignored") !=
                              std::string::npos &&
                          statusLog.find("Configuration tag [maplight] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [surface] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [puddles] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [moisture] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [nightmapmode] recognized but ignored") !=
                              std::string::npos,
-                     "SCO ignored statuses are logged");
+                     "SCO and texture surface ignored statuses are logged");
     valid &= require(statusLog.find("Configuration tag [unknown_probe_keyword] unknown") !=
                          std::string::npos,
                      "SCO unknown status is logged");
@@ -345,6 +369,20 @@ int main(int argc, char** argv) {
                      "SCO detail and night-map values are retained and not reparsed as model tags");
     valid &= require(!configuration.complexity && !configuration.nightMapMode,
                      "absent detail and night-map fields remain unspecified");
+    valid &= require(surfaceConfiguration.configFound && surfaceConfiguration.supportsPuddles &&
+                         surfaceConfiguration.supportsMoisture &&
+                         surfaceConfiguration.surfaceType == 0 &&
+                         surfaceConfiguration.nightMapMode == 1 &&
+                         !surfaceConfiguration.diagnostics.hasErrors(),
+                     "texture surface CFG retains wetness markers and numeric surface metadata");
+    valid &= require(invalidSurfaceConfiguration.configFound &&
+                         !invalidSurfaceConfiguration.surfaceType.has_value() &&
+                         !invalidSurfaceConfiguration.nightMapMode.has_value() &&
+                         invalidSurfaceConfiguration.diagnostics.hasErrors(),
+                     "invalid texture surface values are rejected");
+    valid &= require(!missingSurfaceConfiguration.configFound &&
+                         missingSurfaceConfiguration.diagnostics.entries.empty(),
+                     "missing optional texture surface CFGs preserve existing texture behavior");
     const auto detailErrors = [](const SceneryObjectConfig& config) {
         return std::count_if(config.diagnostics.entries.begin(), config.diagnostics.entries.end(),
                              [](const ConfigurationDiagnostic& diagnostic) {
