@@ -132,6 +132,8 @@ struct RoadMeshGeometry {
     int tileY = 0;
     int alphaMode = 0;
     bool textured = false;
+    bool supportsMoisture = false;
+    bool weatherClassified = false;
 };
 
 std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
@@ -269,6 +271,8 @@ struct MapRenderer::Impl {
         double maxZ = 0.0;
         double boundingRadius = 0.0;
         bool cullBackFaces = false;
+        bool supportsMoisture = false;
+        bool weatherClassified = false;
         int tileX = 0;
         int tileY = 0;
         std::size_t sceneryLodIndex = 0;

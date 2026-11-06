@@ -3,6 +3,8 @@
 #include "app/CrashHandler.h"
 #include "core/Environment.h"
 #include "core/Logger.h"
+#include "core/MetarNoaa.h"
+#include "core/WeatherEnvironment.h"
 #include "map/MapCollisionStreamer.h"
 #include "map/MapConfigLoader.h"
 #include "map/MapSplineProfile.h"
@@ -39,12 +41,8 @@
 
 namespace {
 
+using openbus::environmentValue;
 using openbus::pathToUtf8;
-
-std::string environmentValue(const char* name) {
-    const char* value = openbus::getEnvironment(name);
-    return value == nullptr ? std::string{} : std::string(value);
-}
 
 std::filesystem::path captureDirectoryFromEnvironment() {
     const std::string configuredDirectory = environmentValue("OPENBUS_CAPTURE_DIR");
@@ -70,68 +68,6 @@ bool booleanEnvironmentValue(const char* name, bool fallback) {
     }
     throw std::runtime_error(std::string(name) +
                              " must be one of 1/0, true/false, yes/no, or on/off");
-}
-
-struct WeatherSettings {
-    int precipitationType = 0;
-    double precipitationRate = 0.0;
-    double temperatureCelsius = 20.0;
-    double absoluteHumidityGramsPerCubicMeter = 10.0;
-};
-
-double finiteEnvironmentDouble(const char* name, double fallback) {
-    const std::string configuredValue = environmentValue(name);
-    if (configuredValue.empty()) {
-        return fallback;
-    }
-    char* end = nullptr;
-    const double value = std::strtod(configuredValue.c_str(), &end);
-    if (end == configuredValue.c_str() || *end != '\0' || !std::isfinite(value)) {
-        throw std::runtime_error(std::string(name) + " must be a finite number");
-    }
-    return value;
-}
-
-WeatherSettings weatherSettingsFromEnvironment() {
-    std::string weather = environmentValue("OPENBUS_WEATHER");
-    std::transform(weather.begin(), weather.end(), weather.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    WeatherSettings settings;
-    if (weather.empty() || weather == "clear") {
-        settings.precipitationType = 0;
-    } else if (weather == "rain") {
-        settings.precipitationType = 1;
-    } else if (weather == "snow") {
-        settings.precipitationType = 2;
-    } else {
-        throw std::runtime_error("OPENBUS_WEATHER must be clear, rain, or snow");
-    }
-
-    const std::string configuredRate = environmentValue("OPENBUS_WEATHER_RATE");
-    settings.precipitationRate = settings.precipitationType == 0 ? 0.0 : 0.5;
-    if (!configuredRate.empty()) {
-        char* end = nullptr;
-        settings.precipitationRate = std::strtod(configuredRate.c_str(), &end);
-        if (end == configuredRate.c_str() || *end != '\0' ||
-            !std::isfinite(settings.precipitationRate) || settings.precipitationRate < 0.0 ||
-            settings.precipitationRate > 1.0 ||
-            (settings.precipitationType == 0 && settings.precipitationRate != 0.0)) {
-            throw std::runtime_error(
-                "OPENBUS_WEATHER_RATE must be in [0, 1] and non-zero only for rain or snow");
-        }
-    }
-    settings.temperatureCelsius =
-        finiteEnvironmentDouble("OPENBUS_WEATHER_TEMPERATURE", settings.temperatureCelsius);
-    settings.absoluteHumidityGramsPerCubicMeter = finiteEnvironmentDouble(
-        "OPENBUS_WEATHER_ABSHUM", settings.absoluteHumidityGramsPerCubicMeter);
-    if (settings.temperatureCelsius <= -273.15) {
-        throw std::runtime_error("OPENBUS_WEATHER_TEMPERATURE must be above absolute zero");
-    }
-    if (settings.absoluteHumidityGramsPerCubicMeter < 0.0) {
-        throw std::runtime_error("OPENBUS_WEATHER_ABSHUM must be non-negative");
-    }
-    return settings;
 }
 
 int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
@@ -1144,15 +1080,25 @@ int main() {
                     mapDefinition, omsiRootPath(), *world, 2, 2, std::move(preloadedTerrainTiles));
                 simulationTrace.finish();
 
-                const WeatherSettings weather = weatherSettingsFromEnvironment();
-                renderer.SetWeather(weather.precipitationType, weather.precipitationRate,
-                                    weather.temperatureCelsius,
-                                    weather.absoluteHumidityGramsPerCubicMeter);
+                const std::string metarStation = environmentValue("OPENBUS_METAR_STATION");
+                if (!metarStation.empty()) {
+                    applicationLog.Log("Fetching NOAA METAR for station " +
+                                       openbus::noaaMetarStation(metarStation) + ".");
+                    renderer.showStartupStatus("Fetching current NOAA weather report.");
+                }
+                const openbus::WeatherState weather = openbus::weatherFromEnvironment();
+                renderer.SetWeather(weather);
+                if (!metarStation.empty())
+                    renderer.EnableMetarRefresh(metarStation, weather);
                 const bool automaticClutchEnabled =
                     booleanEnvironmentValue("OPENBUS_AUTO_CLUTCH", false);
                 renderer.SetAutoClutch(automaticClutchEnabled);
-                const double sunAltitude = finiteEnvironmentDouble("OPENBUS_SUN_ALTITUDE", 60.0);
-                renderer.SetSunAltitude(sunAltitude);
+                renderer.ConfigureDayNight(
+                    openbus::finiteEnvironmentDouble("OPENBUS_SOLAR_LATITUDE", 52.52));
+                if (!environmentValue("OPENBUS_SUN_ALTITUDE").empty()) {
+                    renderer.SetSunAltitude(
+                        openbus::finiteEnvironmentDouble("OPENBUS_SUN_ALTITUDE", 60.0));
+                }
                 const char* weatherName = weather.precipitationType == 1   ? "rain"
                                           : weather.precipitationType == 2 ? "snow"
                                                                            : "clear";
@@ -1161,9 +1107,19 @@ int main() {
                     ", precipitation rate=" + std::to_string(weather.precipitationRate) +
                     ", temperature C=" + std::to_string(weather.temperatureCelsius) +
                     ", absolute humidity g/m3=" +
-                    std::to_string(weather.absoluteHumidityGramsPerCubicMeter) + ", auto clutch=" +
+                    std::to_string(weather.absoluteHumidityGramsPerCubicMeter) + ", visibility m=" +
+                    (weather.visibilityMeters ? std::to_string(*weather.visibilityMeters)
+                                              : std::string("unknown")) +
+                    ", brightness=" +
+                    (weather.brightness ? std::to_string(*weather.brightness)
+                                        : std::string("unknown")) +
+                    ", auto clutch=" +
                     std::string(automaticClutchEnabled ? "enabled" : "disabled") +
-                    ", sun altitude degrees=" + std::to_string(sunAltitude) + ".");
+                    ", sun altitude=" +
+                    (environmentValue("OPENBUS_SUN_ALTITUDE").empty()
+                         ? std::string("automatic")
+                         : environmentValue("OPENBUS_SUN_ALTITUDE") + " degrees") +
+                    ".");
                 applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
                 renderer.showStartupStatus(
                     "Loading map assets and preparing the spawn-area render tiles.");

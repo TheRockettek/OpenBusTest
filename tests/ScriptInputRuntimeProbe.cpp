@@ -133,23 +133,27 @@ bool check(const VehicleConfig& configuration, const char* backend) {
         std::cerr << backend << ": new-year day or resumed state was not published to scripts\n";
         return false;
     }
+    auto configuredWeather = system.weather();
+    configuredWeather.brightness = 0.25;
+    system.setWeather(configuredWeather);
     for (const auto& [type, rate, available] :
          {std::tuple{1, 0.75, true}, std::tuple{2, 0.25, false},
-          std::tuple{0, 0.0, true}}) {
+          std::tuple{0, 0.125, true}}) {
         system.setWeather(type, rate, 18.5, 6.25);
         system.setAutoClutch(true);
         system.setSunAltitude(-12.5);
         system.setSoundAvailable(available);
         local.updateEnvironment(system);
         runtime.invokeEntryPoint("trigger_system_environment");
-        if (local.get("environment_preciptype") != static_cast<float>(type + 1) ||
+        if (local.get("environment_preciptype") != static_cast<float>(type) ||
             local.get("environment_preciprate") != static_cast<float>(rate) ||
-            local.get("local_preciptype") != static_cast<float>(type + 1) ||
-            local.get("local_preciprate") != static_cast<float>(rate) ||
+            local.get("local_preciptype") != static_cast<float>(type) ||
+            local.get("local_preciprate") != static_cast<float>(type == 0 ? 0.0 : rate) ||
             local.get("environment_temperature") != 18.5F ||
             local.get("environment_abshum") != 6.25F ||
             local.get("environment_autoclutch") != 1.0F ||
             local.get("environment_sunalt") != -12.5F ||
+            local.get("local_brightness") != 0.25F ||
             local.get("environment_nosound") != (available ? 0.0F : 1.0F)) {
             std::cerr << backend << ": environment system variables were not published\n";
             return false;
@@ -523,6 +527,67 @@ bool checkScriptPrecedence(const VehicleConfig& configuration, const char* backe
     return passed;
 }
 
+bool checkAuthoredWeatherSystems(const VehicleConfig& configuration, const char* backend) {
+    if (!selectBackend(backend)) {
+        return false;
+    }
+    SimulationState simulation;
+    auto& system = simulation.sharedVariables();
+    system.setWeather(1, 0.5, 5.0, 6.0);
+    system.updateFrame(1.0F, 0.0F, 0.0F, 0.0F);
+    openbus::scripting::Vehicle first;
+    openbus::scripting::Vehicle second;
+    first.updateEnvironment(system);
+    second.updateEnvironment(system);
+    ScriptRuntime firstRuntime(configuration, first, simulation);
+    ScriptRuntime secondRuntime(configuration, second, simulation);
+    firstRuntime.initialize();
+    secondRuntime.initialize();
+    first.set("heater_power", 2.0F);
+    firstRuntime.update(false);
+    secondRuntime.update(false);
+    if (!firstRuntime.errors().empty() || !secondRuntime.errors().empty() ||
+        first.get("cabinair_temp") != 7.0F || second.get("cabinair_temp") != 5.0F ||
+        first.get("rain_window_norm_wetness") != 0.5F ||
+        second.get("rain_window_norm_wetness") != 0.5F) {
+        std::cerr << backend << ": authored cabin or rain script did not update independently\n";
+        return false;
+    }
+    system.updateFrame(0.0F, 1.0F, 0.0F, 0.0F);
+    firstRuntime.update(false);
+    if (first.get("cabinair_temp") != 7.0F ||
+        first.get("rain_window_norm_wetness") != 0.5F) {
+        std::cerr << backend << ": authored weather script advanced with zero timegap\n";
+        return false;
+    }
+    system.setWeather(0, 0.75, 5.0, 6.0);
+    system.updateFrame(1.0F, 2.0F, 0.0F, 0.0F);
+    first.updateEnvironment(system);
+    second.updateEnvironment(system);
+    first.set("wiper_power", 0.25F);
+    firstRuntime.update(false);
+    secondRuntime.update(false);
+    if (first.get("rain_window_norm_wetness") != 0.25F ||
+        second.get("rain_window_norm_wetness") != 0.5F ||
+        first.get("preciprate") != 0.0F || second.get("preciprate") != 0.0F ||
+        system.get("preciprate") != 0.75F) {
+        std::cerr << backend << ": clear weather caused rain or wiper state leaked\n";
+        return false;
+    }
+    openbus::scripting::Vehicle dryVehicle;
+    dryVehicle.updateEnvironment(system);
+    ScriptRuntime dryRuntime(configuration, dryVehicle, simulation);
+    dryRuntime.initialize();
+    dryRuntime.update(false);
+    if (dryVehicle.get("preciprate") != 0.0F ||
+        dryVehicle.get("rain_window_norm_wetness") != 0.0F) {
+        std::cerr << backend << ": clear weather created wetness from a dry start\n";
+        return false;
+    }
+    return firstRuntime.errors().empty() && secondRuntime.errors().empty() &&
+           dryRuntime.errors().empty();
+}
+
 } // namespace
 
 int main() {
@@ -539,6 +604,18 @@ int main() {
         return 1;
     }
     const auto script = root / "input.osc";
+    const auto weatherScript = root / "weather_systems.osc";
+    {
+        std::ofstream source(weatherScript);
+        source << "{init}\n(L.S.Weather_Temperature) (S.L.Cabinair_Temp)\n{end}\n"
+                  "{frame}\n"
+                  "(L.L.Cabinair_Temp) (L.L.heater_power) (L.S.Timegap) * + "
+                  "(S.L.Cabinair_Temp)\n"
+                  "(L.L.Rain_Window_Norm_Wetness) "
+                  "(L.L.PrecipRate) (L.S.Timegap) * + "
+                  "(L.L.wiper_power) (L.S.Timegap) * - 0 max 1 min "
+                  "(S.L.Rain_Window_Norm_Wetness)\n{end}\n";
+    }
     {
         std::ofstream source(script);
         source << "{trigger:edge}\n(L.L.edge_press) 1 + (S.L.edge_press)\n{end}\n"
@@ -548,6 +625,7 @@ int main() {
                   "(L.S.PrecipRate) (S.L.environment_preciprate)\n"
                   "(L.L.PrecipType) (S.L.local_preciptype)\n"
                   "(L.L.PrecipRate) (S.L.local_preciprate)\n"
+                  "(L.L.Envir_Brightness) (S.L.local_brightness)\n"
                   "(L.S.NoSound) (S.L.environment_nosound)\n"
                   "(L.S.DayOfYear) (S.L.environment_dayofyear)\n"
                   "(L.S.Weather_Temperature) (S.L.environment_temperature)\n"
@@ -701,6 +779,10 @@ int main() {
         std::cerr << error << '\n';
         return 1;
     }
+    if (!convertOscToLua(weatherScript, generatedLuaPath(weatherScript), error)) {
+        std::cerr << error << '\n';
+        return 1;
+    }
     {
         std::ofstream lua(generatedLuaPath(script), std::ios::app);
         lua << "\nfunction trigger_failed_drag() error('expected probe failure') end\n";
@@ -720,6 +802,11 @@ int main() {
     const bool luaTriggersPassed = checkSystemTriggers(configuration, "lua");
     const bool nativePrecedencePassed = checkScriptPrecedence(configuration, "native");
     const bool luaPrecedencePassed = checkScriptPrecedence(configuration, "lua");
+    VehicleConfig weatherConfiguration;
+    weatherConfiguration.sourcePath = root / "weather.bus";
+    weatherConfiguration.scripts = {weatherScript.filename().string()};
+    const bool nativeWeatherPassed = checkAuthoredWeatherSystems(weatherConfiguration, "native");
+    const bool luaWeatherPassed = checkAuthoredWeatherSystems(weatherConfiguration, "lua");
     Logger::Flush();
     std::ifstream logInput(logPath);
     const bool logOpened = logInput.is_open();
@@ -761,6 +848,7 @@ int main() {
                    nativeSceneryPassed && luaSceneryPassed && nativeHeightPassed &&
                    luaHeightPassed && nativeTriggersPassed && luaTriggersPassed &&
                    nativePrecedencePassed && luaPrecedencePassed &&
+                   nativeWeatherPassed && luaWeatherPassed &&
                    warningCountsValid
                ? 0
                : 1;

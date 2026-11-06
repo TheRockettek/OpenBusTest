@@ -1035,12 +1035,25 @@ void RenderLoop::SetWeather(int precipitationType, double precipitationRate,
                                                   absoluteHumidityGramsPerCubicMeter);
 }
 
+void RenderLoop::SetWeather(const openbus::WeatherState& weather) {
+    simulationState_.sharedVariables().setWeather(weather);
+}
+
+void RenderLoop::EnableMetarRefresh(const std::string& station,
+                                    const openbus::WeatherState& initialWeather) {
+    weatherSelection_.enableMetarRefresh(station, initialWeather);
+}
+
 void RenderLoop::SetAutoClutch(bool enabled) {
     simulationState_.sharedVariables().setAutoClutch(enabled);
 }
 
 void RenderLoop::SetSunAltitude(double altitudeDegrees) {
     simulationState_.sharedVariables().setSunAltitude(altitudeDegrees);
+}
+
+void RenderLoop::ConfigureDayNight(double latitudeDegrees) {
+    simulationState_.sharedVariables().configureDayNight(latitudeDegrees);
 }
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
@@ -1103,6 +1116,9 @@ void RenderLoop::RemovePlayerVehicle() {
 }
 
 void RenderLoop::ResetForStartupMenu() {
+    weatherSelection_.discardPending();
+    weatherUiMessage_.clear();
+    weatherUiError_ = false;
     if (playerTimetable_.state) {
         SetPlayerTimetableSelection(std::nullopt);
     }
@@ -1221,6 +1237,10 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
+    weatherPresetRoot_ = omsiRoot;
+    weatherPresets_.clear();
+    weatherPresetsLoaded_ = false;
+    weatherPresetError_.clear();
     mapEntryPoints_ = map.entryPoints;
     selectedMapSpawnEntryPointIndex_ = spawnEntryPointIndex;
     passengerTimetableCourses_.clear();

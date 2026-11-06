@@ -33,6 +33,8 @@ using CompressedTexImage3DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsize
                                           GLsizei, const void*);
 using GetStringiProc = const GLubyte*(APIENTRY*)(GLenum, GLuint);
 using ActiveTextureProc = void (*)(GLenum);
+using BlendFuncSeparateProc = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
+using BlendEquationSeparateProc = void(APIENTRY*)(GLenum, GLenum);
 using GenVertexArraysProc = void (*)(GLsizei, GLuint*);
 using BindVertexArrayProc = void (*)(GLuint);
 using DeleteVertexArraysProc = void (*)(GLsizei, const GLuint*);
@@ -80,6 +82,8 @@ extern CompressedTexImage2DProc pglCompressedTexImage2D;
 extern CompressedTexImage3DProc pglCompressedTexImage3D;
 extern GetStringiProc pglGetStringi;
 extern ActiveTextureProc pglActiveTexture;
+extern BlendFuncSeparateProc pglBlendFuncSeparate;
+extern BlendEquationSeparateProc pglBlendEquationSeparate;
 extern GenVertexArraysProc pglGenVertexArrays;
 extern BindVertexArrayProc pglBindVertexArray;
 extern DeleteVertexArraysProc pglDeleteVertexArrays;

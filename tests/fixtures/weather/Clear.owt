@@ -1,0 +1,25 @@
+[name]
+Clear fixture
+
+[description]
+No precipitation.
+[fog]
+This line is description text, not a fog record.
+[end]
+[fog]
+50000
+1
+[wind]
+360
+0
+[temp]
+15
+5
+[press]
+1013
+[clouds]
+-1
+0
+[precip]
+0
+192

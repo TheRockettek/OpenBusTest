@@ -21,6 +21,7 @@ struct Line {
 class Reader {
   public:
     explicit Reader(const std::filesystem::path& path);
+    explicit Reader(std::istream& input);
 
     bool isOpen() const;
     bool next(Line& line);
@@ -36,6 +37,7 @@ class Reader {
     bool readRaw(Line& line, bool skipBlank = true);
 
     std::ifstream input_;
+    std::istream* stream_ = nullptr;
     std::size_t nextLineNumber_ = 0;
     bool disabled_ = false;
     bool hasPushback_ = false;

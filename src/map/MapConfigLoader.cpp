@@ -1527,7 +1527,7 @@ parseChronoDate(std::string_view value, const std::filesystem::path& configPath)
 }
 
 void recordMapEnvironmentStartDate(MapDefinition& definition, const std::string& value,
-                                  const std::filesystem::path& configPath, std::size_t line) {
+                                   const std::filesystem::path& configPath, std::size_t line) {
     try {
         static_cast<void>(parseChronoDate(value, configPath));
     } catch (const std::exception&) {
@@ -1578,13 +1578,11 @@ void loadMapEnvironmentConfigFile(MapDefinition& definition,
             continue;
         }
         const std::string keyword = section.substr(1, section.size() - 2);
-        if (section == "[sky_textures]" || section == "[cloudtype]" ||
-            section == "[startdate]") {
+        if (section == "[sky_textures]" || section == "[cloudtype]" || section == "[startdate]") {
             openbus::config::logConfigurationTagStatus(
                 format, configPath, sectionLine + 1, keyword,
-                section == "[startdate]"
-                    ? openbus::config::ConfigurationTagStatus::Active
-                    : openbus::config::ConfigurationTagStatus::Ignored,
+                section == "[startdate]" ? openbus::config::ConfigurationTagStatus::Active
+                                         : openbus::config::ConfigurationTagStatus::Ignored,
                 section == "[startdate]"
                     ? "valid environment start date initializes the startup calendar"
                     : "environment assets are retained but not rendered by the runtime");

@@ -398,6 +398,210 @@ void runLightmapProbe(const std::filesystem::path& root) {
           "Alpha scale was not clamped");
 }
 
+void runRoadWeatherProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "Splines");
+    writeSolidTexture(root / "wet.tga", {180, 180, 180});
+    writeSolidTexture(root / "dry.tga", {180, 180, 180});
+    writeSolidTexture(root / "classified.tga", {180, 180, 180});
+    writeSolidTexture(root / "ground.tga", {30, 30, 30});
+    writeText(root / "wet.tga.cfg", "[moisture]\n[surface]\n0\n");
+    writeText(root / "classified.tga.cfg", "[surface]\n0\n");
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nwet.tga\n[texture]\nclassified.tga\n[texture]\ndry.tga\n"
+              "[profile]\n0\n[profilepnt]\n-6\n0\n0\n0\n"
+              "[profilepnt]\n-2\n0\n1\n0\n"
+              "[profile]\n1\n[profilepnt]\n-2\n0\n0\n0\n"
+              "[profilepnt]\n2\n0\n1\n0\n"
+              "[profile]\n2\n[profilepnt]\n2\n0\n0\n0\n"
+              "[profilepnt]\n6\n0\n1\n0\n");
+    writeText(root / "tile.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n1\n0\n0\n5\n1\n5\n0\n10\n"
+              "0\n0\n0\n0\n0\n0\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write road weather terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"ground.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 5, 10, 0, root, simulation, assets);
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    lookAt(5, 10, 10, 5, 10, 0, 0, 1, 0);
+    const auto draw = [&]() {
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer.draw();
+        std::array<std::array<std::uint8_t, 4>, 3> pixels = {};
+        glReadPixels(21, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels[0].data());
+        glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels[1].data());
+        glReadPixels(43, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels[2].data());
+        return pixels;
+    };
+    const auto dry = draw();
+    auto weather = simulation.sharedVariables().weather();
+    weather.omsiGroundWetness = std::array<double, 3>{79.0, 0.0, 0.0};
+    simulation.sharedVariables().setWeather(weather);
+    simulation.sharedVariables().seedRoadWeatherFromPreset();
+    const auto wet = draw();
+    weather.omsiGroundWetness.reset();
+    weather.omsiSnow = true;
+    simulation.sharedVariables().setWeather(weather);
+    simulation.sharedVariables().seedRoadWeatherFromPreset();
+    const auto groundOnlySnow = draw();
+    check(groundOnlySnow == dry, "Ground-only snow changed spline-road shading");
+    weather.omsiSnow = false;
+    weather.omsiSnowOnRoad = true;
+    simulation.sharedVariables().setWeather(weather);
+    simulation.sharedVariables().seedRoadWeatherFromPreset();
+    const auto snow = draw();
+    weather.omsiGroundWetness = std::array<double, 3>{79.0, 0.0, 0.0};
+    simulation.sharedVariables().setWeather(weather);
+    simulation.sharedVariables().seedRoadWeatherFromPreset();
+    const auto wetSnow = draw();
+    simulation.sharedVariables().resetRoadWeather();
+    weather.omsiGroundWetness.reset();
+    weather.omsiSnowOnRoad = false;
+    weather.precipitationType = 2;
+    weather.precipitationRate = 1.0;
+    weather.temperatureCelsius = -5.0;
+    simulation.sharedVariables().setWeather(weather);
+    simulation.sharedVariables().advanceRoadWeather(830.0);
+    const auto partialSnow = draw();
+    simulation.sharedVariables().resetRoadWeather();
+    const auto restored = draw();
+    int wetCount = 0;
+    int snowCount = 0;
+    int unchangedCount = 0;
+    for (std::size_t index = 0; index < dry.size(); ++index) {
+        check(dry[index][0] >= 60 && dry[index] == dry[0],
+              "Road strips do not share the expected dry baseline");
+        if (wet[index][0] + 10 < dry[index][0]) {
+            ++wetCount;
+            check(snow[index][0] > dry[index][0] + 10,
+                  "Moisture-enabled road did not accumulate snow");
+            check(wetSnow[index][0] > wet[index][0] &&
+                      wetSnow[index][0] <= snow[index][0],
+                  "Combined snow and water did not produce bounded road shading");
+        } else {
+            check(wet[index] == dry[index], "Wetness changed a non-moisture road");
+            check(wetSnow[index] == snow[index], "Water changed a non-moisture snowy road");
+        }
+        if (snow[index][0] > dry[index][0] + 10) {
+            ++snowCount;
+            check(partialSnow[index][0] > dry[index][0] &&
+                      partialSnow[index][0] < snow[index][0],
+                  "Snow accumulation did not produce intermediate shading");
+        } else {
+            check(snow[index] == dry[index], "Snow changed an unclassified road");
+            check(partialSnow[index] == dry[index], "Partial snow changed an unclassified road");
+            ++unchangedCount;
+        }
+        check(wet[index][3] == dry[index][3] && snow[index][3] == dry[index][3] &&
+                  partialSnow[index][3] == dry[index][3],
+              "Road weather changed surface alpha");
+    }
+    check(wetCount == 1 && snowCount == 2 && unchangedCount == 1 && restored == dry,
+          "Road weather did not respect classification or restore the dry baseline");
+}
+
+void runTerrainWeatherProbe(const std::filesystem::path& root) {
+    std::array<std::uint8_t, 4> baseDry = {};
+    std::array<std::uint8_t, 4> baseSnow = {};
+    for (const bool layered : {false, true}) {
+        const auto directory = root / (layered ? "layered" : "base");
+        std::filesystem::create_directories(directory);
+        writeSolidTexture(directory / "ground.tga", {80, 80, 80});
+        writeSolidTexture(directory / "layer.tga", {160, 160, 160});
+        writeText(directory / "tile.map", "[version]\n14\n[terrain]\n");
+        const std::array<std::uint8_t, 20> terrain = {1};
+        std::ofstream terrainFile(directory / "tile.terrain", std::ios::binary);
+        terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+        check(static_cast<bool>(terrainFile), "Could not write terrain weather fixture");
+        terrainFile.close();
+        if (layered) {
+            std::array<std::uint8_t, 22> mask = {};
+            mask[2] = 2;
+            mask[12] = mask[14] = 1;
+            mask[16] = 32;
+            mask[17] = 8;
+            mask[18] = mask[19] = mask[20] = 255;
+            mask[21] = 128;
+            std::ofstream maskFile(directory / "tile.map.2.tga", std::ios::binary);
+            maskFile.write(reinterpret_cast<const char*>(mask.data()), mask.size());
+            check(static_cast<bool>(maskFile), "Could not write terrain layer mask");
+        }
+        openbus::map::MapDefinition map;
+        map.rootPath = directory;
+        map.groundTextures.push_back({"ground.tga", "", {}});
+        map.groundTextures.push_back({"layer.tga", "", {}});
+        openbus::map::MapTileReference tile;
+        tile.textPath = directory / "tile.map";
+        tile.terrainPath = directory / "tile.terrain";
+        tile.hasTerrainFile = true;
+        if (layered) {
+            tile.groundTextureSidecars.push_back({"2", directory / "tile.map.2.tga"});
+        }
+        map.tiles.push_back(tile);
+        SimulationState simulation;
+        AssetRequestManager assets;
+        MapRenderer renderer(map, 0, 150, 150, 0, directory, simulation, assets);
+        glViewport(0, 0, 64, 64);
+        glDisable(GL_DITHER);
+        setPerspective(64, 64, 90);
+        lookAt(150, 150, 20, 150, 150, 0, 0, 1, 0);
+        const auto draw = [&]() {
+            glDepthMask(GL_TRUE);
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            renderer.draw();
+            std::array<std::uint8_t, 4> pixel = {};
+            glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+            return pixel;
+        };
+        const auto dry = draw();
+        auto weather = simulation.sharedVariables().weather();
+        weather.omsiSnow = true;
+        weather.omsiSnowOnRoad = false;
+        simulation.sharedVariables().setWeather(weather);
+        simulation.sharedVariables().seedRoadWeatherFromPreset();
+        const auto snow = draw();
+        simulation.sharedVariables().resetRoadWeather();
+        weather.omsiSnow = false;
+        weather.precipitationType = 2;
+        weather.precipitationRate = 1.0;
+        weather.temperatureCelsius = -5.0;
+        simulation.sharedVariables().setWeather(weather);
+        simulation.sharedVariables().advanceRoadWeather(830.0);
+        const auto partialSnow = draw();
+        simulation.sharedVariables().resetRoadWeather();
+        const auto restored = draw();
+        check(dry[0] > 10 && snow[0] > dry[0] + 20 && restored == dry,
+              "Terrain snow did not brighten and restore the ground");
+        check(partialSnow[0] > dry[0] && partialSnow[0] < snow[0],
+              "Terrain snow did not gradually accumulate");
+        if (layered) {
+            check(dry[0] > baseDry[0] + 5, "Terrain weather fixture did not render its layer");
+            check(snow[0] >= baseSnow[0] && snow[0] < baseSnow[0] + 12,
+                  "Snow did not cover the blended terrain layer");
+        } else {
+            baseDry = dry;
+            baseSnow = snow;
+        }
+    }
+}
+
 void runSplineLabelsProbe(const std::filesystem::path& root) {
     std::filesystem::create_directories(root / "model");
     std::filesystem::create_directories(root / "script");
@@ -516,6 +720,9 @@ void runSplineTextProbe(const std::filesystem::path& root) {
               "[texttexture]\n0\nSplineLabelFixture\n1\n1\n0\n255\n0\n0\n"
               "[mesh]\nsurface.x\n[matl]\nbase.tga\n0\n[matl_alpha]\n2\n"
               "[usetexttexture]\n0\n");
+    writeText(root / "free.sco",
+              "[mesh]\nsurface.x\n[matl]\nbase.tga\n0\n"
+              "[matl_freetex]\nbase.tga\nsign_texture\n");
     writeText(root / "Splines" / "Test.sli",
               "[texture]\nbase.tga\n[profile]\n0\n[profilepnt]\n-2\n0\n0\n0\n"
               "[profilepnt]\n2\n0\n1\n0\n");
@@ -528,7 +735,8 @@ void runSplineTextProbe(const std::filesystem::path& root) {
               "[splineAttachement_repeater]\n0\n0\n0\nsign.sco\n103\n0\n2\n5\n5\n"
               "0\n0\n0\n0\n0\n0\n1\nX\n"
               "[splineAttachement_repeater]\n0\n0\n0\nsign.sco\n104\n0\n6\n5\n5\n"
-              "0\n0\n0\n0\n0\n0\n1\n\n");
+              "0\n0\n0\n0\n0\n0\n1\n\n"
+              "[splineAttachement]\n0\nfree.sco\n105\n0\n10\n5\n5\n0\n0\n0\n0\n0\n0\n0\n");
     const std::array<std::uint8_t, 20> terrain = {1};
     std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
     terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
@@ -545,8 +753,8 @@ void runSplineTextProbe(const std::filesystem::path& root) {
     SimulationState simulation;
     AssetRequestManager assets;
     MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
-    check(renderer.renderStats().activeSceneryObjects == 4,
-          "Spline text fixture did not load all four attachments");
+    check(renderer.renderStats().activeSceneryObjects == 5,
+          "Spline text fixture did not load all attachments");
     glViewport(0, 0, 64, 64);
     glDisable(GL_DITHER);
     setPerspective(64, 64, 90);
@@ -561,6 +769,8 @@ void runSplineTextProbe(const std::filesystem::path& root) {
     for (std::size_t index = 0; index < positions.size(); ++index) {
         glReadPixels(positions[index], 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels[index].data());
     }
+    std::array<std::uint8_t, 4> freeDay = {};
+    glReadPixels(61, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, freeDay.data());
     const auto isRed = [](const auto& pixel) {
         return pixel[0] > 80 && pixel[1] < pixel[0] / 3 && pixel[2] < pixel[0] / 3;
     };
@@ -574,6 +784,20 @@ void runSplineTextProbe(const std::filesystem::path& root) {
         throw std::runtime_error(
             "Spline text textures did not reflect regular and repeater placement labels");
     }
+    setWeatherLighting(0.2);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.draw();
+    std::array<std::uint8_t, 4> dark = {};
+    glReadPixels(14, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, dark.data());
+    check(dark[0] > 0 && dark[0] < pixels[0][0] / 2 && dark[3] == pixels[0][3],
+          "Scenery placement text did not darken with weather lighting");
+    std::array<std::uint8_t, 4> freeDark = {};
+    glReadPixels(61, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, freeDark.data());
+    check(freeDay[0] > 100 && freeDark[0] > 0 && freeDark[0] < freeDay[0] / 2 &&
+              freeDark[3] == freeDay[3],
+          "Scenery free texture did not darken with weather lighting");
+    setWeatherLighting(std::nullopt);
 }
 
 void runSplineOwnershipProbe(const std::filesystem::path& root) {
@@ -1211,6 +1435,71 @@ void runNightmapProbe(const std::filesystem::path& root) {
     check(draw(0, 0) == day && draw(0, -1)[2] == day[2] &&
               draw(0, 2)[2] == night[2],
           "Nightmap state was not restored or controller clamping failed");
+    auto weather = simulation.sharedVariables().weather();
+    weather.brightness = 0.5;
+    simulation.sharedVariables().setWeather(weather);
+    setWeatherLighting(weather.brightness);
+    const auto weatherHalf = draw(0, 0);
+    weather.brightness = 0.0;
+    simulation.sharedVariables().setWeather(weather);
+    setWeatherLighting(weather.brightness);
+    const auto weatherNight = draw(0, 0);
+    const auto weatherNightHalf = draw(0, 0.5F);
+    const auto weatherNightFull = draw(0, 1);
+    const auto weatherSelected = draw(1, 0);
+    check(weatherHalf[2][2] == weatherHalf[2][0],
+          "Partial weather brightness overrode scripted nightmap off");
+    check(weatherNight[2][2] == weatherNight[2][0] &&
+              weatherNightHalf[2][2] > weatherNight[2][2] &&
+              weatherNightHalf[2][2] < weatherNightFull[2][2] &&
+              weatherNightFull[2][2] > 250,
+          "Dark weather overrode scripted nightmap off, half, or full");
+    check(weatherNight[3][2] > 250 && weatherSelected[0][0] > 250 &&
+              weatherSelected[1][1] > 250,
+          "Dark weather changed visible-gated or selected-item nightmaps");
+    weather.brightness.reset();
+    simulation.sharedVariables().setWeather(weather);
+    setWeatherLighting(std::nullopt);
+    check(draw(0, 0) == day,
+          "Removing weather brightness did not restore scenery daylight");
+
+    writeText(root / "static.sco", mesh + "[matl_nightmap]\nblue.tga\n");
+    writeText(root / "unrelated.sco",
+              "[script]\n1\nscript\\unrelated.osc\n" + mesh + "[matl_nightmap]\nblue.tga\n");
+    writeText(root / "script" / "unrelated.osc",
+              "{frame}\n1 (S.L.unrelated_variable)\n{end}\n");
+    writeText(root / "static.map",
+              "[version]\n14\n[terrain]\n"
+              "[object]\n0\nstatic.sco\n107\n-2\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\nunrelated.sco\n108\n2\n0\n5\n0\n0\n0\n0\n");
+    openbus::map::MapDefinition staticMap = map;
+    staticMap.tiles[0].textPath = root / "static.map";
+    SimulationState staticSimulation;
+    MapRenderer staticRenderer(staticMap, 0, 0, 0, 0, root, staticSimulation, assets);
+    check(staticRenderer.renderStats().activeSceneryObjects == 2,
+          "Uncontrolled nightmap scenery did not load");
+    const auto drawStatic = [&]() {
+        staticRenderer.updateScripts();
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        staticRenderer.draw();
+        std::array<Pixel, 2> result = {};
+        glReadPixels(26, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result[0].data());
+        glReadPixels(38, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result[1].data());
+        return result;
+    };
+    const auto staticDay = drawStatic();
+    auto staticWeather = staticSimulation.sharedVariables().weather();
+    staticWeather.brightness = 0.0;
+    staticSimulation.sharedVariables().setWeather(staticWeather);
+    setWeatherLighting(staticWeather.brightness);
+    const auto staticNight = drawStatic();
+    check(staticDay[0][3] > 0 && staticDay[1][3] > 0 &&
+              staticNight[0][2] > 250 && staticNight[0][0] < 3 &&
+              staticNight[1][2] > 250 && staticNight[1][0] < 3,
+          "Weather brightness did not activate uncontrolled scenery nightmaps");
+    setWeatherLighting(std::nullopt);
 }
 
 void runBumpmapProbe(const std::filesystem::path& root) {
@@ -1497,6 +1786,8 @@ int main(int argc, char** argv) {
     const bool normals = argc == 2 && std::string_view(argv[1]) == "--normals";
     const bool human = argc == 2 && std::string_view(argv[1]) == "--human-skinning";
     const bool splineLabels = argc == 2 && std::string_view(argv[1]) == "--spline-labels";
+    const bool roadWeather = argc == 2 && std::string_view(argv[1]) == "--road-weather";
+    const bool terrainWeather = argc == 2 && std::string_view(argv[1]) == "--terrain-weather";
     const bool splineText = argc == 2 && std::string_view(argv[1]) == "--spline-text";
     const bool splineOwnership = argc == 2 && std::string_view(argv[1]) == "--spline-ownership";
     const bool splineDependencies =
@@ -1504,7 +1795,8 @@ int main(int argc, char** argv) {
     const bool splineHumanDependencies =
         argc == 2 && std::string_view(argv[1]) == "--spline-human-dependencies";
     if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap && !itemLightmap &&
-        !normals && !human && !splineLabels && !splineText && !splineOwnership &&
+        !normals && !human && !splineLabels && !roadWeather && !terrainWeather &&
+        !splineText && !splineOwnership &&
         !splineDependencies && !splineHumanDependencies) {
         return 2;
     }
@@ -1519,9 +1811,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(
         lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ||
-                splineLabels || splineText || splineOwnership ? 64 : 32,
+                splineLabels || roadWeather || terrainWeather || splineText || splineOwnership ? 64 : 32,
         lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ||
-                splineLabels || splineText || splineOwnership ? 64 : 32,
+                splineLabels || roadWeather || terrainWeather || splineText || splineOwnership ? 64 : 32,
                                           "Scenery material probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
@@ -1549,6 +1841,10 @@ int main(int argc, char** argv) {
                 runItemLightmapProbe(root);
             } else if (splineLabels) {
                 runSplineLabelsProbe(root);
+            } else if (roadWeather) {
+                runRoadWeatherProbe(root);
+            } else if (terrainWeather) {
+                runTerrainWeatherProbe(root);
             } else if (splineText) {
                 runSplineTextProbe(root);
             } else if (splineOwnership) {

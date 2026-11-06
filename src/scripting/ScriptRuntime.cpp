@@ -159,9 +159,10 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
                 (alignment == 0 || alignment == 1)) {
                 configured.alignToFontPixels = alignment == 1;
             } else {
-                impl_->log(LogLevel::Warning, "warning: invalid font-pixel alignment for text texture "
-                                              "slot " +
-                                                  textureSlot + "; using grid alignment");
+                impl_->log(LogLevel::Warning,
+                           "warning: invalid font-pixel alignment for text texture "
+                           "slot " +
+                               textureSlot + "; using grid alignment");
             }
         }
         for (std::size_t channel = 0;

@@ -18,7 +18,7 @@ prove end-to-end rendering or runtime semantics.
 | Texture decoding and materials | Texture formats and selected material behaviors have focused parser/GPU probes, including alpha mode 2, bump maps, environment-map sampling, transparent sorting, CTC texture replacement, and array-layer bounds. Representative-asset parity and difficult overlap cases remain incomplete. | [`TextureLoader.cpp`](src/assets/TextureLoader.cpp), [`CoreRenderer.cpp`](src/render/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp), [`TextureAddressModeProbe.cpp`](tests/TextureAddressModeProbe.cpp), [`MaterialRenderingProbe.cpp`](tests/MaterialRenderingProbe.cpp), [`VehicleDrawSortingProbe.cpp`](tests/VehicleDrawSortingProbe.cpp), [`VehicleMaterialSelectionProbe.cpp`](tests/VehicleMaterialSelectionProbe.cpp), [`AssetRequestManagerProbe.cpp`](tests/AssetRequestManagerProbe.cpp); visual gaps: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
 | Map, terrain, scenery, and roads | Partial: map-wide traffic, lane, and attachment indexes are still built at startup, but terrain, scenery, water, and road render assets are loaded synchronously only as tiles enter the active window. Loaded render assets stay cached after leaving the window for faster re-entry, so memory can grow as more of the map is explored. Startup parses all tile text for the global indexes; active tile content is parsed again on demand. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous. Static text/binary/MSZIP `.x` meshes and distance-selected scenery LODs now have runtime paths; full OMSI attachment/profile semantics and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/map/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/map/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/map/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/map/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/map/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/config/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/scripting/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
-| Weather | Partial first slice: configurable exterior rain/snow particles use the shared `PrecipType` and `PrecipRate` system variables; map weather schedules, fog, windshield effects, and accumulation are not implemented. | [`WeatherEffects.cpp`](src/render/WeatherEffects.cpp), [`RenderLoopDraw.cpp`](src/app/RenderLoopDraw.cpp) | [`WeatherEffectsProbe.cpp`](tests/WeatherEffectsProbe.cpp); rain and snow visually validated in app captures |
+| Weather | Partial support: weather presets and METAR update shared variables, approximate distance fog, lighting, procedural clouds, GPU precipitation, terrain snow, and classified spline-road traction and shading with water and snow accumulation. Map weather schedules and independent windshield effects are not implemented. | [`WeatherPresetLoader.cpp`](src/config/WeatherPresetLoader.cpp), [`CoreRenderer.cpp`](src/render/CoreRenderer.cpp), [`RoadWeather.cpp`](src/physics/RoadWeather.cpp) | [`WeatherPresetProbe.cpp`](tests/WeatherPresetProbe.cpp), [`BusSimulationContactProbe.cpp`](tests/BusSimulationContactProbe.cpp), [`MapSceneryTexcoordRenderingProbe.cpp`](tests/MapSceneryTexcoordRenderingProbe.cpp), [`CloudRenderingProbe.cpp`](tests/CloudRenderingProbe.cpp), [`PrecipitationRenderingProbe.cpp`](tests/PrecipitationRenderingProbe.cpp) |
 | Sound | Player sound runtime is active; AI vehicles select `[sound_ai]` when configured and otherwise fall back to `[sound]`. Full OMSI sound and AI event coverage remain incomplete. | [`VehicleSoundBank.cpp`](src/audio/VehicleSoundBank.cpp), [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp), [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp) |
 | AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, provisional right-before-left precedence at equal-priority straight crossings, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the maximum reserved pool is fixed at startup, and unfilled reservations are retried as connected road lanes stream in. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
 
@@ -519,6 +519,7 @@ from engine modules.
 - GLFW and OpenGL
 - OpenAL
 - Lua 5.1 on Linux (Windows uses the bundled Lua 5.1 runtime)
+- libcurl development files on Linux (Windows uses WinHTTP)
 
 On Windows with vcpkg, install standalone LLVM (for `clang-cl.exe`) and the
 Visual Studio C++ build tools (for the MSVC headers, libraries, and linker):
@@ -537,7 +538,7 @@ select specific installations.
 On Debian or Ubuntu, install the native development packages:
 
 ```bash
-sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev zlib1g-dev
+sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev libcurl4-openssl-dev zlib1g-dev
 ```
 
 The Linux build uses the system GLFW/ODE packages when available and falls back
@@ -769,24 +770,200 @@ which makes door-glass control variables visible.
 The model variable store initializes OMSI-style system variables with the local
 system date at midday: `Time` is `43200`, `Day`, `Month`, and `Year` come from
 the current date, and `DayOfYear` uses OMSI's one-based convention. Defaults include
-`NoSound=1`, `Pause=0`, `PrecipType=1` (clear), `PrecipRate=0`,
+`NoSound=1`, `Pause=0`, `PrecipType=0` (clear), `PrecipRate=0`,
 `Weather_Temperature=20`, `Weather_AbsHum=10`, `Envir_Brightness=1`,
 `AutoClutch=0`, and `SunAlt=60`. `Timegap`, `GetTime`, `mouse_x`, and `mouse_y`
 are updated from the renderer each frame. Precipitation values are persistent
 shared system variables, so configured weather survives frame updates.
+`PrecipType` uses OMSI's `0` clear, `1` rain, `2` snow convention.
 
-The initial weather slice renders rain or snow particles in exterior and free
-camera views. Set `OPENBUS_WEATHER=rain` or `snow`; `clear` (the default)
+During a simulation, open the **Pause Menu** with Esc and expand **Weather**
+to select an `.owt` preset from `OMSI_ROOT/Weather`, search recently updated
+worldwide METAR stations by ICAO code, name or country, or enter a four-character
+station identifier directly. **Configure custom weather** opens an
+editor initialized from the current weather, with precipitation type and
+intensity, temperature (C), absolute humidity (g/m3), relative humidity (%) and
+estimated dew point, optional visibility (m),
+brightness (0–1), wind direction (degrees from north) and speed (m/s), cloud
+base and fog top (m above ground), cloud type, and pressure (hPa). Check **Set**
+to enable an optional value; unchecking it leaves that value unspecified.
+**Apply custom weather** validates the entries, preserves accumulated surface
+conditions and supersedes any pending METAR request; **Cancel** leaves weather
+unchanged. Clear custom weather sets precipitation intensity to zero.
+**Manage accumulated surface conditions** can dry accumulated road water,
+clear road snow, or clear both road and ground snow without changing the weather.
+These operations affect global accumulation, not authored snow/slush materials;
+precipitation can accumulate again, and remaining snow may melt into road water.
+Relative humidity and dew point use the existing liquid-water approximation,
+available for temperatures from -40 to 50 C. The dew point is unavailable at
+zero humidity, above saturation, or outside the approximation's temperature
+range. Pressure is retained but has no simulation effect. Use **Reload presets** after
+changing the files. Preset parsing supports UTF-16LE and UTF-8/ASCII files. Rain and snow
+are rendered as depth-tested GPU particles in exterior and free-camera views;
+the bounded periodic field is an approximation, not an OMSI effect. Wind,
+brightness and visibility affect the particles. They are not rendered in
+interior or mirror views, and shelter is limited to scene depth occlusion.
+The raw preset fog-height, additional precipitation, ground-wetness and snow
+fields are retained in the weather snapshot. The first ground-wetness value and
+the snow-on-road flag contribute to the approximate wheel grip described below;
+the remaining fields are not yet applied. The second
+temperature is interpreted as dew point, precipitation intensity is normalized
+by 255, cloud height is treated as meters (from 0 to 10,000,000 meters),
+and pressure is treated as hPa. Cloud rendering bounds camera-relative height
+to that range to keep distant camera positions safe.
+OMSI's preset and METAR parsers store the METAR temperature/dew-point pair in
+the same fields, and a native precipitation calculation divides the stored
+intensity byte by 255. Native METAR parsing also stores Q-prefixed pressure
+directly in the preset pressure field, confirming hectopascals; OpenBus retains
+pressure but does not yet simulate its effects. The conversion to absolute
+humidity, OpenBus's visual precipitation, and the cloud-height reference remain
+approximations.
+
+Spline-road triangles with texture `.cfg` surface metadata have approximate
+weather-dependent wheel grip. `[puddles]` also enables moisture. Rain and snow
+accumulate over simulation time; water dries, and snow melts into water above
+freezing. A preset initializes water from its first ground-wetness value and
+snow from its snow-on-road flag. Changing fog or applying METAR weather preserves
+accumulated road conditions. Wetness reduces grip on moisture-enabled surfaces,
+and cold exposure gradually reduces wet-road grip further; warming reverses it.
+Accumulated snow and snow/slush
+surface types also reduce classified road grip. Dry cold roads and unclassified
+surfaces retain their existing grip. These rates and coefficients are
+approximations, not OMSI-validated tire physics. Freeze level is a global
+cold-exposure proxy, not a physical ice depth. Conditions are not spatial, and
+shelter, terrain and scenery-object contacts are not classified yet.
+Moisture-enabled spline textures also darken and gain an approximate GPU-lit
+specular highlight as water accumulates. This is not a puddle or reflection
+simulation; unclassified textures and dry roads retain their normal materials.
+Classified spline-road textures also blend toward a snow color as global snow
+accumulates, including surfaces without a moisture flag. The GPU applies the
+blend before lighting and fog, preserves texture alpha, and reduces the wet
+highlight under snow. Terrain base and blended ground-texture layers receive
+the same approximate snow shading. Preset `[snow]` and `[snowOnRoad]` seed
+terrain and road snow separately; both then accumulate and melt over simulation
+time. This is uniform surface tinting, not spatial snow depth, an OMSI-authored
+snow texture or accumulation on scenery. Terrain snow currently has no effect
+on terrain surface classification; its global coverage reduces wheel grip on
+terrain approximately, while dry terrain keeps its previous grip. Wet or icy
+terrain without snow is not yet modeled.
+
+Invalid presets report an error and do
+not change the current weather. Selecting a station and pressing
+**Fetch and apply METAR** requests the report in the background; the current
+weather remains active if the request fails. An error is shown in the menu and
+logged. After a station is selected, OpenBus refreshes it every ten minutes of
+real time, including while paused. Failed refreshes leave the current weather
+unchanged and are retried after ten minutes. Applying a preset or custom weather,
+stopping automatic updates, or returning to the startup menu cancels the refresh
+schedule and prevents an in-flight result from replacing the newer weather. Only
+one station request can be in flight at a time; requests are bounded and may delay
+shutdown until they finish. The station picker loads NOAA's directory in the
+background and shows files modified within the past hour (allowing five minutes
+of future clock skew). It refreshes the directory every ten minutes and supports
+manual refresh. This is a recent-file indicator, not proof that the report is
+fresh or supported. If the directory fails, the picker reports the error and
+retains the last activity list, or shows the full catalogue if no list has loaded.
+Names and countries come from [`metar_station_details.csv`](src/metar/metar_station_details.csv),
+embedded at build time; NOAA stations absent from that file appear by code.
+Direct ICAO entry also works for stations not currently listed as active. METAR changes do not
+infer cloud style or brightness. Runtime choices replace the startup weather snapshot.
+
+For an offline CSV snapshot, run `python src\metar\validate_metar.py` from the
+repository root. It requests the same directory once and writes
+`src\metar\metar_data_active.csv`, retaining the metadata columns and including
+code-only entries where metadata is missing. Existing output is not overwritten
+unless `--force` is provided; `--input` and `--output` select different paths.
+The directory timestamps indicate file updates, not observation timestamps.
+
+For startup weather, set `OPENBUS_WEATHER=rain` or `snow`; `clear` (the default)
 disables precipitation. `OPENBUS_WEATHER_RATE` accepts `0`–`1` and defaults to
 `0.5` for rain/snow. `OPENBUS_WEATHER_TEMPERATURE` sets `Weather_Temperature`
 in degrees Celsius (default `20`), and `OPENBUS_WEATHER_ABSHUM` sets
 `Weather_AbsHum` in g/m3 (default `10`). Temperature must be above absolute
-zero and absolute humidity must be non-negative. Set `OPENBUS_AUTO_CLUTCH` to
+zero and absolute humidity must be non-negative. `OPENBUS_WEATHER_VISIBILITY`
+optionally sets meteorological visibility in meters (finite and non-negative).
+It enables approximate GPU distance fog on model and multi-material surfaces,
+including reflection views; unknown visibility leaves fog disabled. Visibility
+is additionally limited by precipitation intensity, following OMSI's rain and
+snow visibility formulas. For non-preset rates, the normalized intensity is
+treated as a continuous fraction of the native 0–255 scale. Visibility below
+one meter is rendered as one meter. Fog currently uses a blue color
+matched to the background and does not model shelter or indoor exposure.
+Optionally set `OPENBUS_WEATHER_FOG_HEIGHT` to a non-negative height in meters
+above the local ground, or enable and edit the fog layer in the pause menu.
+The GPU attenuates only the portion of each view ray inside that layer for
+surfaces, clouds and precipitation. The ground reference is sampled at the
+player, so the layer does not follow distant terrain. Without a height, fog
+extends uniformly; without visibility, fog remains disabled. This physical
+layer is an approximation, not a mapping of OMSI preset fog-height values.
+Selecting a new preset or METAR replaces the in-game override. Set
+`OPENBUS_WEATHER_BRIGHTNESS` to a finite value from `0` to `1` to scale the
+automatic daylight brightness. The result scales GPU surface lighting, the
+background and fog color, drives ordinary vehicle and uncontrolled scenery nightmaps and
+supplies vehicle-local `Envir_Brightness`. Explicitly switched emissive
+materials remain lit. Scenery scripts that set `nightlighta` control their
+nightmaps instead of weather brightness. Scenery text and free/script textures
+also follow daylight brightness unless their materials are emissive.
+Vehicle `[spotlight]` definitions selected by `Spot_Select` approximately
+illuminate model and road surfaces, including in mirrors. Up to eight nearest
+vehicle spotlights are used per view; beams do not cast shadows, and attenuation
+and cone behavior approximate the native Direct3D spotlight parameters.
+Scenery `[maplight]` sources and scenery `[light_enh]`/`[light_enh_2]`
+fixtures do not yet illuminate the map or render their light effects.
+
+The simulation clock drives approximate seasonal solar altitude, direction and
+daylight. `OPENBUS_SOLAR_LATITUDE` sets latitude in degrees from `-90` to `90`
+(default `52.52`). The map clock is interpreted as local solar time, so longitude,
+time zones and daylight saving time are not inferred. Map +X is east and +Y is
+north. `OPENBUS_SUN_ALTITUDE`, when set to a value from `-90` to `90`, fixes
+altitude and daylight while the approximate solar azimuth still follows the
+clock. This is not verified OMSI solar behavior.
+
+Set
+`OPENBUS_AUTO_CLUTCH` to
 `1`, `true`, `yes`, or `on` to publish `AutoClutch=1` (default `0`); this
 reports the setting to scripts but does not yet implement automatic clutch
-control. `OPENBUS_SUN_ALTITUDE` overrides `SunAlt` in degrees (default `60`,
-valid range `-90` through `90`); it is not calculated from map location or
-simulation time. Press `P` to pause/resume, or `Esc` to open the pause menu and
+control.
+
+An optional procedural GPU cloud layer is enabled with
+`OPENBUS_WEATHER_CLOUD_TYPE=cumulus1`, `cumulus2`, `cumulus3`, or `overcast1`.
+The styles are visual approximations, not verified OMSI cloud assets. With no
+type selected, the existing clear background is unchanged. Set
+`OPENBUS_WEATHER_CLOUD_BASE` to a non-negative height in meters above ground
+(default `1500`); the renderer approximates ground elevation using the player
+vehicle's current ground height, including in free-camera and mirror views.
+`OPENBUS_WEATHER_WIND_DIRECTION` is the direction the wind comes from, in
+degrees clockwise from north (`0` inclusive to `360` exclusive), and
+`OPENBUS_WEATHER_WIND_SPEED` is a non-negative speed in m/s. When both are
+known, the cloud pattern moves with simulation time, assuming map +Y is north;
+otherwise it is stationary. Clouds use the current camera, visibility and
+daylight brightness in the main view and mirrors. The layer is flat and
+procedural, fades near the horizon and does not yet model cloud thickness,
+individual layers, sun illumination or flying inside/above clouds.
+
+Alternatively, set `OPENBUS_METAR_STATION` to a four-character
+ICAO station identifier, such as `KJFK`, to fetch a NOAA METAR at startup
+from `tgftp.nws.noaa.gov` and refresh it every ten minutes. Reports older than two hours or over five minutes in
+the future, unavailable reports, incomplete required observations and
+unsupported or mixed precipitation cause an error rather than a silent
+fallback. Temperature, dew point, visibility, wind speed and sky condition are
+required; variable or calm wind has no fixed direction. Dew point is converted
+to absolute humidity using a liquid-water approximation limited to -40–50 C.
+Visibility bounds are used as approximate distances. Light, moderate and heavy
+rain or snow map to rates `0.25`, `0.5` and `0.75`; freezing rain is rendered
+as rain and does not yet create ice. The lowest reported cloud base is retained,
+but cloud types, fog height and station pressure are not inferred from METAR
+altimeter settings. `OPENBUS_WEATHER_BRIGHTNESS`, `OPENBUS_WEATHER_FOG_HEIGHT` and
+`OPENBUS_WEATHER_CLOUD_TYPE` may be combined with METAR; the latter is an
+explicit visual override, not an inference from METAR cloud cover. In METAR
+mode the reported lowest cloud base and wind drive the selected layer; missing
+cloud base uses the 1500 m default and missing wind direction leaves it
+stationary. These startup overrides are retained across automatic refreshes.
+Other `OPENBUS_WEATHER*` settings must be unset in METAR mode.
+Supported observation groups follow the
+[Aviation Weather Center data guide](https://aviationweather.gov/help/data/);
+unsupported groups and forecast/remark sections are retained separately.
+Press `P` to pause/resume, or `Esc` to open the pause menu and
 pause; rendering and free-camera movement continue while physics, traffic,
 passenger service, the simulation clock, script frames, and vehicle key/mouse
 script events are paused. The pause menu can stop a scheduled trip immediately
@@ -799,7 +976,14 @@ filters bus types after a model is selected. Configuration filenames distinguish
 duplicate type labels. Weather settings populate the shared `PrecipType`,
 `PrecipRate`, `Weather_Temperature`, and `Weather_AbsHum` system variables
 before scripts run. This does not yet load OMSI map weather schedules or render
-fog, windshield effects, wet roads, or snow accumulation.
+independent windshield effects or snow accumulation on scenery.
+Vehicle-authored scripts can maintain per-vehicle `Cabinair_Temp`,
+`Cabinair_AbsHum`, `Cabinair_RelHum` and window-wetness variables using these
+weather inputs and `Timegap`; their behavior depends on the bus scripts and
+materials. OpenBus does not yet provide a fallback cabin or wiper simulation
+for vehicles without such scripts. When precipitation type is clear, vehicle-local
+`PrecipRate` is zero even if a preset retains a nonzero raw intensity; already
+wet windows remain under the vehicle script's control.
 
 For benchmark/custom runs, `OPENBUS_BUS_CONFIG` accepts an absolute path or a
 path relative to `OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG` to

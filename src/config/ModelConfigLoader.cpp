@@ -141,9 +141,6 @@ const char* ignoredKeywordReason(const std::string& keyword) {
     if (keyword == "smoothskin") {
         return "generic model skeletal skinning is not implemented";
     }
-    if (keyword == "spotlight") {
-        return "spotlight rendering is not implemented";
-    }
     if (keyword == "smoke") {
         return "smoke rendering is not implemented";
     }
@@ -898,7 +895,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [spotlight] payload semantics are not sufficiently verified for runtime use.
         if (keyword == "spotlight") {
             std::vector<std::string> values;
             if (readValues(reader, line.number, keyword, 12, values, result.diagnostics)) {
@@ -913,10 +909,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
                 if (valid) {
                     result.spotlights.push_back(std::move(spotlight));
-                    result.diagnostics.warning(
-                        line.number, keyword,
-                        "payload retained; spotlight rendering is not implemented because field "
-                        "semantics are unverified");
                 }
             }
             continue;

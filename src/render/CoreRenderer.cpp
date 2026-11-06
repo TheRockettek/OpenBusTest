@@ -9,8 +9,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace openbus::rendering {
 namespace {
@@ -71,6 +74,7 @@ struct Uniforms {
     GLint specularColor = -1;
     GLint emissionColor = -1;
     GLint specularPower = -1;
+    GLint snowCoverage = -1;
     GLint bumpmap = -1;
     GLint freeTexture = -1;
     GLint textTexture = -1;
@@ -80,6 +84,7 @@ struct Uniforms {
     GLint useBumpmap = -1;
     GLint useFreeTexture = -1;
     GLint useTextTexture = -1;
+    GLint weatherLitDynamicTexture = -1;
     GLint useInteriorLight = -1;
     GLint interiorLightCount = -1;
     std::array<GLint, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
@@ -93,6 +98,14 @@ struct Uniforms {
     GLint lightDirection = -1;
     GLint ambientLight = -1;
     GLint diffuseLight = -1;
+    GLint spotlightCount = -1;
+    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightPosition = {};
+    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightDirection = {};
+    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightColor = {};
+    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightParameters = {};
+    GLint fogDensity = -1;
+    GLint fogColor = -1;
+    GLint weatherBrightness = -1;
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
     GLint humanGaitEnabled = -1;
@@ -146,6 +159,7 @@ struct ModelUniformState {
     bool useEnvironmentMap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
+    bool weatherLitDynamicTexture = false;
     bool useInteriorLight = false;
     bool flipTextureY = false;
     bool useMaterialColors = false;
@@ -165,6 +179,7 @@ struct ModelUniformState {
     std::array<float, 3> specularColor = {};
     std::array<float, 3> emissionColor = {};
     float specularPower = 8.0F;
+    float snowCoverage = 0.0F;
     int interiorLightCount = 0;
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
@@ -179,6 +194,9 @@ GLuint materialProgram = 0;
 GLuint environmentProgram = 0;
 GLuint primitiveProgram = 0;
 GLuint textureQuadProgram = 0;
+GLuint cloudProgram = 0;
+GLuint precipitationProgram = 0;
+GLuint precipitationVertexArray = 0;
 GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
@@ -193,7 +211,29 @@ Uniforms primitiveUniforms;
 GLint textureQuadRect = -1;
 GLint textureQuadTexture = -1;
 GLint textureQuadFlipTextureY = -1;
+GLint cloudView = -1;
+GLint cloudProjectionScale = -1;
+GLint cloudOrigin = -1;
+GLint cloudHeight = -1;
+GLint cloudStyle = -1;
+GLint cloudBrightness = -1;
+GLint cloudBackground = -1;
+GLint precipitationView = -1;
+GLint precipitationProjection = -1;
+GLint precipitationEye = -1;
+GLint precipitationOffset = -1;
+GLint precipitationWind = -1;
+GLint precipitationType = -1;
+GLint precipitationBrightness = -1;
 GLuint currentProgram = 0;
+struct FogUniforms {
+    GLuint program = 0;
+    GLint density = -1;
+    GLint layerHeight = -1;
+    GLint cameraHeight = -1;
+    GLint worldUp = -1;
+};
+std::array<FogUniforms, 5> fogUniforms;
 GLuint currentVertexArray = 0;
 GLuint currentArrayBuffer = 0;
 thread_local GLenum currentTextureUnit = GL_TEXTURE0;
@@ -464,6 +504,8 @@ uniform mat4 uModelView;
 uniform vec3 uLightDirection;
 uniform float uAmbientLight;
 uniform float uDiffuseLight;
+uniform vec3 uFogColor;
+uniform float uWeatherBrightness;
 uniform sampler2D uTexture;
 uniform sampler2DArray uTextureArray;
 uniform vec2 uTextureScale;
@@ -477,6 +519,7 @@ uniform bool uFlipTransmapY;
 uniform vec3 uSpecularColor;
 uniform vec3 uEmissionColor;
 uniform float uSpecularPower;
+uniform float uSnowCoverage;
 uniform sampler2D uBumpmap;
 uniform sampler2D uEnvironment;
 uniform sampler2D uFreeTexture;
@@ -492,6 +535,7 @@ uniform bool uUseBumpmap;
 uniform bool uUseEnvironment;
 uniform bool uUseFreeTexture;
 uniform bool uUseTextTexture;
+uniform bool uWeatherLitDynamicTexture;
 uniform bool uUseInteriorLight;
 uniform int uInteriorLightCount;
 uniform vec3 uInteriorLightViewPositions[4];
@@ -541,15 +585,16 @@ void main() {
     if (uUseDetailTexture) {
         color.rgb *= texture(uDetailTexture, vTexCoord.xy * uDetailTextureScale).rgb;
     }
+    color.rgb = mix(color.rgb, vec3(0.90, 0.92, 0.94), clamp(uSnowCoverage, 0.0, 1.0));
     vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
-    // Script and text textures contain authored surface colours that must not
-    // be dimmed like a mesh's base material.
     if (!uUseTextTexture && !uUseFreeTexture) {
         vec3 surfaceNormal = normalize(vNormal);
         vec3 lightDirection = normalize(uLightDirection);
         float diffuse = max(dot(surfaceNormal, lightDirection), 0.0);
         color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
+    } else if (uWeatherLitDynamicTexture) {
+        color.rgb *= uWeatherBrightness;
     }
     if (!uUseTextTexture && uUseLightmap) {
         vec4 lightmap = texture(uLightmap, vTexCoord.xy);
@@ -569,7 +614,7 @@ void main() {
     // OMSI emissive materials illuminate their texture, not an additive solid
     // color. White emission must preserve red glyphs and black display pixels.
     color.rgb = mix(color.rgb, unlitColor, clamp(uEmissionColor, 0.0, 1.0));
-    color.rgb += uSpecularColor * specular;
+    color.rgb += uSpecularColor * specular * uWeatherBrightness;
     if (!uUseTextTexture && uUseNightmap) {
         vec4 nightmap = texture(uNightmap, vTexCoord.xy);
         // OMSI nightmaps are authored as self-lit overlays: black texels mean
@@ -639,12 +684,19 @@ void main() {
         }
         color.rgb = clamp(color.rgb, 0.0, 1.0);
     }
+    if (!uUseTextTexture || uWeatherLitDynamicTexture) {
+        color.rgb += diffuseReflectance * vehicleSpotlightLighting(vViewPosition, normalize(vNormal));
+    }
     if (!uUseTextTexture && uUseEnvironment) {
         vec3 reflection = reflect(-viewDirection, normalize(vNormal));
         float denominator = 2.0 * sqrt(max(reflection.z + 1.0, 0.0001));
         vec2 coordinates = reflection.xy / denominator + vec2(0.5);
-        color.rgb = mix(color.rgb, texture(uEnvironment, coordinates).rgb,
+        color.rgb = mix(color.rgb, texture(uEnvironment, coordinates).rgb * uWeatherBrightness,
                         clamp(uEnvironmentAlpha, 0.0, 1.0));
+    }
+    if (uFogDensity > 0.0) {
+        float transmission = weatherFogTransmission(vViewPosition);
+        color.rgb = mix(uFogColor, color.rgb, transmission);
     }
     color.a *= clamp(uVisibilityFade, 0.0, 1.0);
     if (uAlphaMode == 1 && color.a < 0.5) {
@@ -661,12 +713,14 @@ const char* materialFragmentShader = R"GLSL(
 #version 330 core
 in vec3 vTexCoord;
 in vec3 vNormal;
+in vec3 vViewPosition;
 uniform vec4 uMaterialColors[128];
 uniform sampler2D uMaterialTextures[8];
 uniform bool uFlipTextureY[8];
 uniform vec3 uLightDirection;
 uniform float uAmbientLight;
 uniform float uDiffuseLight;
+uniform vec3 uFogColor;
 uniform float uVisibilityFade;
 out vec4 fragmentColor;
 void main() {
@@ -695,7 +749,13 @@ void main() {
     }
     vec3 surfaceNormal = normalize(vNormal);
     float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
+    vec3 reflectance = color.rgb;
     color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
+    color.rgb += reflectance * vehicleSpotlightLighting(vViewPosition, surfaceNormal);
+    if (uFogDensity > 0.0) {
+        float transmission = weatherFogTransmission(vViewPosition);
+        color.rgb = mix(uFogColor, color.rgb, transmission);
+    }
     color.a *= clamp(uVisibilityFade, 0.0, 1.0);
     fragmentColor = color;
 }
@@ -707,6 +767,8 @@ in vec3 vNormal;
 in vec3 vViewPosition;
 uniform sampler2D uEnvironment;
 uniform float uEnvironmentAlpha;
+uniform vec3 uFogColor;
+uniform float uWeatherBrightness;
 out vec4 fragmentColor;
 void main() {
     vec3 normal = normalize(vNormal);
@@ -714,7 +776,10 @@ void main() {
     vec3 reflection = reflect(-viewDirection, normal);
     float denominator = 2.0 * sqrt(max(reflection.z + 1.0, 0.0001));
     vec2 coordinates = reflection.xy / denominator + vec2(0.5);
-    fragmentColor = vec4(texture(uEnvironment, coordinates).rgb, uEnvironmentAlpha);
+    float transmission = weatherFogTransmission(vViewPosition);
+    vec3 color = mix(uFogColor, texture(uEnvironment, coordinates).rgb * uWeatherBrightness,
+                     transmission);
+    fragmentColor = vec4(color, uEnvironmentAlpha);
 }
 )GLSL";
 
@@ -764,6 +829,159 @@ void main() {
 }
 )GLSL";
 
+const char* cloudVertexShader = R"GLSL(
+#version 330 core
+out vec2 vPosition;
+void main() {
+    vec2 position = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    vPosition = position * 2.0 - 1.0;
+    gl_Position = vec4(vPosition, 0.0, 1.0);
+}
+)GLSL";
+
+const char* precipitationVertexShader = R"GLSL(
+#version 330 core
+uniform mat4 uView;
+uniform mat4 uProjection;
+uniform vec3 uEye;
+uniform vec3 uOffset;
+uniform vec2 uWind;
+uniform int uType;
+flat out int vType;
+out vec3 vViewPosition;
+
+uint hashBits(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    return x ^ (x >> 16);
+}
+float randomValue(uint x) { return float(hashBits(x) & 0x00ffffffu) / 16777216.0; }
+void main() {
+    uint id = uint(uType == 1 ? gl_VertexID / 2 : gl_VertexID) + 1u;
+    vec3 seed = vec3(randomValue(id * 3u), randomValue(id * 3u + 1u),
+                     randomValue(id * 3u + 2u)) * 24.0;
+    vec3 position = mod(seed + uOffset - uEye + 12.0, 24.0) - 12.0;
+    if (uType == 1 && (gl_VertexID & 1) != 0)
+        position += vec3(uWind * 0.025, -0.32);
+    vType = uType;
+    vViewPosition = mat3(uView) * position;
+    gl_Position = uProjection * vec4(vViewPosition, 1.0);
+}
+)GLSL";
+
+const char* precipitationFragmentShader = R"GLSL(
+#version 330 core
+flat in int vType;
+in vec3 vViewPosition;
+uniform float uBrightness;
+out vec4 fragmentColor;
+void main() {
+    if (vType == 2 && length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+    vec3 color = vType == 1 ? vec3(0.68, 0.76, 0.84) : vec3(0.95, 0.97, 1.0);
+    float fog = weatherFogTransmission(vViewPosition);
+    fragmentColor = vec4(color * mix(0.3, 1.0, uBrightness),
+                         (vType == 1 ? 0.34 : 0.8) * fog);
+}
+)GLSL";
+
+const char* cloudFragmentShader = R"GLSL(
+#version 330 core
+in vec2 vPosition;
+uniform mat4 uView;
+uniform vec2 uProjectionScale;
+uniform vec2 uOrigin;
+uniform float uHeight;
+uniform int uStyle;
+uniform float uBrightness;
+uniform vec3 uBackground;
+out vec4 fragmentColor;
+
+float hash2(vec2 p) {
+    p = mod(p, 1024.0);
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float noise2(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(cell), hash2(cell + vec2(1.0, 0.0)), f.x),
+               mix(hash2(cell + vec2(0.0, 1.0)), hash2(cell + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main() {
+    vec3 ray = normalize(transpose(mat3(uView)) *
+                         vec3(vPosition / uProjectionScale, -1.0));
+    float coverage = 0.0;
+    float shading = 0.0;
+    if (ray.z > 0.01 && uHeight > 0.0) {
+        float distanceToLayer = uHeight / ray.z;
+        vec2 p = (uOrigin + ray.xy * distanceToLayer) / 1800.0;
+        float noise = 0.5333 * noise2(p) + 0.2667 * noise2(p * 2.0)
+                    + 0.1333 * noise2(p * 4.0) + 0.0667 * noise2(p * 8.0);
+        float threshold = uStyle == 0 ? 0.62 : uStyle == 1 ? 0.53 :
+                          uStyle == 2 ? 0.43 : 0.24;
+        coverage = smoothstep(threshold, threshold + 0.12, noise);
+        coverage *= smoothstep(0.01, 0.12, ray.z);
+        coverage *= weatherFogTransmission(mat3(uView) * (ray * distanceToLayer));
+        shading = noise;
+    }
+    vec3 cloudColor = mix(vec3(0.66, 0.69, 0.73), vec3(1.0), shading) * uBrightness;
+    fragmentColor = vec4(mix(uBackground, cloudColor, coverage), 1.0);
+}
+)GLSL";
+
+const char* fogShaderFunctions = R"GLSL(
+uniform float uFogDensity;
+uniform float uFogLayerHeight;
+uniform float uFogCameraHeight;
+uniform vec3 uFogWorldUp;
+float weatherFogTransmission(vec3 viewPosition) {
+    float fraction = 1.0;
+    if (uFogLayerHeight >= 0.0) {
+        float deltaHeight = dot(uFogWorldUp, viewPosition);
+        float start = uFogCameraHeight - uFogLayerHeight;
+        float end = start + deltaHeight;
+        if (start > 0.0 && end > 0.0) {
+            fraction = 0.0;
+        } else if ((start > 0.0) != (end > 0.0)) {
+            float crossing = clamp(-start / deltaHeight, 0.0, 1.0);
+            fraction = start <= 0.0 ? crossing : 1.0 - crossing;
+        }
+    }
+    return exp(-uFogDensity * length(viewPosition) * fraction);
+}
+)GLSL";
+
+const char* vehicleSpotlightShaderFunctions = R"GLSL(
+uniform int uSpotlightCount;
+uniform vec3 uSpotlightPosition[8];
+uniform vec3 uSpotlightDirection[8];
+uniform vec3 uSpotlightColor[8];
+uniform vec3 uSpotlightParameters[8];
+vec3 vehicleSpotlightLighting(vec3 position, vec3 normal) {
+    vec3 result = vec3(0.0);
+    for (int i = 0; i < uSpotlightCount; ++i) {
+        vec3 displacement = position - uSpotlightPosition[i];
+        float distanceToLight = length(displacement);
+        float range = uSpotlightParameters[i].x;
+        if (distanceToLight <= 0.0001 || distanceToLight / range >= 4.0) continue;
+        vec3 ray = displacement / distanceToLight;
+        float angle = dot(ray, uSpotlightDirection[i]);
+        float inner = uSpotlightParameters[i].y;
+        float outer = uSpotlightParameters[i].z;
+        float cone = inner > outer ? clamp((angle - outer) / (inner - outer), 0.0, 1.0)
+                                   : step(inner, angle);
+        float relativeDistance = distanceToLight / range;
+        float attenuation = 1.0 /
+            (0.2 + relativeDistance + 40.0 * relativeDistance * relativeDistance);
+        float diffuse = max(dot(normal, -ray), 0.0);
+        result += uSpotlightColor[i] * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
+    }
+    return result;
+}
+)GLSL";
+
 GLuint compileShader(GLenum type, const char* source) {
     const GLuint shader = pglCreateShader(type);
     pglShaderSource(shader, 1, &source, nullptr);
@@ -783,9 +1001,23 @@ GLuint compileShader(GLenum type, const char* source) {
     return 0;
 }
 
-GLuint createProgram(const char* vertexSource, const char* fragmentSource) {
+GLuint createProgram(const char* vertexSource, const char* fragmentSource,
+                     bool usesWeatherFog = false, bool usesVehicleSpotlights = false) {
     const GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
-    const GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+    std::string fragment(fragmentSource);
+    if (usesWeatherFog) {
+        const auto versionEnd = fragment.find('\n', fragment.find("#version"));
+        if (versionEnd == std::string::npos)
+            throw std::runtime_error("Weather shader is missing a version directive");
+        fragment.insert(versionEnd + 1, fogShaderFunctions);
+    }
+    if (usesVehicleSpotlights) {
+        const auto versionEnd = fragment.find('\n', fragment.find("#version"));
+        if (versionEnd == std::string::npos)
+            throw std::runtime_error("Spotlight shader is missing a version directive");
+        fragment.insert(versionEnd + 1, vehicleSpotlightShaderFunctions);
+    }
+    const GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragment.c_str());
     if (vertexShader == 0 || fragmentShader == 0) {
         if (vertexShader != 0) {
             pglDeleteShader(vertexShader);
@@ -816,14 +1048,33 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource) {
     return 0;
 }
 
+void findSpotlightUniforms(GLuint program, Uniforms& uniforms) {
+    uniforms.spotlightCount = pglGetUniformLocation(program, "uSpotlightCount");
+    for (std::size_t index = 0; index < MAX_VEHICLE_SPOTLIGHTS; ++index) {
+        const std::string suffix = "[" + std::to_string(index) + "]";
+        uniforms.spotlightPosition[index] =
+            pglGetUniformLocation(program, ("uSpotlightPosition" + suffix).c_str());
+        uniforms.spotlightDirection[index] =
+            pglGetUniformLocation(program, ("uSpotlightDirection" + suffix).c_str());
+        uniforms.spotlightColor[index] =
+            pglGetUniformLocation(program, ("uSpotlightColor" + suffix).c_str());
+        uniforms.spotlightParameters[index] =
+            pglGetUniformLocation(program, ("uSpotlightParameters" + suffix).c_str());
+    }
+}
+
 Uniforms modelUniformsFor(GLuint program, bool environment) {
     Uniforms uniforms;
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
+    uniforms.fogDensity = pglGetUniformLocation(program, "uFogDensity");
+    uniforms.fogColor = pglGetUniformLocation(program, "uFogColor");
+    uniforms.weatherBrightness = pglGetUniformLocation(program, "uWeatherBrightness");
     if (environment) {
         uniforms.environment = pglGetUniformLocation(program, "uEnvironment");
         uniforms.environmentAlpha = pglGetUniformLocation(program, "uEnvironmentAlpha");
     } else {
+        findSpotlightUniforms(program, uniforms);
         uniforms.texture = pglGetUniformLocation(program, "uTexture");
         uniforms.textureArray = pglGetUniformLocation(program, "uTextureArray");
         uniforms.textureScale = pglGetUniformLocation(program, "uTextureScale");
@@ -845,6 +1096,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.specularColor = pglGetUniformLocation(program, "uSpecularColor");
         uniforms.emissionColor = pglGetUniformLocation(program, "uEmissionColor");
         uniforms.specularPower = pglGetUniformLocation(program, "uSpecularPower");
+        uniforms.snowCoverage = pglGetUniformLocation(program, "uSnowCoverage");
         uniforms.bumpmap = pglGetUniformLocation(program, "uBumpmap");
         uniforms.environment = pglGetUniformLocation(program, "uEnvironment");
         uniforms.environmentAlpha = pglGetUniformLocation(program, "uEnvironmentAlpha");
@@ -857,6 +1109,8 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.useBumpmap = pglGetUniformLocation(program, "uUseBumpmap");
         uniforms.useFreeTexture = pglGetUniformLocation(program, "uUseFreeTexture");
         uniforms.useTextTexture = pglGetUniformLocation(program, "uUseTextTexture");
+        uniforms.weatherLitDynamicTexture =
+            pglGetUniformLocation(program, "uWeatherLitDynamicTexture");
         uniforms.useInteriorLight = pglGetUniformLocation(program, "uUseInteriorLight");
         uniforms.interiorLightCount = pglGetUniformLocation(program, "uInteriorLightCount");
         for (std::size_t index = 0; index < MAX_INTERIOR_LIGHTS; ++index) {
@@ -917,8 +1171,11 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
 
 Uniforms materialUniformsFor(GLuint program) {
     Uniforms uniforms;
+    findSpotlightUniforms(program, uniforms);
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
+    uniforms.fogDensity = pglGetUniformLocation(program, "uFogDensity");
+    uniforms.fogColor = pglGetUniformLocation(program, "uFogColor");
     uniforms.visibilityFade = pglGetUniformLocation(program, "uVisibilityFade");
     uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
     uniforms.lightDirection = pglGetUniformLocation(program, "uLightDirection");
@@ -1047,6 +1304,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.useEnvironmentMap != material.useEnvironmentMap ||
         modelUniformState.useFreeTexture != material.useFreeTexture ||
         modelUniformState.useTextTexture != material.useTextTexture ||
+        modelUniformState.weatherLitDynamicTexture != material.weatherLitDynamicTexture ||
         modelUniformState.useInteriorLight != material.useInteriorLight ||
         modelUniformState.interiorLightCount != material.interiorLightCount;
     if (flagsChanged) {
@@ -1063,6 +1321,8 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useEnvironment, material.useEnvironmentMap ? 1 : 0);
         pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
         pglUniform1i(modelUniforms.useTextTexture, material.useTextTexture ? 1 : 0);
+        pglUniform1i(modelUniforms.weatherLitDynamicTexture,
+                     material.weatherLitDynamicTexture ? 1 : 0);
         pglUniform1i(modelUniforms.useInteriorLight, material.useInteriorLight ? 1 : 0);
         pglUniform1i(modelUniforms.interiorLightCount, material.interiorLightCount);
     }
@@ -1109,6 +1369,9 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     }
     if (!modelUniformState.valid || modelUniformState.specularPower != material.specularPower) {
         pglUniform1f(modelUniforms.specularPower, material.specularPower);
+    }
+    if (!modelUniformState.valid || modelUniformState.snowCoverage != material.snowCoverage) {
+        pglUniform1f(modelUniforms.snowCoverage, material.snowCoverage);
     }
     if (!modelUniformState.valid ||
         modelUniformState.interiorLightViewPositions != material.interiorLightViewPositions) {
@@ -1159,6 +1422,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.useEnvironmentMap = material.useEnvironmentMap;
     modelUniformState.useFreeTexture = material.useFreeTexture;
     modelUniformState.useTextTexture = material.useTextTexture;
+    modelUniformState.weatherLitDynamicTexture = material.weatherLitDynamicTexture;
     modelUniformState.useInteriorLight = material.useInteriorLight;
     modelUniformState.flipTextureY = material.flipTextureY;
     modelUniformState.alphaMode = alphaMode;
@@ -1172,6 +1436,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.specularColor = material.specularColor;
     modelUniformState.emissionColor = material.emissionColor;
     modelUniformState.specularPower = material.specularPower;
+    modelUniformState.snowCoverage = material.snowCoverage;
     modelUniformState.interiorLightCount = material.interiorLightCount;
     modelUniformState.interiorLightViewPositions = material.interiorLightViewPositions;
     modelUniformState.interiorLightColors = material.interiorLightColors;
@@ -1205,13 +1470,17 @@ void setFrameTriangleCountReflectionPass(bool reflectionPass) {
 }
 
 bool initializeCoreRenderer() {
-    modelProgram = createProgram(modelVertexShader, modelFragmentShader);
-    materialProgram = createProgram(modelVertexShader, materialFragmentShader);
-    environmentProgram = createProgram(modelVertexShader, environmentFragmentShader);
+    modelProgram = createProgram(modelVertexShader, modelFragmentShader, true, true);
+    materialProgram = createProgram(modelVertexShader, materialFragmentShader, true, true);
+    environmentProgram = createProgram(modelVertexShader, environmentFragmentShader, true);
     primitiveProgram = createProgram(primitiveVertexShader, primitiveFragmentShader);
     textureQuadProgram = createProgram(textureQuadVertexShader, textureQuadFragmentShader);
+    cloudProgram = createProgram(cloudVertexShader, cloudFragmentShader, true);
+    precipitationProgram =
+        createProgram(precipitationVertexShader, precipitationFragmentShader, true);
     if (modelProgram == 0 || materialProgram == 0 || environmentProgram == 0 ||
-        primitiveProgram == 0 || textureQuadProgram == 0) {
+        primitiveProgram == 0 || textureQuadProgram == 0 || cloudProgram == 0 ||
+        precipitationProgram == 0) {
         shutdownCoreRenderer();
         return false;
     }
@@ -1222,13 +1491,37 @@ bool initializeCoreRenderer() {
     textureQuadRect = pglGetUniformLocation(textureQuadProgram, "uRect");
     textureQuadTexture = pglGetUniformLocation(textureQuadProgram, "uTexture");
     textureQuadFlipTextureY = pglGetUniformLocation(textureQuadProgram, "uFlipTextureY");
+    cloudView = pglGetUniformLocation(cloudProgram, "uView");
+    cloudProjectionScale = pglGetUniformLocation(cloudProgram, "uProjectionScale");
+    cloudOrigin = pglGetUniformLocation(cloudProgram, "uOrigin");
+    cloudHeight = pglGetUniformLocation(cloudProgram, "uHeight");
+    cloudStyle = pglGetUniformLocation(cloudProgram, "uStyle");
+    cloudBrightness = pglGetUniformLocation(cloudProgram, "uBrightness");
+    cloudBackground = pglGetUniformLocation(cloudProgram, "uBackground");
+    precipitationView = pglGetUniformLocation(precipitationProgram, "uView");
+    precipitationProjection = pglGetUniformLocation(precipitationProgram, "uProjection");
+    precipitationEye = pglGetUniformLocation(precipitationProgram, "uEye");
+    precipitationOffset = pglGetUniformLocation(precipitationProgram, "uOffset");
+    precipitationWind = pglGetUniformLocation(precipitationProgram, "uWind");
+    precipitationType = pglGetUniformLocation(precipitationProgram, "uType");
+    precipitationBrightness = pglGetUniformLocation(precipitationProgram, "uBrightness");
+    const std::array<GLuint, 5> weatherPrograms = {
+        modelProgram, materialProgram, environmentProgram, cloudProgram, precipitationProgram};
+    for (std::size_t i = 0; i < weatherPrograms.size(); ++i) {
+        const GLuint program = weatherPrograms[i];
+        fogUniforms[i] = {program, pglGetUniformLocation(program, "uFogDensity"),
+                          pglGetUniformLocation(program, "uFogLayerHeight"),
+                          pglGetUniformLocation(program, "uFogCameraHeight"),
+                          pglGetUniformLocation(program, "uFogWorldUp")};
+    }
     pglGenVertexArrays(1, &modelVertexArray);
     pglGenVertexArrays(1, &primitiveVertexArray);
+    pglGenVertexArrays(1, &precipitationVertexArray);
     pglGenBuffers(1, &primitiveBuffer);
     pglGenVertexArrays(1, &textureQuadVertexArray);
     pglGenBuffers(1, &textureQuadBuffer);
-    if (modelVertexArray != 0 && primitiveVertexArray != 0 && primitiveBuffer != 0 &&
-        textureQuadVertexArray != 0 && textureQuadBuffer != 0) {
+    if (modelVertexArray != 0 && primitiveVertexArray != 0 && precipitationVertexArray != 0 &&
+        primitiveBuffer != 0 && textureQuadVertexArray != 0 && textureQuadBuffer != 0) {
         pglBindVertexArray(modelVertexArray);
         pglEnableVertexAttribArray(0);
         pglEnableVertexAttribArray(1);
@@ -1268,6 +1561,8 @@ bool initializeCoreRenderer() {
         pglUniform1i(textureQuadTexture, 0);
         useProgram(0);
         setLightingViewMatrix(identityMatrix());
+        setWeatherLighting(std::nullopt);
+        setWeatherFog(std::nullopt);
         currentVertexArray = 0;
         currentArrayBuffer = 0;
         currentProgram = 0;
@@ -1296,6 +1591,7 @@ bool initializeCoreRenderer() {
 
 void shutdownCoreRenderer() {
     shutdownComputeCulling();
+    fogUniforms = {};
     currentProgram = 0;
     currentVertexArray = 0;
     currentArrayBuffer = 0;
@@ -1321,6 +1617,10 @@ void shutdownCoreRenderer() {
     if (primitiveVertexArray != 0) {
         pglDeleteVertexArrays(1, &primitiveVertexArray);
         primitiveVertexArray = 0;
+    }
+    if (precipitationVertexArray != 0) {
+        pglDeleteVertexArrays(1, &precipitationVertexArray);
+        precipitationVertexArray = 0;
     }
     if (textureQuadVertexArray != 0) {
         pglDeleteVertexArrays(1, &textureQuadVertexArray);
@@ -1350,6 +1650,14 @@ void shutdownCoreRenderer() {
         pglDeleteProgram(textureQuadProgram);
         textureQuadProgram = 0;
     }
+    if (cloudProgram != 0) {
+        pglDeleteProgram(cloudProgram);
+        cloudProgram = 0;
+    }
+    if (precipitationProgram != 0) {
+        pglDeleteProgram(precipitationProgram);
+        precipitationProgram = 0;
+    }
 }
 
 void invalidateTextureBindings() {
@@ -1369,8 +1677,13 @@ void deleteRendererBuffers(GLsizei count, const GLuint* buffers) {
     pglDeleteBuffers(count, buffers);
 }
 
-void setLightingViewMatrix(const Matrix4& view) {
-    const auto direction = transformPoint(view, {-0.35, 0.5, 0.8, 0.0});
+void setLightingViewMatrix(const Matrix4& view, std::optional<std::array<double, 3>> sunDirection) {
+    const auto world = sunDirection.value_or(std::array<double, 3>{-0.35, 0.5, 0.8});
+    if (!std::isfinite(world[0]) || !std::isfinite(world[1]) || !std::isfinite(world[2]) ||
+        std::hypot(world[0], world[1], world[2]) < 1e-12) {
+        throw std::invalid_argument("Sun direction must be finite and non-zero");
+    }
+    const auto direction = transformPoint(view, {world[0], world[1], world[2], 0.0});
     const GLuint previousProgram = currentProgram;
     useProgram(modelProgram);
     pglUniform3f(modelUniforms.lightDirection, static_cast<float>(direction[0]),
@@ -1378,6 +1691,324 @@ void setLightingViewMatrix(const Matrix4& view) {
     useProgram(materialProgram);
     pglUniform3f(materialUniforms.lightDirection, static_cast<float>(direction[0]),
                  static_cast<float>(direction[1]), static_cast<float>(direction[2]));
+    useProgram(previousProgram);
+}
+
+void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
+    if (lights.size() > MAX_VEHICLE_SPOTLIGHTS) {
+        throw std::invalid_argument("Too many vehicle spotlights");
+    }
+    for (const VehicleSpotlight& light : lights) {
+        const auto finite = [](double value) {
+            return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
+        };
+        if (!std::all_of(light.position.begin(), light.position.end(), finite) ||
+            !std::all_of(light.direction.begin(), light.direction.end(), finite) ||
+            !std::all_of(light.color.begin(), light.color.end(), finite) || !finite(light.range) ||
+            light.range <= 0.0 ||
+            std::hypot(light.direction[0], light.direction[1], light.direction[2]) < 1e-12 ||
+            !finite(light.innerAngleDegrees) || !finite(light.outerAngleDegrees) ||
+            light.innerAngleDegrees < 0.0 || light.innerAngleDegrees > light.outerAngleDegrees ||
+            light.outerAngleDegrees > 180.0 ||
+            std::any_of(light.color.begin(), light.color.end(),
+                        [](double value) { return value < 0.0 || value > 1.0; })) {
+            throw std::invalid_argument("Invalid vehicle spotlight");
+        }
+    }
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry :
+         {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
+        useProgram(entry.first);
+        const Uniforms& uniforms = *entry.second;
+        pglUniform1i(uniforms.spotlightCount, static_cast<GLint>(lights.size()));
+        for (std::size_t index = 0; index < lights.size(); ++index) {
+            const VehicleSpotlight& light = lights[index];
+            const double length =
+                std::hypot(light.direction[0], light.direction[1], light.direction[2]);
+            pglUniform3f(uniforms.spotlightPosition[index], static_cast<float>(light.position[0]),
+                         static_cast<float>(light.position[1]),
+                         static_cast<float>(light.position[2]));
+            pglUniform3f(uniforms.spotlightDirection[index],
+                         static_cast<float>(light.direction[0] / length),
+                         static_cast<float>(light.direction[1] / length),
+                         static_cast<float>(light.direction[2] / length));
+            pglUniform3f(uniforms.spotlightColor[index], static_cast<float>(light.color[0]),
+                         static_cast<float>(light.color[1]), static_cast<float>(light.color[2]));
+            constexpr double halfDegreesToRadians = 3.14159265358979323846 / 360.0;
+            pglUniform3f(
+                uniforms.spotlightParameters[index], static_cast<float>(light.range),
+                static_cast<float>(std::cos(light.innerAngleDegrees * halfDegreesToRadians)),
+                static_cast<float>(std::cos(light.outerAngleDegrees * halfDegreesToRadians)));
+        }
+    }
+    useProgram(previousProgram);
+}
+
+void setWeatherFog(std::optional<double> visibilityMeters,
+                   std::optional<double> layerHeightMeters) {
+    if (visibilityMeters && (!std::isfinite(*visibilityMeters) || *visibilityMeters < 0.0)) {
+        throw std::invalid_argument("Weather visibility must be finite and non-negative");
+    }
+    if (layerHeightMeters && (!std::isfinite(*layerHeightMeters) || *layerHeightMeters < 0.0 ||
+                              *layerHeightMeters > std::numeric_limits<float>::max())) {
+        throw std::invalid_argument("Weather fog height must be finite and non-negative");
+    }
+    const float density =
+        visibilityMeters ? static_cast<float>(3.912023005428146 / std::max(*visibilityMeters, 1.0))
+                         : 0.0F;
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry : fogUniforms) {
+        if (entry.program == 0) {
+            continue;
+        }
+        useProgram(entry.program);
+        pglUniform1f(entry.density, density);
+        pglUniform1f(entry.layerHeight,
+                     layerHeightMeters ? static_cast<float>(*layerHeightMeters) : -1.0F);
+    }
+    useProgram(previousProgram);
+}
+
+void setWeatherFogView(const Matrix4& view, double groundHeightMeters) {
+    const double eyeZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
+    const double height = eyeZ - groundHeightMeters;
+    const double maxFloat = std::numeric_limits<float>::max();
+    if (!std::isfinite(height) || std::abs(height) > maxFloat || !std::isfinite(view[8]) ||
+        !std::isfinite(view[9]) || !std::isfinite(view[10]) || std::abs(view[8]) > maxFloat ||
+        std::abs(view[9]) > maxFloat || std::abs(view[10]) > maxFloat) {
+        throw std::invalid_argument("Weather fog camera or ground height is invalid");
+    }
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry : fogUniforms) {
+        if (entry.program == 0)
+            continue;
+        useProgram(entry.program);
+        pglUniform1f(entry.cameraHeight, static_cast<float>(height));
+        pglUniform3f(entry.worldUp, static_cast<float>(view[8]), static_cast<float>(view[9]),
+                     static_cast<float>(view[10]));
+    }
+    useProgram(previousProgram);
+}
+
+std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness) {
+    if (brightness && (!std::isfinite(*brightness) || *brightness < 0.0 || *brightness > 1.0)) {
+        throw std::invalid_argument("Weather brightness must be finite and between 0 and 1");
+    }
+    const float value = static_cast<float>(brightness.value_or(1.0));
+    return {0.45F * value, 0.65F * value, 0.88F * value};
+}
+
+void setWeatherLighting(std::optional<double> brightness) {
+    const auto color = weatherBackgroundColor(brightness);
+    const float value = static_cast<float>(brightness.value_or(1.0));
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry :
+         {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms},
+          std::pair{environmentProgram, &environmentUniforms}}) {
+        if (entry.first == 0) {
+            continue;
+        }
+        useProgram(entry.first);
+        pglUniform1f(entry.second->ambientLight, 0.58F * value);
+        pglUniform1f(entry.second->diffuseLight, 0.42F * value);
+        pglUniform1f(entry.second->weatherBrightness, value);
+        pglUniform3f(entry.second->fogColor, color[0], color[1], color[2]);
+    }
+    useProgram(previousProgram);
+}
+
+void drawWeatherClouds(std::optional<openbus::WeatherCloudType> type,
+                       std::optional<double> baseAboveGroundMeters,
+                       std::optional<double> windDirectionDegrees,
+                       std::optional<double> windSpeedMetersPerSecond,
+                       std::optional<double> visibilityMeters, std::optional<double> brightness,
+                       double groundHeightMeters, double simulationSeconds) {
+    if (!type) {
+        return;
+    }
+    openbus::WeatherState settings;
+    settings.cloudType = type;
+    settings.cloudBaseAboveGroundMeters = baseAboveGroundMeters;
+    settings.windDirectionDegrees = windDirectionDegrees;
+    settings.windSpeedMetersPerSecond = windSpeedMetersPerSecond;
+    settings.visibilityMeters = visibilityMeters;
+    settings.brightness = brightness;
+    openbus::validateWeatherState(settings);
+    if (!std::isfinite(groundHeightMeters) || !std::isfinite(simulationSeconds)) {
+        throw std::invalid_argument("Cloud ground height and simulation time must be finite");
+    }
+    const Matrix4& view = modelViewMatrix();
+    const Matrix4& projection = projectionMatrix();
+    const double eyeX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
+    const double eyeY = -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]);
+    const double eyeZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
+    const double direction = windDirectionDegrees.value_or(0.0) * 3.14159265358979323846 / 180.0;
+    const double distance = windDirectionDegrees && windSpeedMetersPerSecond
+                                ? *windSpeedMetersPerSecond * simulationSeconds
+                                : 0.0;
+    const double originX = eyeX + std::sin(direction) * distance;
+    const double originY = eyeY + std::cos(direction) * distance;
+    const double height = groundHeightMeters + baseAboveGroundMeters.value_or(1500.0) - eyeZ;
+    if (!std::isfinite(originX) || !std::isfinite(originY) || !std::isfinite(height) ||
+        !std::isfinite(projection[0]) || !std::isfinite(projection[5]) || projection[0] == 0.0 ||
+        projection[5] == 0.0) {
+        throw std::invalid_argument("Cloud camera or wind state is invalid");
+    }
+    std::array<GLfloat, 16> viewFloat = {};
+    for (std::size_t i = 0; i < view.size(); ++i) {
+        viewFloat[i] = static_cast<GLfloat>(view[i]);
+    }
+    const auto background = weatherBackgroundColor(brightness);
+    const GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blend = glIsEnabled(GL_BLEND);
+    const GLboolean cull = glIsEnabled(GL_CULL_FACE);
+    GLboolean depthWrite = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+    useProgram(cloudProgram);
+    pglBindVertexArray(primitiveVertexArray);
+    currentVertexArray = primitiveVertexArray;
+    pglUniformMatrix4fv(cloudView, 1, GL_FALSE, viewFloat.data());
+    pglUniform2f(cloudProjectionScale, static_cast<float>(projection[0]),
+                 static_cast<float>(projection[5]));
+    constexpr double cloudPeriodMeters = 1800.0 * 1024.0;
+    pglUniform2f(cloudOrigin, static_cast<float>(std::fmod(originX, cloudPeriodMeters)),
+                 static_cast<float>(std::fmod(originY, cloudPeriodMeters)));
+    pglUniform1f(cloudHeight,
+                 static_cast<float>(std::clamp(height, -openbus::MAX_CLOUD_BASE_ABOVE_GROUND_METERS,
+                                               openbus::MAX_CLOUD_BASE_ABOVE_GROUND_METERS)));
+    pglUniform1i(cloudStyle, static_cast<int>(*type));
+    pglUniform1f(fogUniforms[3].density,
+                 visibilityMeters
+                     ? static_cast<float>(3.912023005428146 / std::max(*visibilityMeters, 1.0))
+                     : 0.0F);
+    pglUniform1f(cloudBrightness, static_cast<float>(brightness.value_or(1.0)));
+    pglUniform3f(cloudBackground, background[0], background[1], background[2]);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDepthMask(depthWrite);
+    if (depthTest)
+        glEnable(GL_DEPTH_TEST);
+    if (blend)
+        glEnable(GL_BLEND);
+    if (cull)
+        glEnable(GL_CULL_FACE);
+}
+
+void drawWeatherPrecipitation(int type, double rate, double simulationSeconds,
+                              std::optional<double> windDirectionDegrees,
+                              std::optional<double> windSpeedMetersPerSecond,
+                              std::optional<double> brightness,
+                              std::optional<double> visibilityMeters) {
+    openbus::WeatherState settings;
+    settings.precipitationType = type;
+    settings.precipitationRate = rate;
+    settings.windDirectionDegrees = windDirectionDegrees;
+    settings.windSpeedMetersPerSecond = windSpeedMetersPerSecond;
+    settings.brightness = brightness;
+    settings.visibilityMeters = visibilityMeters;
+    openbus::validateWeatherState(settings);
+    if (!std::isfinite(simulationSeconds) || simulationSeconds < 0.0)
+        throw std::invalid_argument(
+            "Precipitation simulation time must be finite and non-negative");
+    if (type == 0 || rate == 0.0)
+        return;
+
+    const Matrix4& view = modelViewMatrix();
+    const Matrix4& projection = projectionMatrix();
+    const std::array<double, 3> eye = {
+        -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]),
+        -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]),
+        -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])};
+    std::array<GLfloat, 16> rotation = {};
+    std::array<GLfloat, 16> projectionFloat = {};
+    for (std::size_t i = 0; i < view.size(); ++i) {
+        if (!std::isfinite(view[i]) || !std::isfinite(projection[i]) ||
+            std::abs(view[i]) > std::numeric_limits<float>::max() ||
+            std::abs(projection[i]) > std::numeric_limits<float>::max())
+            throw std::invalid_argument("Precipitation camera matrices are invalid");
+        rotation[i] = static_cast<float>(view[i]);
+        projectionFloat[i] = static_cast<float>(projection[i]);
+    }
+    for (double coordinate : eye) {
+        if (!std::isfinite(coordinate))
+            throw std::invalid_argument("Precipitation camera position is invalid");
+    }
+    rotation[12] = rotation[13] = rotation[14] = 0.0F;
+    const double direction = windDirectionDegrees.value_or(0.0) * 3.14159265358979323846 / 180.0;
+    const double speed = windDirectionDegrees && windSpeedMetersPerSecond
+                             ? std::min(*windSpeedMetersPerSecond, 50.0)
+                             : 0.0;
+    const double windX = -std::sin(direction) * speed;
+    const double windY = -std::cos(direction) * speed;
+    const auto offset = [simulationSeconds](double velocity) {
+        return velocity == 0.0 ? 0.0
+                               : std::fmod(simulationSeconds, 24.0 / std::abs(velocity)) * velocity;
+    };
+    const double fallSpeed = type == 1 ? -9.0 : -1.2;
+    const GLuint previousProgram = currentProgram;
+    const GLuint previousVertexArray = currentVertexArray;
+    const GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blend = glIsEnabled(GL_BLEND);
+    const GLboolean programPointSize = glIsEnabled(GL_PROGRAM_POINT_SIZE);
+    GLboolean depthWrite = GL_FALSE;
+    GLint depthFunction = 0;
+    GLint srcRgb = 0, dstRgb = 0, srcAlpha = 0, dstAlpha = 0, equationRgb = 0, equationAlpha = 0;
+    GLfloat lineWidth = 0, pointSize = 0;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    glGetIntegerv(GL_DEPTH_FUNC, &depthFunction);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &srcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &srcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &equationRgb);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &equationAlpha);
+    glGetFloatv(GL_LINE_WIDTH, &lineWidth);
+    glGetFloatv(GL_POINT_SIZE, &pointSize);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    pglBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    pglBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_PROGRAM_POINT_SIZE);
+    glLineWidth(1.0F);
+    glPointSize(2.0F);
+    useProgram(precipitationProgram);
+    pglBindVertexArray(precipitationVertexArray);
+    currentVertexArray = precipitationVertexArray;
+    pglUniformMatrix4fv(precipitationView, 1, GL_FALSE, rotation.data());
+    pglUniformMatrix4fv(precipitationProjection, 1, GL_FALSE, projectionFloat.data());
+    pglUniform3f(precipitationEye, static_cast<float>(std::fmod(eye[0], 24.0)),
+                 static_cast<float>(std::fmod(eye[1], 24.0)),
+                 static_cast<float>(std::fmod(eye[2], 24.0)));
+    pglUniform3f(precipitationOffset, static_cast<float>(offset(windX)),
+                 static_cast<float>(offset(windY)), static_cast<float>(offset(fallSpeed)));
+    pglUniform2f(precipitationWind, static_cast<float>(windX), static_cast<float>(windY));
+    pglUniform1i(precipitationType, type);
+    pglUniform1f(precipitationBrightness, static_cast<float>(brightness.value_or(1.0)));
+    pglUniform1f(fogUniforms[4].density,
+                 visibilityMeters
+                     ? static_cast<float>(3.912023005428146 / std::max(*visibilityMeters, 1.0))
+                     : 0.0F);
+    const GLsizei particles = static_cast<GLsizei>(std::lround(rate * (type == 1 ? 12000 : 6000)));
+    glDrawArrays(type == 1 ? GL_LINES : GL_POINTS, 0, particles * (type == 1 ? 2 : 1));
+    glLineWidth(lineWidth);
+    glPointSize(pointSize);
+    if (programPointSize)
+        glEnable(GL_PROGRAM_POINT_SIZE);
+    pglBlendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha);
+    pglBlendEquationSeparate(equationRgb, equationAlpha);
+    if (!blend)
+        glDisable(GL_BLEND);
+    glDepthFunc(depthFunction);
+    glDepthMask(depthWrite);
+    if (!depthTest)
+        glDisable(GL_DEPTH_TEST);
+    pglBindVertexArray(previousVertexArray);
+    currentVertexArray = previousVertexArray;
     useProgram(previousProgram);
 }
 

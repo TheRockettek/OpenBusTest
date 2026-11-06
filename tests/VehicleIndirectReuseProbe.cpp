@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <future>
@@ -28,8 +29,8 @@ struct VehicleTextureLookupProbe {
             }
         } directoryGuard{root};
         std::ofstream mesh(root / "display.obj");
-        mesh << "v -2 -2 -4\nv 2 -2 -4\nv 2 2 -4\nv -2 2 -4\n"
-                "f 1 2 3\nf 1 3 4\n";
+        mesh << "v -2 -4 -2\nv 2 -4 -2\nv 2 -4 2\nv -2 -4 2\n"
+                "f 1 2 3\nf 1 3 4\nf 3 2 1\nf 4 3 1\n";
         mesh.close();
         const auto writeTga = [&](const std::string& name, std::uint8_t red,
                                   std::uint8_t green, std::uint8_t blue) {
@@ -53,6 +54,7 @@ struct VehicleTextureLookupProbe {
         std::ofstream config(root / "model.cfg");
         config << "[mesh]\ndisplay.obj\n"
                   "[matl]\nbase.tga\n0\n"
+                  "[matl_nightmap]\nblue.tga\n"
                   "[matl_change]\nbase.tga\n0\nmaterial_mode\n"
                   "[matl_item]\n[matl_lightmap]\nred.tga\nbrightness\n"
                   "[matl_item]\n[matl_lightmap]\nblue.tga\nbrightness\n";
@@ -125,8 +127,46 @@ struct VehicleTextureLookupProbe {
             }
             return pixel;
         };
-        if (!selectAndLoad(0.0, {}) || vehicle.displayLists[0].batches[0].selectedMaterialItem ||
-            !selectAndLoad(1.0, "red.tga") ||
+        if (!selectAndLoad(0.0, {}) || vehicle.displayLists[0].batches[0].selectedMaterialItem) {
+            std::cerr << "base material did not load\n";
+            return false;
+        }
+        Vehicle::Batch& baseBatch = vehicle.displayLists[0].batches[0];
+        for (int attempt = 0; attempt < 200 && baseBatch.nightmap.texture == 0; ++attempt) {
+            vehicle.drawBatch(baseBatch, 1.0);
+            std::this_thread::sleep_for(5ms);
+        }
+        if (baseBatch.nightmap.texture == 0) {
+            std::cerr << "base vehicle nightmap did not load\n";
+            return false;
+        }
+        SystemVariables system;
+        auto weather = system.weather();
+        const auto drawWeather = [&](double brightness) {
+            weather.brightness = brightness;
+            system.setWeather(weather);
+            vehicle.variables.updateEnvironment(system);
+            setWeatherLighting(weather.brightness);
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            vehicle.drawBatch(baseBatch, 1.0);
+            std::array<std::uint8_t, 4> result = {};
+            glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+            return result;
+        };
+        const auto day = drawWeather(1.0);
+        const auto night = drawWeather(0.0);
+        setWeatherLighting(std::nullopt);
+        if (day[3] == 0 || day[0] < 100 || night[2] < 250 || night[0] > 2 || night[1] > 2) {
+            std::cerr << "vehicle nightmap did not follow weather brightness: day="
+                      << static_cast<int>(day[0]) << ',' << static_cast<int>(day[1]) << ','
+                      << static_cast<int>(day[2]) << ',' << static_cast<int>(day[3])
+                      << " night=" << static_cast<int>(night[0]) << ','
+                      << static_cast<int>(night[1]) << ',' << static_cast<int>(night[2]) << ','
+                      << static_cast<int>(night[3]) << '\n';
+            return false;
+        }
+        if (!selectAndLoad(1.0, "red.tga") ||
             !vehicle.displayLists[0].batches[0].selectedMaterialItem) {
             std::cerr << "first controller-selected material texture did not load\n";
             return false;
@@ -890,7 +930,7 @@ int main(int argc, char** argv) {
                 batch == &transparent ? transparentVertices.data() : vertices.data();
             const std::size_t batchVertexBytes =
                 batch == &transparent ? sizeof(transparentVertices) : sizeof(vertices);
-            pglBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(batchVertexBytes),
+            pglBufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(batchVertexBytes),
                           batchVertices, GL_STATIC_DRAW);
             part.batches.push_back(std::move(*batch));
         }

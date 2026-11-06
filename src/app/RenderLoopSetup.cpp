@@ -1,4 +1,5 @@
 #include "app/RenderLoopInternal.h"
+#include "app/CustomWeatherUi.h"
 #include "app/ImGuiLayer.h"
 #include "app/ScopedSwapInterval.h"
 #include "app/SteamPresence.h"
@@ -1282,6 +1283,249 @@ void RenderLoop::drawPauseMenuUi() {
     if (ImGui::Button("Resume", ImVec2(260.0F, 36.0F))) {
         pauseMenuOpen_ = false;
         setPausedState(false);
+    }
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Weather")) {
+        if (!weatherPresetsLoaded_) {
+            try {
+                weatherPresets_ =
+                    openbus::config::discoverWeatherPresets(weatherPresetRoot_ / "Weather");
+                weatherPresetError_.clear();
+                selectedWeatherPreset_ = 0;
+            } catch (const std::exception& error) {
+                weatherPresets_.clear();
+                weatherPresetError_ =
+                    "Could not load weather presets: " + std::string(error.what());
+                gameLog.Error(weatherPresetError_);
+            }
+            weatherPresetsLoaded_ = true;
+        }
+        if (!weatherPresetError_.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0F, 0.4F, 0.4F, 1.0F));
+            ImGui::TextWrapped("%s", weatherPresetError_.c_str());
+            ImGui::PopStyleColor();
+        }
+        if (ImGui::Button("Reload presets"))
+            weatherPresetsLoaded_ = false;
+        if (!weatherPresets_.empty()) {
+            selectedWeatherPreset_ = std::min(selectedWeatherPreset_, weatherPresets_.size() - 1);
+        }
+        const char* selectedPreset = weatherPresets_.empty()
+                                         ? "No presets available"
+                                         : weatherPresets_[selectedWeatherPreset_].name.c_str();
+        if (ImGui::BeginCombo("Preset to apply", selectedPreset)) {
+            for (std::size_t i = 0; i < weatherPresets_.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Selectable(weatherPresets_[i].name.c_str(),
+                                      i == selectedWeatherPreset_)) {
+                    selectedWeatherPreset_ = i;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::BeginDisabled(weatherPresets_.empty());
+        if (ImGui::Button("Apply preset")) {
+            try {
+                const auto loaded = openbus::config::loadWeatherPreset(
+                    weatherPresets_[selectedWeatherPreset_].path);
+                SetWeather(loaded.weather);
+                simulationState_.sharedVariables().seedRoadWeatherFromPreset();
+                weatherSelection_.discardPending();
+                weatherUiMessage_ =
+                    "Applied preset: " + weatherPresets_[selectedWeatherPreset_].name + ".";
+                if (!loaded.warnings.empty()) {
+                    weatherUiMessage_ += " Some fields are approximate or unsupported; see log.";
+                    for (const auto& warning : loaded.warnings)
+                        gameLog.Warning(warning);
+                }
+                weatherUiError_ = false;
+                gameLog.Log(weatherUiMessage_);
+            } catch (const std::exception& error) {
+                weatherUiMessage_ = "Could not apply weather preset: " + std::string(error.what());
+                weatherUiError_ = true;
+                gameLog.Error(weatherUiMessage_);
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SeparatorText("Custom weather");
+        if (ImGui::Button("Configure custom weather")) {
+            try {
+                customWeatherDraft_ = simulationState_.sharedVariables().weather();
+                customWeatherError_.clear();
+                ImGui::OpenPopup("Custom weather");
+            } catch (const std::exception& error) {
+                weatherUiMessage_ = "Could not read current weather: " + std::string(error.what());
+                weatherUiError_ = true;
+                gameLog.Error(weatherUiMessage_);
+            }
+        }
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5F,
+                                       viewport->WorkPos.y + viewport->WorkSize.y * 0.5F),
+                                ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
+        ImGui::SetNextWindowSize(ImVec2(std::min(650.0F, viewport->WorkSize.x * 0.9F),
+                                        std::min(700.0F, viewport->WorkSize.y * 0.9F)),
+                                 ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("Custom weather", nullptr,
+                                   ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_NoSavedSettings)) {
+            const auto action =
+                openbus::drawCustomWeatherEditor(customWeatherDraft_, customWeatherError_);
+            if (action == openbus::CustomWeatherAction::Apply) {
+                try {
+                    SetWeather(openbus::customWeatherFromDraft(customWeatherDraft_));
+                    weatherSelection_.discardPending();
+                    weatherUiMessage_ = "Applied custom weather.";
+                    weatherUiError_ = false;
+                    gameLog.Log(weatherUiMessage_);
+                    ImGui::CloseCurrentPopup();
+                } catch (const std::exception& error) {
+                    customWeatherError_ =
+                        "Could not apply custom weather: " + std::string(error.what());
+                    gameLog.Error(customWeatherError_);
+                }
+            }
+            if (action == openbus::CustomWeatherAction::Cancel)
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        if (ImGui::Button("Manage accumulated surface conditions"))
+            ImGui::OpenPopup("Surface conditions");
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5F,
+                                       viewport->WorkPos.y + viewport->WorkSize.y * 0.5F),
+                                ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
+        ImGui::SetNextWindowSize(ImVec2(std::min(550.0F, viewport->WorkSize.x * 0.9F),
+                                        std::min(350.0F, viewport->WorkSize.y * 0.9F)),
+                                 ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("Surface conditions", nullptr,
+                                   ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_NoSavedSettings)) {
+            auto& system = simulationState_.sharedVariables();
+            if (const auto action = openbus::drawSurfaceWeatherControls(system.roadWeather()))
+                system.applySurfaceWeatherAction(*action);
+            if (ImGui::Button("Close"))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        ImGui::SeparatorText("Fog layer");
+        const auto currentFogHeight =
+            simulationState_.sharedVariables().weatherFogTopAboveGroundMeters();
+        bool useFogHeight = currentFogHeight.has_value();
+        double fogHeight = currentFogHeight.value_or(100.0);
+        ImGui::BeginDisabled(weatherSelection_.pending());
+        const bool fogEnabledChanged = ImGui::Checkbox("Limit fog by height", &useFogHeight);
+        ImGui::BeginDisabled(!useFogHeight);
+        const bool fogHeightChanged =
+            ImGui::InputDouble("Fog layer height (m)", &fogHeight, 0.0, 0.0, "%.1f",
+                               ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        if (fogEnabledChanged || fogHeightChanged) {
+            try {
+                auto weather = simulationState_.sharedVariables().weather();
+                weather.fogTopAboveGroundMeters =
+                    useFogHeight ? std::optional<double>{fogHeight} : std::nullopt;
+                SetWeather(weather);
+                weatherUiMessage_ = "Fog layer updated for the current weather.";
+                weatherUiError_ = false;
+                gameLog.Log(weatherUiMessage_);
+            } catch (const std::exception& error) {
+                weatherUiMessage_ = "Could not update fog layer: " + std::string(error.what());
+                weatherUiError_ = true;
+                gameLog.Error(weatherUiMessage_);
+            }
+        }
+        ImGui::TextDisabled("New presets and METAR reports replace this override.");
+        ImGui::SeparatorText("NOAA METAR");
+        if (!weatherStationsLoaded_) {
+            try {
+                weatherStations_ = openbus::metarStations();
+                weatherStationError_.clear();
+            } catch (const std::exception& error) {
+                weatherStationError_ =
+                    "Could not load METAR stations: " + std::string(error.what());
+                gameLog.Error(weatherStationError_);
+            }
+            weatherStationsLoaded_ = true;
+            if (!activeMetarStations_.pending()) {
+                try {
+                    activeMetarStations_.request();
+                } catch (const std::exception& error) {
+                    weatherStationError_ += " Could not start NOAA station directory request: " +
+                                            std::string(error.what());
+                    gameLog.Error(weatherStationError_);
+                }
+            }
+        }
+        if (!weatherStationError_.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0F, 0.4F, 0.4F, 1.0F));
+            ImGui::TextWrapped("%s", weatherStationError_.c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::Button("Retry station catalogue"))
+                weatherStationsLoaded_ = false;
+        }
+        if (activeMetarStations_.pending())
+            ImGui::TextDisabled("Refreshing recently updated NOAA stations...");
+        else if (activeMetarStations_.failed()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0F, 0.4F, 0.4F, 1.0F));
+            ImGui::TextWrapped("%s", activeMetarStations_.status().c_str());
+            ImGui::PopStyleColor();
+            if (recentWeatherStationsAvailable_)
+                ImGui::TextWrapped("The previous activity list is retained.");
+        } else if (recentWeatherStationsAvailable_)
+            ImGui::TextWrapped("%s", activeMetarStations_.status().c_str());
+        if (!recentWeatherStationsAvailable_)
+            ImGui::TextWrapped("The full catalogue, if available, is shown until NOAA activity "
+                               "is loaded.");
+        ImGui::BeginDisabled(activeMetarStations_.pending());
+        if (ImGui::Button("Refresh active stations")) {
+            try {
+                activeMetarStations_.request();
+            } catch (const std::exception& error) {
+                weatherStationError_ =
+                    "Could not start NOAA station directory request: " + std::string(error.what());
+                gameLog.Error(weatherStationError_);
+            }
+        }
+        ImGui::EndDisabled();
+        openbus::drawMetarStationPicker(weatherStationPicker_, recentWeatherStationsAvailable_
+                                                                   ? recentWeatherStations_
+                                                                   : weatherStations_);
+        ImGui::BeginDisabled(weatherStationPicker_.code[0] == '\0' || weatherSelection_.pending());
+        if (ImGui::Button("Fetch and apply METAR")) {
+            try {
+                weatherSelection_.requestMetar(weatherStationPicker_.code.data());
+                weatherUiMessage_ = weatherSelection_.status();
+                weatherUiError_ = false;
+            } catch (const std::exception& error) {
+                weatherUiMessage_ = "Could not start METAR request: " + std::string(error.what());
+                weatherUiError_ = true;
+                gameLog.Error(weatherUiMessage_);
+            }
+        }
+        ImGui::EndDisabled();
+        if (weatherSelection_.pending()) {
+            ImGui::TextDisabled("A METAR request is in progress.");
+        }
+        if (!weatherUiMessage_.empty()) {
+            if (weatherUiError_) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0F, 0.4F, 0.4F, 1.0F));
+                ImGui::TextWrapped("%s", weatherUiMessage_.c_str());
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::TextWrapped("%s", weatherUiMessage_.c_str());
+            }
+        }
+        if (weatherSelection_.activeStation()) {
+            ImGui::Text("Automatic refresh: %s every 10 minutes",
+                        weatherSelection_.activeStation()->c_str());
+            if (ImGui::Button("Stop automatic METAR updates")) {
+                weatherSelection_.discardPending();
+                weatherUiMessage_ = "Automatic METAR updates stopped; current weather retained.";
+                weatherUiError_ = false;
+                gameLog.Log(weatherUiMessage_);
+            }
+        }
     }
     ImGui::Separator();
     if (playerTimetable_.state) {

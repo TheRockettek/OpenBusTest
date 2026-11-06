@@ -2,6 +2,7 @@
 
 #include "core/BusTypes.h"
 #include "app/FrameTiming.h"
+#include "app/MetarStationUi.h"
 #include "app/traffic/PassengerNetwork.h"
 #include "app/traffic/PassengerApproach.h"
 #include "app/traffic/PlayerTimetableController.h"
@@ -15,9 +16,12 @@
 #include "audio/SoundEngine.h"
 #include "config/VehicleConfigLoader.h"
 #include "config/VehicleCatalog.h"
+#include "config/WeatherPresetLoader.h"
 #include "app/vehicle/VehiclePreferences.h"
 #include "core/Viewpoint.h"
 #include "core/Variables.h"
+#include "core/ActiveMetarStations.h"
+#include "core/WeatherSelection.h"
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
 
@@ -223,7 +227,11 @@ class RenderLoop {
     void SetWeather(int precipitationType, double precipitationRate);
     void SetWeather(int precipitationType, double precipitationRate, double temperatureCelsius,
                     double absoluteHumidityGramsPerCubicMeter);
+    void SetWeather(const openbus::WeatherState& weather);
+    void EnableMetarRefresh(const std::string& station,
+                            const openbus::WeatherState& initialWeather);
     void SetAutoClutch(bool enabled);
+    void ConfigureDayNight(double latitudeDegrees);
     void SetSunAltitude(double altitudeDegrees);
 
     void SetPlayerVehicle(Vehicle* vehicle);
@@ -328,6 +336,23 @@ class RenderLoop {
     bool pauseMenuOpen_ = false;
     bool debugMenuOpen_ = false;
     bool debugCalendarInitialized_ = false;
+    openbus::WeatherSelection weatherSelection_;
+    openbus::ActiveMetarStations activeMetarStations_;
+    std::vector<openbus::MetarStation> weatherStations_;
+    std::vector<openbus::MetarStation> recentWeatherStations_;
+    bool recentWeatherStationsAvailable_ = false;
+    bool weatherStationsLoaded_ = false;
+    std::string weatherStationError_;
+    std::size_t selectedWeatherPreset_ = 0;
+    std::filesystem::path weatherPresetRoot_;
+    std::vector<openbus::config::WeatherPresetFile> weatherPresets_;
+    bool weatherPresetsLoaded_ = false;
+    std::string weatherPresetError_;
+    openbus::MetarStationPicker weatherStationPicker_;
+    std::string weatherUiMessage_;
+    bool weatherUiError_ = false;
+    openbus::WeatherState customWeatherDraft_;
+    std::string customWeatherError_;
     bool quitToMenuRequested_ = false;
     std::optional<MapCalendarRequest> mapCalendarRequestPending_;
     int debugCalendarYear_ = 0;

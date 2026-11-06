@@ -1549,6 +1549,7 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
     }
     simulation.setPassengerMassPoints(passengerMassPoints);
     updateScripts();
+    simulation.setRoadWeather(simulationState_.sharedVariables().roadWeather());
     const double simulationTime = simulation.simulationTime();
     std::erase_if(passengerCoinAnimations_,
                   [simulationTime](const PassengerCoinAnimation& animation) {
@@ -1659,7 +1660,9 @@ void RenderLoop::updateNonPlayerSoundListenerGain() {
 void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
     const double simulationTime = simulation.simulationTime();
     if (hasPreviousCalendarSimulationTime_ && simulationTime >= previousCalendarSimulationTime_) {
-        calendarElapsedSeconds_ += simulationTime - previousCalendarSimulationTime_;
+        const double elapsed = simulationTime - previousCalendarSimulationTime_;
+        calendarElapsedSeconds_ += elapsed;
+        simulationState_.sharedVariables().advanceRoadWeather(elapsed);
     }
     previousCalendarSimulationTime_ = simulationTime;
     hasPreviousCalendarSimulationTime_ = true;

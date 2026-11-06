@@ -2,6 +2,7 @@
 
 #include "render/CameraMath.h"
 #include "render/GlCompat.h"
+#include "core/WeatherState.h"
 
 #include <array>
 #include <cstddef>
@@ -12,6 +13,17 @@
 namespace openbus::rendering {
 
 constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
+constexpr std::size_t MAX_VEHICLE_SPOTLIGHTS = 8;
+
+struct VehicleSpotlight {
+    std::array<double, 3> position = {};
+    std::array<double, 3> direction = {};
+    std::array<double, 3> color = {};
+    double range = 0.0;
+    double innerAngleDegrees = 0.0;
+    double outerAngleDegrees = 0.0;
+};
+
 enum class HumanBoneSlot : std::uint8_t {
     LeftUpperLeg = 0,
     RightUpperLeg = 1,
@@ -78,6 +90,7 @@ struct ModelMaterial {
     std::array<float, 3> specularColor = {};
     std::array<float, 3> emissionColor = {};
     float specularPower = 8.0F;
+    float snowCoverage = 0.0F;
     bool flipTransmapY = false;
     GLuint bumpmap = 0;
     GLuint environmentMap = 0;
@@ -90,6 +103,7 @@ struct ModelMaterial {
     bool useEnvironmentMap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
+    bool weatherLitDynamicTexture = false;
     bool useInteriorLight = false;
     bool flipTextureY = false;
     float lightmapStrength = 0.0f;
@@ -145,7 +159,32 @@ void invalidateTextureBindings();
 // retain a deleted name that OpenGL may later reuse.
 void deleteRendererBuffers(GLsizei count, const GLuint* buffers);
 // Call with the camera view before applying any object transforms.
-void setLightingViewMatrix(const Matrix4& view);
+void setLightingViewMatrix(const Matrix4& view,
+                           std::optional<std::array<double, 3>> sunDirection = std::nullopt);
+// Positions and directions are in the current view space.
+void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights);
+// An absent brightness preserves the renderer's default daylight appearance.
+std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness);
+void setWeatherLighting(std::optional<double> brightness);
+// Visibility is the distance at which approximately 2% of scene contrast remains.
+// An absent value disables fog.
+void setWeatherFog(std::optional<double> visibilityMeters,
+                   std::optional<double> layerHeightMeters = std::nullopt);
+// Call after setting each camera view; ground height is the local terrain reference.
+void setWeatherFogView(const Matrix4& view, double groundHeightMeters);
+// Draws an optional procedural cloud plane into the current view before scene geometry.
+void drawWeatherClouds(std::optional<openbus::WeatherCloudType> type,
+                       std::optional<double> baseAboveGroundMeters,
+                       std::optional<double> windDirectionDegrees,
+                       std::optional<double> windSpeedMetersPerSecond,
+                       std::optional<double> visibilityMeters, std::optional<double> brightness,
+                       double groundHeightMeters, double simulationSeconds);
+// Draw a bounded camera-near, depth-tested world-space precipitation field.
+void drawWeatherPrecipitation(int type, double rate, double simulationSeconds,
+                              std::optional<double> windDirectionDegrees,
+                              std::optional<double> windSpeedMetersPerSecond,
+                              std::optional<double> brightness,
+                              std::optional<double> visibilityMeters);
 void configureModelAlphaState(int alphaMode, bool noZwrite);
 // Frame-local total of triangle primitives submitted through the renderer.
 void resetFrameTriangleCount();

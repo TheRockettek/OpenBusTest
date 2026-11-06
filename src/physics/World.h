@@ -48,6 +48,7 @@ class World {
     dWorldID physicsWorld() const;
     dSpaceID collisionSpace() const;
     dJointGroupID contactGroup() const;
+    std::optional<CollisionSurface> collisionSurface(dGeomID geometry, int triangle) const;
     bool isMapPoleGeometry(dGeomID geometry) const;
     void recordMapPoleContact(dGeomID geometry);
     void recordMapPoleImpact(dGeomID geometry, dBodyID vehicleBody, const dContactGeom& contact);

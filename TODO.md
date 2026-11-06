@@ -22,6 +22,133 @@ configuration behavior, and regression evidence all exist.
 6. [Rendering and platform completeness](#6-rendering-and-platform-completeness)
 7. [Final release gate](#7-final-release-gate)
 
+## Lighting and weather development plan
+
+The current weather path initializes precipitation, temperature, humidity and
+an approximate, clock-driven sun altitude. Rain/snow use a bounded, depth-tested
+GPU field in exterior/free-camera views; map/vehicle nightmaps and interior lights
+have partial support. The following stages are incomplete and do not imply
+verified OMSI parity:
+
+- [~] Establish a validated shared weather snapshot with explicit units and
+  optional unknown observations. Precipitation, temperature and absolute
+  humidity are published to the existing system variables; the additional
+  observations are retained; visibility drives approximate GPU distance fog,
+  optional manual brightness drives surface lighting and nightmaps, and the
+  optional cloud style, base and wind drive a procedural GPU layer. Other
+  observations are not yet consumed by the renderer or physics. Runtime weather
+  can be edited in the pause menu; transitions and per-vehicle exposure remain
+  incomplete.
+- [~] Add user-defined weather configuration and a METAR adapter. Specify
+  station selection, report age, refresh, timeouts, offline behavior, units,
+  missing/variable observations and error reporting; test parsing independently
+  of the network. Do not equate METAR cloud cover codes with OMSI cloud types
+  without a documented mapping. An offline METAR observation parser now retains
+  missing and bounded observations, cloud layers, altimeter settings, weather
+  groups and unparsed tokens; bounded dew-point, absolute-humidity and
+  relative-humidity conversions are tested and exposed in the custom editor.
+  These approximations are not validated against OMSI. Altimeter settings are
+  not station pressure.
+  `OPENBUS_METAR_STATION` fetches NOAA station reports at startup with bounded
+  requests and freshness checks, applying supported observations with explicit
+  precipitation approximations and rejecting incomplete or unsupported reports.
+  The pause menu can apply installed `.owt` presets, fetch a worldwide station
+  asynchronously from the bundled CSV catalogue or a directly entered ICAO code,
+  or apply a validated custom configuration, with explicit failure and
+  stale-request handling. Active METAR stations refresh every ten minutes of real
+  time, retaining current weather on failures and retrying. Several `.owt`
+  conversions are approximations; some accumulation fields remain unapplied.
+  The station picker uses NOAA's directory modification times to show stations
+  updated within the last hour, with background refresh and explicit fallback;
+  actual report freshness and supported observations are checked on fetch.
+  Preset fog height, optional precipitation parameters, ground-wetness values
+  and presence-only snow flags are retained in the weather snapshot so later
+  rendering and surface physics can consume them without reloading the file.
+  Native analysis: `FUN_00753658` reads the preset temperature pair and the
+  same offsets are populated from the METAR temperature/dew-point group in
+  `FUN_0063cef0`. `FUN_007d2500` normalizes the precipitation byte by 255
+  before a separate squared use. `FUN_007e0368` reads the first ground-wet
+  value divided by 79 and the third by 255 for certain surface flags; its
+  complete surface/ice behavior is not yet mapped into OpenBus.
+  `FUN_006ff0fc` publishes the preset precipitation type unchanged and the
+  intensity byte divided by 255 to the native script variables; OpenBus now
+  uses the same 0/1/2 clear/rain/snow convention rather than its earlier 1/2/3.
+  This includes preserving nonzero intensity for clear presets. `FUN_00753224`
+  limits visibility to 100000/intensity for rain and 20000/intensity for snow
+  when intensity is nonzero; rendering applies these limits, using a continuous
+  0–255 intensity for non-preset sources.
+  `FUN_0063cef0` stores the numeric part of METAR Q pressure directly in the
+  same field loaded by `[press]`, supporting hectopascal units. OpenBus stores
+  that value but does not yet model pressure effects.
+  `FUN_00753224` derives a fog-height value for lighting, with special snow
+  handling, and `FUN_00752d38` combines it with an exponential visibility
+  term and cloud-dependent inputs. The conversion to an actual vertical layer
+  and the complete native lighting inputs remain unresolved; the preset value
+  is therefore not yet applied.
+  Automatic station selection, cloud-type mapping, broader
+  precipitation support and offline caching remain open.
+- [~] Compute sun direction and altitude from the simulation date/time and
+  map geographic coordinates; determine the supported coordinate/time-zone
+  source and keep an explicit manual override. Feed the same lighting state
+  to vehicle, scenery and terrain passes and their reflections, with
+  daylight/twilight/night and nightmap transition tests. An approximate
+  local-solar-time model now updates sun direction, altitude, daylight and
+  vehicle/scenery nightmaps, with configurable latitude and a manual altitude
+  override. Map-derived coordinates, time zones, native parity and visual
+  time-lapse validation remain open.
+- [~] Implement GPU-driven sky, cloud layers, fog and precipitation using
+  visibility, cloud base/type, wind and precipitation intensity. Preserve
+  alpha, depth, camera, reflection and indoor behavior; use bounded particle
+  resources and avoid per-frame CPU vertex generation. Add image-based GPU
+  tests, representative captures and CPU/GPU timing. Model and multi-material
+  shaders now support visibility-based distance fog, with a fixed background
+  color and fogged reflection views. An opt-in procedural cloud plane uses
+  camera orientation, approximate base height, wind, brightness and visibility
+  in main and reflection views; GPU image probes cover its basic behavior.
+  GPU rain and snow now use a bounded periodic world-space field, wind and
+  scene-depth occlusion in exterior/free-camera views.   A user-configurable approximate GPU fog layer now integrates ray distance
+  below a height above the player's local ground, including surfaces, clouds and
+  precipitation; its mapping to preset fog height is unresolved.
+  Native OMSI cloud and
+  precipitation assets, multiple or volumetric layers, sky illumination,
+  sheltered/interior and mirror precipitation,
+  representative captures and timings remain open.
+- [~] Define weather accumulation, drying, freezing and thawing over time;
+  connect texture surface classifications to wheel contact friction and water/
+  ice effects, without reducing grip merely because air temperature is low.
+  Spline-road texture classifications now reach individual wheel contacts;
+  global water and snow accumulation, drying, melt, preset wetness, gradual
+  freezing/thawing and authored snow/slush reduce grip approximately. Dry cold and
+  unclassified contacts keep existing grip. Deterministic accumulation,
+  dry/wet/ice braking and dry/ice steering are covered. Moisture-enabled spline
+  textures have approximate water-dependent GPU darkening and specular highlights;
+  classified spline textures blend toward snow color with accumulated snow.
+  Terrain base and blended texture layers also receive approximate GPU snow
+  shading, and ground snow reduces wheel grip on terrain; `[snow]` and
+  `[snowOnRoad]` seed terrain and road separately.
+  The pause menu can independently clear accumulated road water, road snow, or
+  road and ground snow without changing the current weather.
+  Framebuffer probes cover dry, wet, partial snow, full snow and layered terrain
+  on both culling backends. Spatial accumulation,
+  physical ice depth, shelter, terrain/scenery classification, puddle reflections,
+  scenery snow visuals, wet/icy terrain classification and native tire-force
+  parity remain open.
+- [~] Model window wetness and wiper clearing for `Rain_Window_Norm_Wetness`
+  and related script variables. Both script backends can run authored wetness
+  and wiper logic independently per vehicle, including zero-timegap behavior.
+  A fallback for vehicles without scripts, rain versus snow, sheltered/indoor
+  exposure, wind, vehicle motion and visual verification remain open.
+- [~] Implement per-vehicle cabin thermal state with ambient exchange, heating/
+  ventilation inputs, doors/windows and passenger contribution, using authored
+  scripts where they already supply behavior. Both script backends can run
+  authored cabin updates with ambient initialization, bus isolation and
+  zero-timegap behavior. A fallback for vehicles without authored thermal
+  simulation, detailed thermal inputs, extreme values and visual verification
+  remain open; avoid double-applying heat.
+- [ ] Validate the combined system on real maps and buses across clear, fog,
+  rain, snow, ice, day/night and cabin heating. Record unsupported controls,
+  missing data and native OMSI comparisons separately from local regressions.
+
 ## 1. Lock down physics and wheel stability
 
 - [~] High-speed bump stability: local-axis damping, softened contact response,
@@ -136,9 +263,9 @@ it.
   handling and controller timing. `[light_enh_2]` renders directional and
   omnidirectional billboards with camera alignment modes and cone-angle
   brightness. A hidden-GL probe verifies authored color/mask and cone rejection.
-  Starburst/fog/effect-only behavior, fog scattering, `[spotlight]` rendering,
-  and OMSI intensity/sunlight parity remain incomplete. Parsed `[spotlight]`
-  records now warn that their payload is retained but has no runtime renderer.
+  Vehicle `[spotlight]` records now provide approximate, script-selected beams.
+  Starburst/fog/effect-only behavior, fog scattering, spotlight shadows and
+  attenuation, and OMSI intensity/sunlight parity remain incomplete.
 - [~] A focused E400 display/light regression remains blocked on the external
   E400 model CFG/assets, which are not included in this checkout; parser and
   runtime probes do not replace the requested visual comparison.
@@ -164,8 +291,8 @@ change from their controlling variables without manual texture replacement.
   are found; otherwise it retains broad discovery for compatibility. Template
   index semantics and E400 dashboard/body variant parity remain unverified.
 - [~] Basic `[illumination_interior]`/`[interiorlight]` emission is active
-  for assigned meshes, and `[light_enh_2]` renders a base bloom. `[spotlight]`
-  remains storage-only with an unsupported-runtime warning. E400-specific
+  for assigned meshes, `[light_enh_2]` renders a base bloom, and `[spotlight]`
+  provides approximate beams. E400-specific
   behavior and dashboard-lighting parity require the external model assets.
 - [~] Complete `[matl_bumpmap]` and `[matl_envmap]` semantics, including
   strength and lighting interaction, then compare the dashboard binnacle and
@@ -406,7 +533,7 @@ recognized but incomplete semantics.
   configured events remains blocked on the source sound CFGs or an event trace.
 - [x] Model, BUS/vehicle, passenger-cabin, path, and scenery-object CFG diagnostics emit
   deduplicated per-source-file, per-keyword active/ignored summaries, with reasons for
-  retained-only behavior such as `[spotlight]`, `[smoke]`, `[terrainmapping]`,
+  retained-only behavior such as `[smoke]`, `[terrainmapping]`,
   cross-vehicle cabin links, step-sound/room-height path records, and SCO
   description/editor metadata, map-light, complexity, and night-map records.
   Inline SCO model directives are summarized by the model CFG loader. Map
@@ -449,8 +576,8 @@ The implemented portions should not be mistaken for full native behavior:
   text format semantics remain. `[texttexture_enh]` alignments 0–5 and grid
   spacing are handled by the text runtime. `[interiorlight]`, `[light_enh]`,
   and `[light_enh_2]` have partial light-emission paths; their OMSI parity and
-  remaining flags/fog semantics are incomplete. `[spotlight]` has no runtime
-  and emits an explicit retained-but-unsupported diagnostic.
+  remaining flags/fog semantics are incomplete. `[spotlight]` beams are
+  approximate, do not cast shadows, and are limited to eight nearest per view.
 - Complete OMSI input configuration and action semantics. Vehicle bindings
   can inherit `[vehicles]`/`[entry]` assignments from `Inputs/keyboard.cfg`,
   with OpenBus defaults for unsupported or absent assignments.
@@ -554,8 +681,8 @@ for alignment is not mistaken for supporting it.
   covers color, zero strength, and near/far attenuation. `[light_enh]` and
   `[light_enh_2]` render base alpha-masked bloom effects and preserve their
   numeric payloads/mesh assignments in JSON. `[spotlight]` retains its twelve
-  values and emits an explicit unsupported-runtime warning. OMSI parity,
-  enhanced-light flags/fog, and spotlight rendering remain incomplete.
+  values and renders approximate script-selected beams. OMSI parity,
+  enhanced-light flags/fog, and spotlight shadows remain incomplete.
 - [~] `[origin_from_mesh]` uses source transform metadata when present and the
   parsed mesh bounds center as its pivot fallback; native pivot parity remains
   unverified.

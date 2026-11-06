@@ -38,6 +38,10 @@ bool Variables::has(const std::string& name) const {
     return values_.find(name) != values_.end();
 }
 
+bool Variables::hasExplicitSceneryNightlight() const {
+    return explicitSceneryNightlight_;
+}
+
 bool Variables::hasString(const std::string& name) const {
     return strings_.find(name) != strings_.end();
 }
@@ -54,6 +58,8 @@ std::string Variables::getString(const std::string& name) const {
 
 void Variables::set(const std::string& name, float value) {
     values_[name] = value;
+    if (objectKind_ == ScriptObjectKind::SceneryObject && name == "nightlighta")
+        explicitSceneryNightlight_ = true;
 }
 
 const std::unordered_map<std::string, float>& Variables::numericValues() const {
@@ -161,7 +167,7 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"mouse_y", 0.0},
         {"mouse_cursor_x", 0.0},
         {"mouse_cursor_y", 0.0},
-        {"preciptype", 1.0},
+        {"preciptype", 0.0},
         {"preciprate", 0.0},
         {"weather_temperature", 20.0},
         {"weather_abshum", 10.0},
@@ -212,6 +218,15 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
         {"year", static_cast<float>(static_cast<int>(calendarDate.year()))},
         {"dayofyear", static_cast<float>((currentDate - sys_days{firstDayOfYear}).count() + 1)},
     });
+    if (solarLatitude_) {
+        solarLighting_ = openbus::solarLighting(
+            static_cast<int>((currentDate - sys_days{firstDayOfYear}).count() + 1), timeOfDay,
+            *solarLatitude_);
+        if (solarAltitudeOverride_)
+            solarLighting_ =
+                openbus::solarLightingWithAltitude(*solarLighting_, *solarAltitudeOverride_);
+        set("sunalt", static_cast<float>(solarLighting_->altitudeDegrees));
+    }
 }
 
 void SystemVariables::setPrecipitation(int type, double rate) {
@@ -220,19 +235,79 @@ void SystemVariables::setPrecipitation(int type, double rate) {
 
 void SystemVariables::setWeather(int type, double rate, double temperatureCelsius,
                                  double absoluteHumidityGramsPerCubicMeter) {
-    if (type < 0 || type > 2 || !std::isfinite(rate) || rate < 0.0 || rate > 1.0 ||
-        !std::isfinite(temperatureCelsius) || temperatureCelsius <= -273.15 ||
-        !std::isfinite(absoluteHumidityGramsPerCubicMeter) ||
-        absoluteHumidityGramsPerCubicMeter < 0.0) {
-        throw std::invalid_argument("Weather settings are invalid");
-    }
-    // The renderer uses 0-based weather types; OMSI scripts use values 1 through 3.
+    openbus::WeatherState updated = weather_;
+    updated.precipitationType = type;
+    updated.precipitationRate = rate;
+    updated.temperatureCelsius = temperatureCelsius;
+    updated.absoluteHumidityGramsPerCubicMeter = absoluteHumidityGramsPerCubicMeter;
+    setWeather(updated);
+}
+
+void SystemVariables::setWeather(const openbus::WeatherState& weather) {
+    openbus::validateWeatherState(weather);
+    weather_ = weather;
     setValues({
-        {"preciptype", static_cast<float>(type + 1)},
-        {"preciprate", static_cast<float>(rate)},
-        {"weather_temperature", static_cast<float>(temperatureCelsius)},
-        {"weather_abshum", static_cast<float>(absoluteHumidityGramsPerCubicMeter)},
+        {"preciptype", static_cast<float>(weather.precipitationType)},
+        {"preciprate", static_cast<float>(weather.precipitationRate)},
+        {"weather_temperature", static_cast<float>(weather.temperatureCelsius)},
+        {"weather_abshum", static_cast<float>(weather.absoluteHumidityGramsPerCubicMeter)},
     });
+}
+
+openbus::WeatherState SystemVariables::weather() const {
+    openbus::WeatherState current = weather_;
+    const float type = get("preciptype");
+    if (!std::isfinite(type) || type < 0.0F || type > 2.0F || std::floor(type) != type) {
+        throw std::invalid_argument("System precipitation type is invalid");
+    }
+    current.precipitationType = static_cast<int>(type);
+    current.precipitationRate = get("preciprate");
+    current.temperatureCelsius = get("weather_temperature");
+    current.absoluteHumidityGramsPerCubicMeter = get("weather_abshum");
+    openbus::validateWeatherState(current);
+    return current;
+}
+
+void SystemVariables::resetRoadWeather() {
+    roadWeather_ = {};
+}
+
+void SystemVariables::seedRoadWeatherFromPreset() {
+    roadWeather_ = openbus::roadWeatherFromPreset(weather());
+}
+
+void SystemVariables::advanceRoadWeather(double elapsedSeconds) {
+    openbus::advanceRoadWeather(roadWeather_, weather(), elapsedSeconds);
+}
+
+void SystemVariables::applySurfaceWeatherAction(openbus::SurfaceWeatherAction action) {
+    switch (action) {
+    case openbus::SurfaceWeatherAction::DryRoadWater:
+        roadWeather_.water = 0.0;
+        return;
+    case openbus::SurfaceWeatherAction::ClearRoadSnow:
+        roadWeather_.snow = 0.0;
+        return;
+    case openbus::SurfaceWeatherAction::ClearAllSnow:
+        roadWeather_.snow = 0.0;
+        roadWeather_.groundSnow = 0.0;
+        return;
+    }
+    throw std::invalid_argument("Unknown surface weather action");
+}
+
+std::optional<double> SystemVariables::effectiveWeatherVisibilityMeters() const {
+    const double type = get("preciptype");
+    const double rate = get("preciprate");
+    if (!std::isfinite(type) || type < 0.0 || type > 2.0 || std::floor(type) != type ||
+        !std::isfinite(rate) || rate < 0.0 || rate > 1.0) {
+        throw std::invalid_argument("System precipitation type or rate is invalid");
+    }
+    if (!weather_.visibilityMeters || type == 0.0 || rate == 0.0)
+        return weather_.visibilityMeters;
+    const double nativeIntensity = rate * 255.0;
+    const double precipitationLimit = (type == 1.0 ? 100000.0 : 20000.0) / nativeIntensity;
+    return std::min(*weather_.visibilityMeters, precipitationLimit);
 }
 
 void SystemVariables::setAutoClutch(bool enabled) {
@@ -243,7 +318,31 @@ void SystemVariables::setSunAltitude(double altitudeDegrees) {
     if (!std::isfinite(altitudeDegrees) || altitudeDegrees < -90.0 || altitudeDegrees > 90.0) {
         throw std::invalid_argument("Sun altitude must be finite and between -90 and 90 degrees");
     }
+    solarAltitudeOverride_ = altitudeDegrees;
+    if (solarLighting_)
+        solarLighting_ = openbus::solarLightingWithAltitude(*solarLighting_, altitudeDegrees);
     set("sunalt", static_cast<float>(altitudeDegrees));
+}
+
+void SystemVariables::configureDayNight(double latitudeDegrees) {
+    if (!std::isfinite(latitudeDegrees) || latitudeDegrees < -90 || latitudeDegrees > 90)
+        throw std::invalid_argument("Solar latitude must be between -90 and 90 degrees");
+    const auto lighting =
+        openbus::solarLighting(static_cast<int>(get("dayofyear")), get("time"), latitudeDegrees);
+    solarLatitude_ = latitudeDegrees;
+    solarAltitudeOverride_.reset();
+    solarLighting_ = lighting;
+    set("sunalt", static_cast<float>(solarLighting_->altitudeDegrees));
+}
+
+std::optional<double> SystemVariables::environmentBrightness() const {
+    if (!solarLighting_)
+        return weather_.brightness;
+    return solarLighting_->brightness * weather_.brightness.value_or(1.0);
+}
+
+std::optional<std::array<double, 3>> SystemVariables::sunDirection() const {
+    return solarLighting_ ? std::optional{solarLighting_->direction} : std::nullopt;
 }
 
 void SystemVariables::setPaused(bool paused) {
@@ -313,7 +412,7 @@ void configureVehicle(Variables& variables) {
         {"cabinair_temp", 20.0},
         {"cabinair_abshum", 10.0},
         {"cabinair_relhum", 0.0},
-        {"preciptype", 1.0},
+        {"preciptype", 0.0},
         {"preciprate", 0.0},
         {"dirt_norm", 0.0},
         {"dirtrate", 0.0},
@@ -380,7 +479,9 @@ Vehicle::Vehicle() : Variables(ScriptObjectKind::Vehicle) {
 }
 
 Vehicle::Environment Vehicle::captureEnvironment(const SystemVariables& system) {
-    return {system.get("preciptype"), system.get("preciprate")};
+    const auto brightness = system.environmentBrightness();
+    return {system.get("preciptype"), system.get("preciprate"),
+            brightness ? std::optional<float>(static_cast<float>(*brightness)) : std::nullopt};
 }
 
 void Vehicle::updateEnvironment(const SystemVariables& system) {
@@ -388,10 +489,24 @@ void Vehicle::updateEnvironment(const SystemVariables& system) {
 }
 
 void Vehicle::updateEnvironment(const Environment& environment) {
+    if (environment.brightness &&
+        (!std::isfinite(*environment.brightness) || *environment.brightness < 0.0F ||
+         *environment.brightness > 1.0F)) {
+        throw std::invalid_argument(
+            "Vehicle weather brightness must be finite and between 0 and 1");
+    }
     setValues({
         {"preciptype", environment.precipitationType},
-        {"preciprate", environment.precipitationRate},
+        {"preciprate",
+         environment.precipitationType == 0.0F ? 0.0F : environment.precipitationRate},
     });
+    if (environment.brightness) {
+        set("envir_brightness", *environment.brightness);
+        weatherBrightnessOwned_ = true;
+    } else if (weatherBrightnessOwned_) {
+        set("envir_brightness", 1.0F);
+        weatherBrightnessOwned_ = false;
+    }
 }
 
 void Vehicle::updateFrame() {

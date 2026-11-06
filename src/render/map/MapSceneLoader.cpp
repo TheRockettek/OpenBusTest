@@ -2,6 +2,7 @@
 
 #include "render/map/MapSceneLoader.h"
 
+#include "config/TextureSurfaceConfigLoader.h"
 #include "core/Utf8Path.h"
 
 namespace openbus::rendering {
@@ -680,6 +681,7 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
                 preparedBatch.stateAlphaMode = state->alphaMode;
             }
             Impl::ModelBatch& batch = preparedBatch.batch;
+            batch.material.weatherLitDynamicTexture = true;
             batch.cullBackFaces = true;
             batch.vertexCount = vertices.size();
             batch.boundingRadius = vertexBoundingRadius(vertices);
@@ -947,6 +949,19 @@ MapSceneLoader::prepareRoadTile(const std::vector<RoadSplineInput>& splines,
                 road.tileX = tileX;
                 road.tileY = tileY;
                 road.alphaMode = alphaMode;
+                if (textured) {
+                    const auto surface =
+                        openbus::config::loadTextureSurfaceConfiguration(texturePath);
+                    for (const auto& diagnostic : surface.diagnostics.entries) {
+                        gameLog.Warning("Road texture surface " + openbus::pathToUtf8(texturePath) +
+                                        ":" + std::to_string(diagnostic.line) + ": " +
+                                        diagnostic.message);
+                    }
+                    if (!surface.diagnostics.hasErrors()) {
+                        road.supportsMoisture = surface.supportsMoisture;
+                        road.weatherClassified = surface.configFound;
+                    }
+                }
             }
             map_detail::appendRoadProfile(road, spline, centerline, section, input.joins,
                                           cantHalfWidth, coordinates);
@@ -2261,6 +2276,8 @@ bool MapSceneLoader::uploadRoadBatches(bool waitForCompletion) {
         batch.tileY = geometry.tileY;
         batch.alphaMode = geometry.alphaMode;
         batch.cullBackFaces = true;
+        batch.supportsMoisture = geometry.supportsMoisture;
+        batch.weatherClassified = geometry.weatherClassified;
         if (geometry.textured) {
             try {
                 batch.material.texture = getTexture(geometry.texturePath);

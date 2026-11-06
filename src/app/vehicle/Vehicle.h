@@ -436,6 +436,7 @@ struct Vehicle {
     std::vector<ModelEnhancedLight> enhancedLights;
     std::vector<InteriorLightController> enhancedLightControllers;
     std::vector<ModelSpotlight> spotlights;
+    bool invalidSpotlightLogged = false;
     Matrix4 interiorLightRootModelView = identityMatrix();
     std::string modelCacheKey;
     std::shared_ptr<const SharedVehicleDefinition> deferredDefinition;

@@ -1,5 +1,6 @@
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
+#include "physics/RoadWeather.h"
 
 #include <algorithm>
 #include <array>
@@ -31,6 +32,192 @@ BusConfiguration testConfiguration() {
                            {-3.0008, 2.45, 2.45, 1.25, 0.9565, 280000.0, 116000.0,
                             20000.0, false, true}};
     return configuration;
+}
+
+double brakingDistance(const openbus::RoadWeatherConditions& conditions, bool classified) {
+    StaticCollisionMesh road;
+    road.vertices = {-100.0, -20.0, 0.0, 300.0, -20.0, 0.0,
+                     300.0, 20.0, 0.0, -100.0, 20.0, 0.0};
+    road.indices = {0, 1, 2, 0, 2, 3};
+    if (classified) {
+        road.triangleSurfaces.assign(2, CollisionSurface{0, true, true});
+    }
+    World world(0.0, {}, {std::move(road)}, false);
+    BusSimulation bus(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    for (int step = 0; step < 300; ++step) {
+        bus.stepWithWheelTorque(0.0, 0.0, 1.0);
+    }
+    for (int step = 0; step < 1800 && bus.speed() < 10.0; ++step) {
+        bus.stepWithWheelTorque(18000.0);
+    }
+    if (bus.speed() < 9.9) {
+        throw std::runtime_error("weather braking fixture did not reach starting speed");
+    }
+    bus.setRoadWeather(conditions);
+    const double start = bus.positionX();
+    for (int step = 0; step < 180; ++step) {
+        bus.stepWithWheelTorqueAndBrakeForces(0.0, 0.0,
+                                             std::vector<double>(bus.wheelCount(), 32000.0));
+    }
+    return bus.positionX() - start;
+}
+
+double terrainBrakingDistance(const openbus::RoadWeatherConditions& conditions, bool streamed) {
+    TerrainCollisionGrid terrain;
+    terrain.tileSizeMeters = 300.0;
+    terrain.intervals = 1;
+    terrain.heights.assign(4, 0.0F);
+    World world(0.0, streamed ? std::vector<TerrainCollisionGrid>{}
+                              : std::vector<TerrainCollisionGrid>{terrain},
+                {}, false);
+    if (streamed) {
+        world.addMapTileCollision(0, 0, terrain, {});
+    }
+    double distance = 0.0;
+    {
+        BusSimulation bus(world, testConfiguration(), VehiclePlacement{{50.0, 150.0, 0.0}, 0.0});
+        for (int step = 0; step < 300; ++step) {
+            bus.stepWithWheelTorque(0.0, 0.0, 1.0);
+        }
+        for (int step = 0; step < 1800 && bus.speed() < 10.0; ++step) {
+            bus.stepWithWheelTorque(18000.0);
+        }
+        if (bus.speed() < 9.9) {
+            throw std::runtime_error("terrain braking fixture did not reach starting speed");
+        }
+        bus.setRoadWeather(conditions);
+        const double start = bus.positionX();
+        for (int step = 0; step < 180; ++step) {
+            bus.stepWithWheelTorqueAndBrakeForces(0.0, 0.0,
+                                                  std::vector<double>(bus.wheelCount(), 32000.0));
+        }
+        distance = bus.positionX() - start;
+    }
+    if (streamed) {
+        world.removeMapTileCollision(0, 0);
+    }
+    return distance;
+}
+
+double steeringResponse(const openbus::RoadWeatherConditions& conditions) {
+    StaticCollisionMesh road;
+    road.vertices = {-100.0, -50.0, 0.0, 300.0, -50.0, 0.0,
+                     300.0, 50.0, 0.0, -100.0, 50.0, 0.0};
+    road.indices = {0, 1, 2, 0, 2, 3};
+    road.triangleSurfaces.assign(2, CollisionSurface{0, true, true});
+    World world(0.0, {}, {std::move(road)}, false);
+    BusSimulation bus(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    for (int step = 0; step < 300; ++step) {
+        bus.stepWithWheelTorque(0.0, 0.0, 1.0);
+    }
+    for (int step = 0; step < 1800 && bus.speed() < 10.0; ++step) {
+        bus.stepWithWheelTorque(18000.0);
+    }
+    if (bus.speed() < 9.9) {
+        throw std::runtime_error("weather steering fixture did not reach starting speed");
+    }
+    bus.setRoadWeather(conditions);
+    const double initialYaw = bus.yaw();
+    for (int step = 0; step < 120; ++step) {
+        bus.stepWithWheelTorque(0.0, 0.5);
+    }
+    return std::abs(std::remainder(bus.yaw() - initialYaw, 2.0 * std::acos(-1.0)));
+}
+
+void checkRoadWeather() {
+    const std::optional<CollisionSurface> asphalt = CollisionSurface{0, true, true};
+    const std::optional<CollisionSurface> sheltered = CollisionSurface{0, false, false};
+    openbus::WeatherState weather;
+    openbus::RoadWeatherConditions conditions;
+    const auto multiplier = [&](const std::optional<CollisionSurface>& surface) {
+        return openbus::physics::roadWeatherFrictionMultiplier(surface, conditions);
+    };
+    if (multiplier(asphalt) != 1.0) {
+        throw std::runtime_error("dry road weather changed grip");
+    }
+    weather.temperatureCelsius = -5.0;
+    openbus::advanceRoadWeather(conditions, weather, 600.0);
+    if (multiplier(asphalt) != 1.0) {
+        throw std::runtime_error("cold dry road lost grip");
+    }
+    weather.precipitationType = 1;
+    weather.precipitationRate = 1.0;
+    conditions.water = 1.0;
+    conditions.freezeFactor = 0.5;
+    if (std::abs(multiplier(asphalt) - 0.525) > 1e-12) {
+        throw std::runtime_error("partially frozen water did not produce intermediate grip");
+    }
+    conditions.freezeFactor = 1.0;
+    if (std::abs(multiplier(asphalt) - 0.3) > 1e-12 ||
+        multiplier(std::nullopt) != 1.0 || multiplier(sheltered) != 1.0) {
+        throw std::runtime_error("frozen rain affected the wrong road surfaces");
+    }
+    weather.temperatureCelsius = 10.0;
+    conditions.freezeFactor = 0.0;
+    if (std::abs(multiplier(asphalt) - 0.75) > 1e-12) {
+        throw std::runtime_error("rain did not reduce wet-road grip");
+    }
+    weather.precipitationType = 0;
+    weather.precipitationRate = 1.0;
+    weather.omsiGroundWetness = std::array<double, 3>{79.0, 0.0, 0.0};
+    conditions = openbus::roadWeatherFromPreset(weather);
+    if (std::abs(multiplier(asphalt) - 0.75) > 1e-12) {
+        throw std::runtime_error("preset ground wetness did not reduce grip");
+    }
+    weather.omsiGroundWetness.reset();
+    if (std::abs(multiplier(asphalt) - 0.75) > 1e-12) {
+        throw std::runtime_error("wet-road grip did not persist after precipitation stopped");
+    }
+    weather.omsiSnowOnRoad = true;
+    conditions = openbus::roadWeatherFromPreset(weather);
+    if (std::abs(multiplier(asphalt) - 0.45) > 1e-12) {
+        throw std::runtime_error("snow-on-road flag did not reduce grip");
+    }
+    weather.omsiSnowOnRoad = false;
+    conditions = {};
+    if (std::abs(multiplier(CollisionSurface{8, false, false}) - 0.45) > 1e-12) {
+        throw std::runtime_error("slush surface did not reduce grip");
+    }
+    const std::optional<CollisionSurface> terrain =
+        CollisionSurface{std::nullopt, false, false, true};
+    conditions.groundSnow = 1.0;
+    if (std::abs(multiplier(terrain) - 0.45) > 1e-12 || multiplier(asphalt) != 1.0 ||
+        multiplier(std::nullopt) != 1.0) {
+        throw std::runtime_error("ground snow affected the wrong contact surfaces");
+    }
+
+    const double dryDistance = brakingDistance({}, true);
+    const double wetDistance = brakingDistance({1.0, 0.0, 0.0}, true);
+    const double icyDistance = brakingDistance({1.0, 0.0, 1.0}, true);
+    const double unknownDistance = brakingDistance({1.0, 0.0, 1.0}, false);
+    std::cout << "weather braking: dry=" << dryDistance << " wet=" << wetDistance
+              << " ice=" << icyDistance
+              << " unknown=" << unknownDistance << '\n';
+    if (!(wetDistance > dryDistance + 0.1) || !(icyDistance > wetDistance + 1.0) ||
+        std::abs(unknownDistance - dryDistance) > 0.05) {
+        throw std::runtime_error("weather braking did not respect classified road contacts");
+    }
+    const double drySteering = steeringResponse({});
+    const double icySteering = steeringResponse({1.0, 0.0, 1.0});
+    std::cout << "weather steering: dry=" << drySteering << " ice=" << icySteering << '\n';
+    if (!(drySteering > icySteering + 0.01)) {
+        throw std::runtime_error("ice did not reduce the steering response");
+    }
+    openbus::RoadWeatherConditions snowyGround;
+    snowyGround.groundSnow = 1.0;
+    openbus::RoadWeatherConditions roadSnow;
+    roadSnow.snow = 1.0;
+    const double terrainDry = terrainBrakingDistance({}, false);
+    const double terrainRoadSnow = terrainBrakingDistance(roadSnow, false);
+    const double terrainSnow = terrainBrakingDistance(snowyGround, false);
+    const double streamedTerrainSnow = terrainBrakingDistance(snowyGround, true);
+    std::cout << "terrain braking: dry=" << terrainDry << " road-snow=" << terrainRoadSnow
+              << " ground-snow=" << terrainSnow << " streamed=" << streamedTerrainSnow << '\n';
+    if (std::abs(terrainDry - terrainRoadSnow) > 0.05 ||
+        terrainSnow <= terrainDry + 1.0 ||
+        std::abs(streamedTerrainSnow - terrainSnow) > 0.05) {
+        throw std::runtime_error("ground snow did not affect initial and streamed terrain grip");
+    }
 }
 
 StaticCollisionMesh makeRaisedMarking() {
@@ -389,6 +576,7 @@ void printMetrics(const char* label, const ContactMetrics& metrics) {
 
 int main() {
     try {
+        checkRoadWeather();
         checkTessellatedRoadContact(0.125, false);
         checkTessellatedRoadContact(0.125, true);
         checkFastTessellatedRoadContact(0.0);

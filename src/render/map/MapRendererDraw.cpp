@@ -554,6 +554,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         material.textured = true;
         material.detailTexture = impl_->baseDetailTexture;
         material.useDetailTexture = impl_->baseDetailTexture != 0;
+        material.snowCoverage = static_cast<float>(
+            0.85 * impl_->simulationState->sharedVariables().roadWeather().groundSnow);
         for (const Impl::TileBuffer& tile : impl_->terrainBuffers) {
             if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY))) {
                 continue;
@@ -588,7 +590,9 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 glDepthFunc(GL_LEQUAL);
                 glDepthMask(GL_FALSE);
-                for (const ModelMaterial& layer : tile.groundTextureLayers) {
+                for (const ModelMaterial& sourceLayer : tile.groundTextureLayers) {
+                    ModelMaterial layer = sourceLayer;
+                    layer.snowCoverage = material.snowCoverage;
                     drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, layer,
                                           {1.0, 1.0, 1.0}, 1.0, 2);
                 }
@@ -690,8 +694,23 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             multiplyMatrix(translationMatrix(
                 {static_cast<double>(road.tileX) * impl_->coordinates.tileSize,
                  static_cast<double>(road.tileY) * impl_->coordinates.tileSize, 0.0}));
-            drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
-                                  road.color, 1.0, road.alphaMode, road.cullBackFaces);
+            ModelMaterial material = road.material;
+            auto color = road.color;
+            const auto& roadWeather = impl_->simulationState->sharedVariables().roadWeather();
+            const double snow = road.weatherClassified ? roadWeather.snow : 0.0;
+            material.snowCoverage = static_cast<float>(0.85 * snow);
+            const double wetness = roadWeather.water * (1.0 - 0.85 * snow);
+            if (road.supportsMoisture && wetness > 0.0) {
+                const double albedo = 1.0 - 0.25 * wetness;
+                for (double& component : color) {
+                    component *= albedo;
+                }
+                const float specular = static_cast<float>(0.18 * wetness);
+                material.specularColor = {specular, specular, specular};
+                material.specularPower = 48.0F;
+            }
+            drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, material, color,
+                                  1.0, road.alphaMode, road.cullBackFaces);
             popMatrix();
             if (conditionalRender)
                 pglEndConditionalRender();
@@ -814,6 +833,11 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                     }
                 }
                 ModelMaterial sceneryMaterial = batch.material;
+                const auto weatherBrightness =
+                    impl_->simulationState->sharedVariables().environmentBrightness();
+                if (weatherBrightness) {
+                    sceneryMaterial.nightmapStrength = static_cast<float>(1.0 - *weatherBrightness);
+                }
                 int alphaMode = batch.alphaMode;
                 double alphaScale = batch.alphaScaleVariable.empty() ? 1.0 : 0.0;
                 if (instance.scriptStateIndex < impl_->sceneryScriptStates.size()) {
@@ -841,10 +865,11 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                             sceneryMaterial.useNightmap = sceneryMaterial.nightmap != 0;
                         }
                     }
-                    sceneryMaterial.nightmapStrength =
-                        selectedItem || !batch.visibilityVariable.empty()
-                            ? 1.0F
-                            : std::clamp(scriptState.variables.get("nightlighta"), 0.0F, 1.0F);
+                    if (selectedItem || !batch.visibilityVariable.empty())
+                        sceneryMaterial.nightmapStrength = 1.0F;
+                    else if (scriptState.variables.hasExplicitSceneryNightlight())
+                        sceneryMaterial.nightmapStrength =
+                            std::clamp(scriptState.variables.get("nightlighta"), 0.0F, 1.0F);
                     if (!batch.texcoordTransXVariable.empty()) {
                         sceneryMaterial.texcoordOffsetX = static_cast<float>(
                             scriptState.variables.get(batch.texcoordTransXVariable));

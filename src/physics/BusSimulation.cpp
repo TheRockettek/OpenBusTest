@@ -2,6 +2,7 @@
 
 #include "physics/BusConfiguration.h"
 #include "physics/RoadFeatures.h"
+#include "physics/RoadWeather.h"
 #include "core/Logger.h"
 #include "core/PerfTrace.h"
 #include "core/Variables.h"
@@ -152,6 +153,7 @@ struct BusSimulation::Impl {
     std::unordered_set<dGeomID> wheelGeometries;
     dGeomID chassisGeom = nullptr;
     WheelStaticContactSettings wheelStaticContact;
+    openbus::RoadWeatherConditions roadConditions;
     BusConfiguration configuration;
     VehiclePlacement placement;
     std::vector<Corner> corners;
@@ -435,6 +437,14 @@ struct BusSimulation::Impl {
                 }
                 contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
                 contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
+                if (isWheelStaticContact) {
+                    const dContactGeom& geom = contacts[index].geom;
+                    const auto surface = simulation->wheelGeometries.contains(geom.g1)
+                                             ? world.collisionSurface(geom.g2, geom.side2)
+                                             : world.collisionSurface(geom.g1, geom.side1);
+                    contacts[index].surface.mu *= openbus::physics::roadWeatherFrictionMultiplier(
+                        surface, simulation->roadConditions);
+                }
                 contacts[index].surface.soft_erp =
                     isWheelStaticContact ? simulation->wheelStaticContact.erp : 0.8;
                 contacts[index].surface.soft_cfm =
@@ -1051,6 +1061,11 @@ void BusSimulation::setFrozen(bool frozen) {
     }
     impl_->frozen = frozen;
     impl_->accumulator = 0.0;
+}
+
+void BusSimulation::setRoadWeather(const openbus::RoadWeatherConditions& conditions) {
+    openbus::validateRoadWeatherConditions(conditions);
+    impl_->roadConditions = conditions;
 }
 
 void BusSimulation::setPassengerMassPoints(const std::vector<BusPassengerMassPoint>& points) {

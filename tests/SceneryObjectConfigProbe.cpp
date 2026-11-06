@@ -90,6 +90,10 @@ int main(int argc, char** argv) {
     const std::filesystem::path statusLogPath = directory / "diagnostics.log";
     const std::filesystem::path surfaceTexturePath = directory / "2_strasse2.bmp";
     const std::filesystem::path invalidSurfaceTexturePath = directory / "invalid_surface.dds";
+    const std::filesystem::path slushSurfaceTexturePath = directory / "slush.dds";
+    const std::filesystem::path maxSurfaceTexturePath = directory / "max_surface.dds";
+    const std::filesystem::path negativeSurfaceTexturePath = directory / "negative_surface.dds";
+    const std::filesystem::path moistureSurfaceTexturePath = directory / "moisture.dds";
     const std::filesystem::path missingSurfaceTexturePath = directory / "missing_surface.png";
     const std::string statusLogPathText = statusLogPath.string();
 #ifdef _WIN32
@@ -282,9 +286,17 @@ int main(int argc, char** argv) {
     }
     {
         std::ofstream output(surfaceTexturePath.string() + ".cfg");
-        output << "[puddles]\n[moisture]\n[surface]\n0\n[NightMapMode]\n1\n";
+        output << "[puddles]\n[surface]\n0\n[NightMapMode]\n1\n";
         std::ofstream invalid(invalidSurfaceTexturePath.string() + ".cfg");
-        invalid << "[surface]\n8\n[NightMapMode]\n1x\n";
+        invalid << "[surface]\n256\n[NightMapMode]\n1x\n";
+        std::ofstream slush(slushSurfaceTexturePath.string() + ".cfg");
+        slush << "[surface]\n8\n";
+        std::ofstream maxSurface(maxSurfaceTexturePath.string() + ".cfg");
+        maxSurface << "[surface]\n255\n";
+        std::ofstream negativeSurface(negativeSurfaceTexturePath.string() + ".cfg");
+        negativeSurface << "[surface]\n-1\n";
+        std::ofstream moistureSurface(moistureSurfaceTexturePath.string() + ".cfg");
+        moistureSurface << "[moisture]\n";
     }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
@@ -311,6 +323,14 @@ int main(int argc, char** argv) {
         openbus::config::loadTextureSurfaceConfiguration(surfaceTexturePath);
     const auto invalidSurfaceConfiguration =
         openbus::config::loadTextureSurfaceConfiguration(invalidSurfaceTexturePath);
+    const auto slushSurfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(slushSurfaceTexturePath);
+    const auto maxSurfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(maxSurfaceTexturePath);
+    const auto negativeSurfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(negativeSurfaceTexturePath);
+    const auto moistureSurfaceConfiguration =
+        openbus::config::loadTextureSurfaceConfiguration(moistureSurfaceTexturePath);
     const auto missingSurfaceConfiguration =
         openbus::config::loadTextureSurfaceConfiguration(missingSurfaceTexturePath);
     openbus::scripting::SceneryObject textureAddressVariables;
@@ -351,15 +371,17 @@ int main(int argc, char** argv) {
                              std::string::npos &&
                          statusLog.find("Configuration tag [maplight] recognized but ignored") !=
                              std::string::npos &&
-                         statusLog.find("Configuration tag [surface] recognized but ignored") !=
+                         statusLog.find("Configuration tag [puddles] recognized and active") !=
                              std::string::npos &&
-                         statusLog.find("Configuration tag [puddles] recognized but ignored") !=
-                             std::string::npos &&
-                         statusLog.find("Configuration tag [moisture] recognized but ignored") !=
+                         statusLog.find("Configuration tag [moisture] recognized and active") !=
                              std::string::npos &&
                          statusLog.find("Configuration tag [nightmapmode] recognized but ignored") !=
                              std::string::npos,
-                     "SCO and texture surface ignored statuses are logged");
+                     "SCO ignored and texture weather-surface statuses are logged");
+    valid &= require(statusLog.find("texture surface CFG") != std::string::npos &&
+                         statusLog.find("Configuration tag [surface] recognized and active") !=
+                             std::string::npos,
+                     "texture surface classification is reported as active");
     valid &= require(statusLog.find("Configuration tag [unknown_probe_keyword] unknown") !=
                          std::string::npos,
                      "SCO unknown status is logged");
@@ -374,7 +396,19 @@ int main(int argc, char** argv) {
                          surfaceConfiguration.surfaceType == 0 &&
                          surfaceConfiguration.nightMapMode == 1 &&
                          !surfaceConfiguration.diagnostics.hasErrors(),
-                     "texture surface CFG retains wetness markers and numeric surface metadata");
+                     "puddles imply moisture and retain numeric surface metadata");
+    valid &= require(slushSurfaceConfiguration.surfaceType == 8 &&
+                        !slushSurfaceConfiguration.diagnostics.hasErrors() &&
+                        maxSurfaceConfiguration.surfaceType == 255 &&
+                        !maxSurfaceConfiguration.diagnostics.hasErrors(),
+                     "texture surface CFG accepts slush and the full native byte range");
+    valid &= require(!negativeSurfaceConfiguration.surfaceType &&
+                        negativeSurfaceConfiguration.diagnostics.hasErrors(),
+                     "negative surface type is rejected");
+    valid &= require(moistureSurfaceConfiguration.supportsMoisture &&
+                        !moistureSurfaceConfiguration.supportsPuddles &&
+                        !moistureSurfaceConfiguration.diagnostics.hasErrors(),
+                     "moisture alone does not imply puddles");
     valid &= require(invalidSurfaceConfiguration.configFound &&
                          !invalidSurfaceConfiguration.surfaceType.has_value() &&
                          !invalidSurfaceConfiguration.nightMapMode.has_value() &&

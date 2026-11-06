@@ -190,15 +190,18 @@ std::string Line::keyword() const {
 
 Reader::Reader(const std::filesystem::path& path) : input_(path) {}
 
+Reader::Reader(std::istream& input) : stream_(&input) {}
+
 bool Reader::isOpen() const {
-    return input_.is_open();
+    return stream_ != nullptr ? static_cast<bool>(*stream_) : input_.is_open();
 }
 
 bool Reader::readRaw(Line& line, bool skipBlank) {
     // Skip disabled sections and, for ordinary records, blank lines while
     // retaining source line numbers for useful diagnostics.
     std::string raw;
-    while (std::getline(input_, raw)) {
+    std::istream& source = stream_ != nullptr ? *stream_ : input_;
+    while (std::getline(source, raw)) {
         ++nextLineNumber_;
         if (nextLineNumber_ == 1 && raw.starts_with("\xEF\xBB\xBF")) {
             raw.erase(0, 3);

@@ -15,6 +15,8 @@ CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
 CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
 GetStringiProc pglGetStringi = nullptr;
 ActiveTextureProc pglActiveTexture = nullptr;
+BlendFuncSeparateProc pglBlendFuncSeparate = nullptr;
+BlendEquationSeparateProc pglBlendEquationSeparate = nullptr;
 GenVertexArraysProc pglGenVertexArrays = nullptr;
 BindVertexArrayProc pglBindVertexArray = nullptr;
 DeleteVertexArraysProc pglDeleteVertexArrays = nullptr;
@@ -85,6 +87,10 @@ bool loadOpenGLFunctions() {
     pglCompressedTexImage3D =
         reinterpret_cast<CompressedTexImage3DProc>(glfwGetProcAddress("glCompressedTexImage3D"));
     pglActiveTexture = reinterpret_cast<ActiveTextureProc>(glfwGetProcAddress("glActiveTexture"));
+    pglBlendFuncSeparate =
+        reinterpret_cast<BlendFuncSeparateProc>(glfwGetProcAddress("glBlendFuncSeparate"));
+    pglBlendEquationSeparate =
+        reinterpret_cast<BlendEquationSeparateProc>(glfwGetProcAddress("glBlendEquationSeparate"));
     pglGenVertexArrays =
         reinterpret_cast<GenVertexArraysProc>(glfwGetProcAddress("glGenVertexArrays"));
     pglBindVertexArray =
@@ -142,16 +148,16 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<EndConditionalRenderProc>(glfwGetProcAddress("glEndConditionalRender"));
     const bool available =
         pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
-        pglCompressedTexImage2D && pglGetStringi && pglActiveTexture && pglGenVertexArrays &&
-        pglBindVertexArray && pglDeleteVertexArrays && pglEnableVertexAttribArray &&
-        pglDisableVertexAttribArray && pglVertexAttribPointer && pglCreateShader &&
-        pglShaderSource && pglCompileShader && pglGetShaderiv && pglGetShaderInfoLog &&
-        pglDeleteShader && pglCreateProgram && pglAttachShader && pglLinkProgram &&
-        pglGetProgramiv && pglGetProgramInfoLog && pglDeleteProgram && pglUseProgram &&
-        pglGetUniformLocation && pglUniformMatrix4fv && pglUniform1i && pglUniform1f &&
-        pglUniform2f && pglUniform3f && pglUniform4f && pglUniform4fv && pglGenFramebuffers &&
-        pglBindFramebuffer && pglDeleteFramebuffers && pglFramebufferTexture2D &&
-        pglCheckFramebufferStatus;
+        pglCompressedTexImage2D && pglGetStringi && pglActiveTexture && pglBlendFuncSeparate &&
+        pglBlendEquationSeparate && pglGenVertexArrays && pglBindVertexArray &&
+        pglDeleteVertexArrays && pglEnableVertexAttribArray && pglDisableVertexAttribArray &&
+        pglVertexAttribPointer && pglCreateShader && pglShaderSource && pglCompileShader &&
+        pglGetShaderiv && pglGetShaderInfoLog && pglDeleteShader && pglCreateProgram &&
+        pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
+        pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglUniformMatrix4fv &&
+        pglUniform1i && pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f &&
+        pglUniform4fv && pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
+        pglFramebufferTexture2D && pglCheckFramebufferStatus;
     if (!available) {
         gameLog.Error("Failed to load required OpenGL VBO functions");
     }

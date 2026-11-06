@@ -2,6 +2,7 @@
 
 #include "physics/BusConfiguration.h"
 #include "physics/World.h"
+#include "core/WeatherState.h"
 
 #include <array>
 #include <cstddef>
@@ -58,6 +59,7 @@ class BusSimulation {
                                            const std::vector<double>& wheelBrakeForces,
                                            const std::vector<double>& wheelSpringFactors = {});
     void setFrozen(bool frozen);
+    void setRoadWeather(const openbus::RoadWeatherConditions& conditions);
     void setPassengerMassPoints(const std::vector<BusPassengerMassPoint>& points);
     double totalMassKg() const;
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,

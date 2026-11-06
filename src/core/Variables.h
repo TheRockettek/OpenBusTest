@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/WeatherState.h"
+#include "core/SolarLighting.h"
+
 #include <initializer_list>
 #include <string>
 #include <unordered_map>
@@ -27,6 +30,7 @@ class Variables {
     void declareString(const std::string& name);
 
     bool has(const std::string& name) const;
+    bool hasExplicitSceneryNightlight() const;
     float get(const std::string& name) const;
     void set(const std::string& name, float value);
     const std::unordered_map<std::string, float>& numericValues() const;
@@ -45,6 +49,7 @@ class Variables {
     std::unordered_map<std::string, float> values_;
     std::unordered_map<std::string, std::string> strings_;
     ScriptObjectKind objectKind_;
+    bool explicitSceneryNightlight_ = false;
 };
 
 class SystemVariables : public Variables {
@@ -56,8 +61,42 @@ class SystemVariables : public Variables {
     void setPrecipitation(int type, double rate);
     void setWeather(int type, double rate, double temperatureCelsius,
                     double absoluteHumidityGramsPerCubicMeter);
+    void setWeather(const openbus::WeatherState& weather);
+    openbus::WeatherState weather() const;
+    const openbus::RoadWeatherConditions& roadWeather() const {
+        return roadWeather_;
+    }
+    void resetRoadWeather();
+    void seedRoadWeatherFromPreset();
+    void advanceRoadWeather(double elapsedSeconds);
+    void applySurfaceWeatherAction(openbus::SurfaceWeatherAction action);
+    std::optional<double> weatherVisibilityMeters() const {
+        return weather_.visibilityMeters;
+    }
+    std::optional<double> effectiveWeatherVisibilityMeters() const;
+    std::optional<double> weatherFogTopAboveGroundMeters() const {
+        return weather_.fogTopAboveGroundMeters;
+    }
+    std::optional<double> weatherBrightness() const {
+        return weather_.brightness;
+    }
+    std::optional<double> environmentBrightness() const;
+    std::optional<std::array<double, 3>> sunDirection() const;
+    std::optional<openbus::WeatherCloudType> weatherCloudType() const {
+        return weather_.cloudType;
+    }
+    std::optional<double> weatherCloudBaseAboveGroundMeters() const {
+        return weather_.cloudBaseAboveGroundMeters;
+    }
+    std::optional<double> weatherWindDirectionDegrees() const {
+        return weather_.windDirectionDegrees;
+    }
+    std::optional<double> weatherWindSpeedMetersPerSecond() const {
+        return weather_.windSpeedMetersPerSecond;
+    }
     void setAutoClutch(bool enabled);
     void setSunAltitude(double altitudeDegrees);
+    void configureDayNight(double latitudeDegrees);
     void setPaused(bool paused);
     void setSoundAvailable(bool available);
 
@@ -69,6 +108,11 @@ class SystemVariables : public Variables {
     int clockStartMonth_ = 0;
     int clockStartDay_ = 0;
     double clockStartTimeSeconds_ = 0.0;
+    openbus::WeatherState weather_;
+    openbus::RoadWeatherConditions roadWeather_;
+    std::optional<double> solarLatitude_;
+    std::optional<double> solarAltitudeOverride_;
+    std::optional<openbus::SolarLighting> solarLighting_;
 };
 
 class SimulationState {
@@ -91,6 +135,7 @@ class Vehicle : public ::Variables {
     struct Environment {
         float precipitationType;
         float precipitationRate;
+        std::optional<float> brightness;
     };
 
     Vehicle();
@@ -99,6 +144,9 @@ class Vehicle : public ::Variables {
     void updateFrame();
     void updateEnvironment(const SystemVariables& system);
     void updateEnvironment(const Environment& environment);
+
+  private:
+    bool weatherBrightnessOwned_ = false;
 };
 
 class Human : public ::Variables {

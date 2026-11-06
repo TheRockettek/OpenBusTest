@@ -7,9 +7,9 @@
 
 #include <imgui.h>
 #include "app/vehicle/VehiclePartLoading.h"
+#include "app/vehicle/VehicleSpotlight.h"
 #include "map/MapTileWindow.h"
 #include "map/MapSplineProfile.h"
-#include "render/WeatherEffects.h"
 
 #include <algorithm>
 #include <cmath>
@@ -881,7 +881,16 @@ RenderLoop::passengerQueuePose(int stopId, const openbus::app::WaitingPassenger&
 
 void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     TraceScope trace("frame", "RenderLoop::draw");
+    openbus::rendering::setWeatherFog(
+        simulationState_.sharedVariables().effectiveWeatherVisibilityMeters(),
+        simulationState_.sharedVariables().weatherFogTopAboveGroundMeters());
+    openbus::rendering::setWeatherLighting(
+        simulationState_.sharedVariables().environmentBrightness());
     if (!renderingReflection_) {
+        const auto background = openbus::rendering::weatherBackgroundColor(
+            simulationState_.sharedVariables().environmentBrightness());
+        glClearColor(background[0], background[1], background[2], 1.0F);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         openbus::rendering::resetFrameTriangleCount();
     }
     const BodyPose chassis = simulation.chassisPose();
@@ -1294,7 +1303,59 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         TraceScope phase("render", "RenderLoop::draw.reflections");
         renderReflectionViews(simulation, world);
     }
-    openbus::rendering::setLightingViewMatrix(modelViewMatrix());
+    const auto& weatherVariables = simulationState_.sharedVariables();
+    openbus::rendering::setWeatherFogView(modelViewMatrix(), playerGroundHeight);
+    openbus::rendering::drawWeatherClouds(
+        weatherVariables.weatherCloudType(), weatherVariables.weatherCloudBaseAboveGroundMeters(),
+        weatherVariables.weatherWindDirectionDegrees(),
+        weatherVariables.weatherWindSpeedMetersPerSecond(),
+        weatherVariables.effectiveWeatherVisibilityMeters(),
+        weatherVariables.environmentBrightness(), playerGroundHeight, simulation.simulationTime());
+    openbus::rendering::setLightingViewMatrix(modelViewMatrix(), weatherVariables.sunDirection());
+    std::vector<openbus::rendering::VehicleSpotlight> viewSpotlights;
+    for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+        if (!vehicle->loaded || vehicle->spotlights.empty() || vehicle->mapTrafficRouteFinished ||
+            (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive)) {
+            continue;
+        }
+        pushMatrix();
+        if (vehicle.get() == playerVehicle_) {
+            applyPose(chassis);
+        } else {
+            VehiclePlacement placed = vehicle->placement;
+            if (mapRenderer_ != nullptr && !vehicle->followsMapTrafficRoute) {
+                placed.position[2] =
+                    mapRenderer_->terrainHeightAt(placed.position[0], placed.position[1])
+                        .value_or(placed.position[2]);
+            }
+            applyVehiclePlacement(makeModelRootPlacement(placed, vehicle->modelOffsetZ));
+        }
+        translate(0.0, 0.0, vehicle->modelOffsetZ);
+        openbus::rendering::VehicleSpotlight spotlight;
+        const auto status = openbus::app::vehicle::makeSpotlight(
+            vehicle->spotlights, vehicle->variables.get("spot_select"), modelViewMatrix(),
+            spotlight);
+        popMatrix();
+        if (status == openbus::app::vehicle::SpotlightStatus::Invalid) {
+            if (!vehicle->invalidSpotlightLogged) {
+                gameLog.Warning("Ignoring invalid vehicle spotlight selection or parameters");
+                vehicle->invalidSpotlightLogged = true;
+            }
+            continue;
+        }
+        if (status == openbus::app::vehicle::SpotlightStatus::Active) {
+            viewSpotlights.push_back(spotlight);
+        }
+    }
+    std::stable_sort(viewSpotlights.begin(), viewSpotlights.end(),
+                     [](const auto& a, const auto& b) {
+                         return std::hypot(a.position[0], a.position[1], a.position[2]) <
+                                std::hypot(b.position[0], b.position[1], b.position[2]);
+                     });
+    if (viewSpotlights.size() > openbus::rendering::MAX_VEHICLE_SPOTLIGHTS) {
+        viewSpotlights.resize(openbus::rendering::MAX_VEHICLE_SPOTLIGHTS);
+    }
+    openbus::rendering::setVehicleSpotlights(viewSpotlights);
     refreshPassengerWaitingPositions();
     const auto queuePose = [this](int stopId, std::size_t queueSlot) {
         return passengerQueuePose(stopId, queueSlot);
@@ -2792,53 +2853,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         }
     }
     if (!renderingReflection_ && (cameraView_ == 0 || freeCameraEnabled_)) {
-        const float precipitationTypeValue = simulationState_.sharedVariables().get("preciptype");
-        const float precipitationRate = simulationState_.sharedVariables().get("preciprate");
-        if (!std::isfinite(precipitationTypeValue) || precipitationTypeValue < 1.0F ||
-            precipitationTypeValue > 3.0F ||
-            std::floor(precipitationTypeValue) != precipitationTypeValue ||
-            !std::isfinite(precipitationRate) || precipitationRate < 0.0F ||
-            precipitationRate > 1.0F) {
-            throw std::runtime_error("Weather system variables contain invalid precipitation data");
-        }
-        const auto precipitationType = static_cast<openbus::rendering::PrecipitationType>(
-            static_cast<int>(precipitationTypeValue) - 1);
-        const std::vector<openbus::rendering::PrimitiveVertex> precipitationVertices =
-            openbus::rendering::makePrecipitationVertices(precipitationType, precipitationRate,
-                                                          simulation.simulationTime());
-        if (!precipitationVertices.empty()) {
-            const openbus::rendering::Matrix4 previousProjection =
-                openbus::rendering::projectionMatrix();
-            const openbus::rendering::Matrix4 previousModelView =
-                openbus::rendering::modelViewMatrix();
-            const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
-            const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
-            GLfloat previousLineWidth = 1.0F;
-            GLfloat previousPointSize = 1.0F;
-            glGetFloatv(GL_LINE_WIDTH, &previousLineWidth);
-            glGetFloatv(GL_POINT_SIZE, &previousPointSize);
-            openbus::rendering::setProjectionMatrix(openbus::rendering::identityMatrix());
-            openbus::rendering::setModelViewMatrix(openbus::rendering::identityMatrix());
-            glDisable(GL_DEPTH_TEST);
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            if (precipitationType == openbus::rendering::PrecipitationType::Rain) {
-                openbus::rendering::drawPrimitives(precipitationVertices, GL_LINES, 1.0F);
-            } else {
-                glPointSize(2.0F);
-                openbus::rendering::drawPrimitives(precipitationVertices, GL_POINTS);
-            }
-            glLineWidth(previousLineWidth);
-            glPointSize(previousPointSize);
-            openbus::rendering::setProjectionMatrix(previousProjection);
-            openbus::rendering::setModelViewMatrix(previousModelView);
-            if (depthWasEnabled) {
-                glEnable(GL_DEPTH_TEST);
-            }
-            if (!blendWasEnabled) {
-                glDisable(GL_BLEND);
-            }
-        }
+        const auto& variables = simulationState_.sharedVariables();
+        const double type = variables.get("preciptype");
+        if (!std::isfinite(type) || type < 0.0 || type > 2.0 || std::floor(type) != type)
+            throw std::runtime_error("Weather system variable PrecipType is invalid");
+        openbus::rendering::drawWeatherPrecipitation(
+            static_cast<int>(type), variables.get("preciprate"), simulation.simulationTime(),
+            variables.weatherWindDirectionDegrees(), variables.weatherWindSpeedMetersPerSecond(),
+            variables.environmentBrightness(), variables.effectiveWeatherVisibilityMeters());
     }
     if (!renderingReflection_ && !captureMode_ && imguiEnabled_) {
         TraceScope phase("render", "RenderLoop::draw.imguiOverlays");
@@ -3815,6 +3837,8 @@ void RenderLoop::endFrame() {
         imguiLayer_->render();
     }
     glfwSwapBuffers(window_);
+    const auto background = openbus::rendering::weatherBackgroundColor(std::nullopt);
+    glClearColor(background[0], background[1], background[2], 1.0F);
     if (const auto deadline = frameTiming_.deadlineAfterFrame(std::chrono::steady_clock::now())) {
         std::this_thread::sleep_until(*deadline);
     }
@@ -3869,7 +3893,6 @@ void RenderLoop::captureViews(const BusSimulation& simulation, const World& worl
             TraceScope phase("capture", "RenderLoop::captureViews.render");
             viewport_ = {0, 0, width, height};
             glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setPerspective(static_cast<double>(width), static_cast<double>(height), 60.0);
             draw(simulation, world);
             glFinish();
@@ -3892,4 +3915,6 @@ void RenderLoop::captureViews(const BusSimulation& simulation, const World& worl
     viewLookYaw_ = previousViewLookYaw;
     viewLookPitch_ = previousViewLookPitch;
     captureMode_ = false;
+    const auto background = openbus::rendering::weatherBackgroundColor(std::nullopt);
+    glClearColor(background[0], background[1], background[2], 1.0F);
 }

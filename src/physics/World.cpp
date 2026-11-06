@@ -121,6 +121,7 @@ struct World::Impl {
     std::vector<dTriMeshDataID> terrainMeshData;
     std::vector<std::vector<double>> terrainVertices;
     std::vector<std::vector<int>> terrainIndices;
+    CollisionSurface terrainSurface{std::nullopt, false, false, true};
     std::unordered_set<std::uint64_t> initialTerrainTileKeys;
     std::vector<dGeomID> staticGeometries;
     std::vector<dTriMeshDataID> staticMeshData;
@@ -244,6 +245,7 @@ struct World::Impl {
             dGeomTriMeshDataDestroy(meshData);
             throw std::runtime_error("Failed to create map terrain collision geometry");
         }
+        dGeomSetData(geometry, &terrainSurface);
         if (streamedTile != nullptr) {
             streamedTile->terrainVertices.push_back(std::move(vertices));
             streamedTile->terrainIndices.push_back(std::move(indices));
@@ -267,6 +269,11 @@ struct World::Impl {
             mesh.indices.size() % 3 != 0) {
             throw std::invalid_argument("Map static collision mesh has invalid buffers");
         }
+        if (!mesh.triangleSurfaces.empty() &&
+            mesh.triangleSurfaces.size() != mesh.indices.size() / 3) {
+            throw std::invalid_argument(
+                "Map static collision surface count does not match triangles");
+        }
         const std::size_t vertexCount = mesh.vertices.size() / 3;
         checkedOdeCount(vertexCount, "map static collision vertex count");
         checkedOdeCount(mesh.indices.size(), "map static collision index count");
@@ -289,7 +296,7 @@ struct World::Impl {
         meshDataStorage.reserve(meshDataStorage.size() + 1);
         meshStorage.reserve(meshStorage.size() + 1);
         meshStorage.push_back(std::move(mesh));
-        const StaticCollisionMesh& stored = meshStorage.back();
+        StaticCollisionMesh& stored = meshStorage.back();
         const dTriMeshDataID meshData = dGeomTriMeshDataCreate();
         if (!meshData) {
             meshStorage.pop_back();
@@ -306,6 +313,9 @@ struct World::Impl {
             dGeomTriMeshDataDestroy(meshData);
             meshStorage.pop_back();
             throw std::runtime_error("Failed to create map static collision geometry");
+        }
+        if (!stored.triangleSurfaces.empty()) {
+            dGeomSetData(geometry, stored.triangleSurfaces.data());
         }
         meshDataStorage.push_back(meshData);
         geometries.push_back(geometry);
@@ -988,6 +998,19 @@ dSpaceID World::collisionSpace() const {
 }
 dJointGroupID World::contactGroup() const {
     return impl_->ode.contacts;
+}
+
+std::optional<CollisionSurface> World::collisionSurface(dGeomID geometry, int triangle) const {
+    if (!geometry || triangle < 0 || dGeomGetClass(geometry) != dTriMeshClass ||
+        triangle >= dGeomTriMeshGetTriangleCount(geometry)) {
+        return std::nullopt;
+    }
+    const void* data = dGeomGetData(geometry);
+    if (data == &impl_->terrainSurface) {
+        return impl_->terrainSurface;
+    }
+    const auto* surfaces = static_cast<const std::optional<CollisionSurface>*>(data);
+    return surfaces ? surfaces[triangle] : std::nullopt;
 }
 
 bool World::isMapPoleGeometry(dGeomID geometry) const {

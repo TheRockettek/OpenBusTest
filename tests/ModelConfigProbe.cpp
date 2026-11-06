@@ -1002,7 +1002,7 @@ int main(int argc, char** argv) {
     }
     openbus::probe::removeProbeDirectory(root);
 
-    if (result.diagnostics.hasErrors() || shadowMarkerWarned || !spotlightRuntimeWarned ||
+    if (result.diagnostics.hasErrors() || shadowMarkerWarned || spotlightRuntimeWarned ||
         result.spotlights.size() != 1 ||
         result.spotlights[0].parameters !=
             std::array<double, 12>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} ||

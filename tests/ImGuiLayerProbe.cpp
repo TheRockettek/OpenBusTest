@@ -43,6 +43,26 @@ int main() {
         }
         layer.render();
 
+        char search[32] = {};
+        bool textInputActive = false;
+        for (int frame = 0; frame < 4; ++frame) {
+            layer.beginFrame();
+            if (ImGui::GetIO().WantTextInput)
+                textInputActive = true;
+            ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(64, 64), ImGuiCond_Always);
+            ImGui::Begin("Search probe", nullptr, ImGuiWindowFlags_NoTitleBar);
+            if (frame == 0)
+                ImGui::SetKeyboardFocusHere();
+            ImGui::InputText("##search", search, sizeof(search));
+            ImGui::End();
+            layer.render();
+        }
+        if (!textInputActive) {
+            std::cerr << "Focused text input did not request text capture\n";
+            passed = false;
+        }
+
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
         layer.beginFrame(false);
         if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_HIDDEN ||

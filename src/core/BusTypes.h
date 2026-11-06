@@ -87,12 +87,21 @@ struct TerrainCollisionGrid {
     std::vector<float> heights;
 };
 
+struct CollisionSurface {
+    std::optional<int> type;
+    bool moisture = false;
+    bool puddles = false;
+    bool terrain = false;
+};
+
 struct StaticCollisionMesh {
     // World-space XYZ triples and zero-based triangle indices. The world retains these
     // buffers for the lifetime of the corresponding ODE trimesh.
     std::vector<double> vertices;
     std::vector<int> indices;
     std::vector<int> surfaceHeightMapIndices;
+    // Empty when no triangle has surface metadata; otherwise one entry per triangle.
+    std::vector<std::optional<CollisionSurface>> triangleSurfaces;
 };
 
 struct MapPoleCollision {

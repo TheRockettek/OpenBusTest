@@ -17,6 +17,32 @@
 #   app        window/frame orchestration and the OpenBus executable
 
 # Library defaults shared by every first-party module.
+set(OPENBUS_METAR_STATION_CSV "${OPENBUS_SOURCE_ROOT}/metar/metar_station_details.csv")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OPENBUS_METAR_STATION_CSV}")
+file(STRINGS "${OPENBUS_METAR_STATION_CSV}" OPENBUS_METAR_STATION_ROWS ENCODING UTF-8)
+if(NOT OPENBUS_METAR_STATION_ROWS)
+    message(FATAL_ERROR "No METAR station data found in ${OPENBUS_METAR_STATION_CSV}")
+endif()
+set(OPENBUS_METAR_STATION_CHUNKS "")
+set(OPENBUS_METAR_STATION_CHUNK "")
+foreach(OPENBUS_METAR_STATION_ROW IN LISTS OPENBUS_METAR_STATION_ROWS)
+    if(OPENBUS_METAR_STATION_ROW MATCHES "\\)OPENBUS_METAR\"")
+        message(FATAL_ERROR "METAR station data contains the reserved resource delimiter")
+    endif()
+    string(LENGTH "${OPENBUS_METAR_STATION_CHUNK}" OPENBUS_METAR_CHUNK_LENGTH)
+    if(OPENBUS_METAR_CHUNK_LENGTH GREATER 12000)
+        string(APPEND OPENBUS_METAR_STATION_CHUNKS
+               "R\"OPENBUS_METAR(${OPENBUS_METAR_STATION_CHUNK})OPENBUS_METAR\",\n")
+        set(OPENBUS_METAR_STATION_CHUNK "")
+    endif()
+    string(APPEND OPENBUS_METAR_STATION_CHUNK "${OPENBUS_METAR_STATION_ROW}\n")
+endforeach()
+string(APPEND OPENBUS_METAR_STATION_CHUNKS
+       "R\"OPENBUS_METAR(${OPENBUS_METAR_STATION_CHUNK})OPENBUS_METAR\",\n")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/MetarStations.h"
+    CONTENT "#pragma once\ninline constexpr const char* openbusMetarStationChunks[] = {\n${OPENBUS_METAR_STATION_CHUNKS}};\n")
+
 function(openbus_add_module name)
     cmake_parse_arguments(ARG "" "" "SOURCES;DEPENDS;PRIVATE_DEPENDS" ${ARGN})
     add_library(${name} STATIC ${ARG_SOURCES})
@@ -28,13 +54,31 @@ endfunction()
 
 openbus_add_module(openbus_core
     SOURCES
+        core/ActiveMetarStations.cpp
         core/Logger.cpp
+        core/Metar.cpp
+        core/MetarNoaa.cpp
+        core/MetarNoaaHttp.cpp
+        core/WeatherSelection.cpp
         core/OmsiRoot.cpp
         core/PerfTrace.cpp
+        core/SolarLighting.cpp
         core/Variables.cpp
+        core/WeatherEnvironment.cpp
+        core/WeatherState.cpp
     DEPENDS
         Threads::Threads
 )
+target_include_directories(openbus_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(WIN32)
+    if(MSVC)
+        set_property(SOURCE core/WeatherSelection.cpp APPEND PROPERTY COMPILE_OPTIONS /utf-8)
+    endif()
+    target_link_libraries(openbus_core PRIVATE winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(openbus_core PRIVATE CURL::libcurl)
+endif()
 target_compile_definitions(openbus_core PUBLIC
     OPENBUS_ENABLE_PERF_TRACE=${OPENBUS_PERF_TRACE_DEFINE})
 
@@ -55,6 +99,7 @@ openbus_add_module(openbus_config
         config/TextureSurfaceConfigLoader.cpp
         config/VehicleCatalog.cpp
         config/VehicleConfigLoader.cpp
+        config/WeatherPresetLoader.cpp
     DEPENDS
         openbus_core
     PRIVATE_DEPENDS
@@ -84,6 +129,7 @@ openbus_add_module(openbus_physics
     SOURCES
         physics/BusConfiguration.cpp
         physics/BusSimulation.cpp
+        physics/RoadWeather.cpp
         physics/RoadFeatures.cpp
         physics/World.cpp
     DEPENDS
@@ -155,7 +201,6 @@ openbus_add_module(openbus_render
         render/OpenGLFunctions.cpp
         render/RenderPrimitives.cpp
         render/RendererReflection.cpp
-        render/WeatherEffects.cpp
         render/map/MapRenderer.cpp
         render/map/MapRendererDraw.cpp
         render/map/MapRendererHelpers.cpp
@@ -174,8 +219,10 @@ openbus_add_module(openbus_render
 
 add_executable(OpenBus
     app/CrashHandler.cpp
+    app/CustomWeatherUi.cpp
     app/FrameTiming.cpp
     app/ImGuiLayer.cpp
+    app/MetarStationUi.cpp
     app/MapTrafficWorker.cpp
     app/RenderLoop.cpp
     app/RenderLoopDraw.cpp

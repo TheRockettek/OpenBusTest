@@ -57,6 +57,15 @@ add_test(NAME OpenBusLoggerProbe.write-failure COMMAND OpenBusLoggerProbe write-
 add_test(NAME OpenBusLoggerProbe.trace COMMAND OpenBusLoggerProbe trace)
 set_tests_properties(OpenBusLoggerProbe.write-failure PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusVariablesProbe VariablesProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusSolarLightingProbe SolarLightingProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusWeatherEnvironmentProbe WeatherEnvironmentProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusWeatherSelectionProbe WeatherSelectionProbe.cpp LIBS openbus_core
+    ARGS "${OPENBUS_SOURCE_ROOT}/metar/metar_station_details.csv")
+openbus_add_probe(OpenBusActiveMetarStationsProbe ActiveMetarStationsProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusWeatherPresetProbe WeatherPresetProbe.cpp LIBS openbus_config
+    ARGS "${OPENBUS_FIXTURES}/weather")
+openbus_add_probe(OpenBusMetarProbe MetarProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusMetarNoaaProbe MetarNoaaProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp
     LIBS openbus_config)
 openbus_add_probe(OpenBusSceneryObjectConfigProbe SceneryObjectConfigProbe.cpp
@@ -223,6 +232,16 @@ openbus_add_probe(OpenBusImGuiLayerProbe ImGuiLayerProbe.cpp LIBS openbus_imgui)
 target_sources(OpenBusImGuiLayerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/ImGuiLayer.cpp")
 target_include_directories(OpenBusImGuiLayerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 set_tests_properties(OpenBusImGuiLayerProbe PROPERTIES SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusCustomWeatherUiProbe CustomWeatherUiProbe.cpp LIBS openbus_imgui openbus_core)
+target_sources(OpenBusCustomWeatherUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/CustomWeatherUi.cpp")
+target_include_directories(OpenBusCustomWeatherUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+openbus_add_probe(OpenBusSurfaceWeatherUiProbe SurfaceWeatherUiProbe.cpp
+    LIBS openbus_imgui openbus_core openbus_physics)
+target_sources(OpenBusSurfaceWeatherUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/CustomWeatherUi.cpp")
+target_include_directories(OpenBusSurfaceWeatherUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+openbus_add_probe(OpenBusMetarStationUiProbe MetarStationUiProbe.cpp LIBS openbus_imgui)
+target_sources(OpenBusMetarStationUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/MetarStationUi.cpp")
+target_include_directories(OpenBusMetarStationUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusHumanGaitProbe HumanGaitProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp LIBS openbus_render)
@@ -237,6 +256,10 @@ add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe -
 set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusViewpointProbe ViewpointProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusCloudRenderingProbe CloudRenderingProbe.cpp LIBS openbus_render)
+set_tests_properties(OpenBusCloudRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusPrecipitationRenderingProbe PrecipitationRenderingProbe.cpp LIBS openbus_render)
+set_tests_properties(OpenBusPrecipitationRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusMapOcclusionRenderingProbe MapOcclusionRenderingProbe.cpp
     LIBS openbus_render)
 set_tests_properties(OpenBusMapOcclusionRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
@@ -264,6 +287,10 @@ foreach(backend IN ITEMS cpu compute-indirect)
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --normals)
     add_test(NAME OpenBusMapSplineLabelsRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-labels)
+    add_test(NAME OpenBusMapRoadWeatherRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --road-weather)
+    add_test(NAME OpenBusMapTerrainWeatherRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --terrain-weather)
     add_test(NAME OpenBusMapSplineTextRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-text)
     add_test(NAME OpenBusMapSplineOwnershipRenderingProbe.${backend}
@@ -280,6 +307,8 @@ foreach(backend IN ITEMS cpu compute-indirect)
         OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
         OpenBusMapSceneryNormalsRenderingProbe.${backend}
         OpenBusMapSplineLabelsRenderingProbe.${backend}
+        OpenBusMapRoadWeatherRenderingProbe.${backend}
+        OpenBusMapTerrainWeatherRenderingProbe.${backend}
         OpenBusMapSplineTextRenderingProbe.${backend}
         OpenBusMapSplineOwnershipRenderingProbe.${backend}
         OpenBusMapSplineDependencyProbe.${backend}
@@ -366,7 +395,6 @@ openbus_add_probe(OpenBusVehiclePassengerRequestProbe VehiclePassengerRequestPro
     LIBS openbus_core)
 openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp
     LIBS openbus_render)
-openbus_add_probe(OpenBusWeatherEffectsProbe WeatherEffectsProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusTextureAddressModeProbe TextureAddressModeProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusStaticPrimitiveBufferProbe StaticPrimitiveBufferProbe.cpp)

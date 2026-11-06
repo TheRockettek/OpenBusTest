@@ -1,6 +1,7 @@
 #include "config/TextureSurfaceConfigLoader.h"
 
 #include "config/ConfigurationParser.h"
+#include "core/AssetPath.h"
 #include "core/Utf8Path.h"
 
 #include <utility>
@@ -26,6 +27,7 @@ loadTextureSurfaceConfiguration(const std::filesystem::path& texturePath) {
     TextureSurfaceConfiguration result;
     std::filesystem::path configPath = texturePath;
     configPath += ".cfg";
+    configPath = openbus::assets::resolveCaseInsensitivePath(configPath);
     std::error_code fileError;
     if (!std::filesystem::exists(configPath, fileError)) {
         if (fileError) {
@@ -43,8 +45,7 @@ loadTextureSurfaceConfiguration(const std::filesystem::path& texturePath) {
 
     Reader reader(configPath);
     if (!reader.isOpen()) {
-        result.diagnostics.error(0, "file",
-                                 "unable to open " + openbus::pathToUtf8(configPath));
+        result.diagnostics.error(0, "file", "unable to open " + openbus::pathToUtf8(configPath));
         return result;
     }
     result.configFound = true;
@@ -57,15 +58,22 @@ loadTextureSurfaceConfiguration(const std::filesystem::path& texturePath) {
             continue;
         }
         const std::string keyword = lower(line.keyword());
-        const bool known = keyword == "puddles" || keyword == "moisture" ||
-                           keyword == "surface" || keyword == "nightmapmode";
+        const bool known = keyword == "puddles" || keyword == "moisture" || keyword == "surface" ||
+                           keyword == "nightmapmode";
+        const bool roadPhysics =
+            keyword == "puddles" || keyword == "moisture" || keyword == "surface";
         logConfigurationTagStatus(
             "texture surface CFG", configPath, line.number, keyword,
-            known ? ConfigurationTagStatus::Ignored : ConfigurationTagStatus::Unknown,
-            known ? "texture surface data is parsed but not applied by runtime physics/rendering"
-                  : "unknown texture surface configuration section");
+            roadPhysics
+                ? ConfigurationTagStatus::Active
+                : (known ? ConfigurationTagStatus::Ignored : ConfigurationTagStatus::Unknown),
+            roadPhysics ? "used for approximate spline-road wheel grip and moisture shading; "
+                          "other surfaces are not yet supported"
+                        : (known ? "texture night-map mode is parsed but not applied"
+                                 : "unknown texture surface configuration section"));
         if (keyword == "puddles") {
             result.supportsPuddles = true;
+            result.supportsMoisture = true;
         } else if (keyword == "moisture") {
             result.supportsMoisture = true;
         } else if (keyword == "surface" || keyword == "nightmapmode") {
@@ -79,9 +87,9 @@ loadTextureSurfaceConfiguration(const std::filesystem::path& texturePath) {
                 continue;
             }
             if (keyword == "surface") {
-                if (value < 0 || value > 7) {
+                if (value < 0 || value > 255) {
                     result.diagnostics.error(valueLine.number, keyword,
-                                             "surface type must be between 0 and 7");
+                                             "surface type must be between 0 and 255");
                 } else {
                     result.surfaceType = value;
                 }

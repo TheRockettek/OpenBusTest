@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 
 namespace openbus {
@@ -26,6 +28,24 @@ inline const char* getEnvironment(const char* name) {
 #else
     return std::getenv(name);
 #endif
+}
+
+inline std::string environmentValue(const char* name) {
+    const char* value = getEnvironment(name);
+    return value == nullptr ? std::string{} : std::string(value);
+}
+
+inline double finiteEnvironmentDouble(const char* name, double fallback) {
+    const std::string configuredValue = environmentValue(name);
+    if (configuredValue.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    const double value = std::strtod(configuredValue.c_str(), &end);
+    if (end == configuredValue.c_str() || *end != '\0' || !std::isfinite(value)) {
+        throw std::runtime_error(std::string(name) + " must be a finite number");
+    }
+    return value;
 }
 
 } // namespace openbus

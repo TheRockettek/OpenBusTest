@@ -7,6 +7,7 @@
 #include "map/MapSplineProfile.h"
 #include "assets/TextureLoader.h"
 #include "config/ModelConfigLoader.h"
+#include "config/TextureSurfaceConfigLoader.h"
 #include "assets/O3DLoader.h"
 #include "config/SceneryObjectConfigLoader.h"
 #include "core/Variables.h"
@@ -81,6 +82,33 @@ std::filesystem::path resolveSurfaceMap(const MapDefinition& map,
         }
     }
     return {};
+}
+
+std::optional<CollisionSurface> loadRoadSurface(const MapDefinition& map,
+                                                const std::filesystem::path& omsiRoot,
+                                                const std::filesystem::path& profilePath,
+                                                const std::string& texturePath) {
+    const std::filesystem::path relative = normalizedAssetPath(texturePath);
+    const std::filesystem::path profileRoot = profilePath.parent_path();
+    for (const std::filesystem::path& candidate :
+         {profileRoot / "texture" / relative, profileRoot / relative,
+          omsiRoot / "Texture" / relative, omsiRoot / relative, map.rootPath / relative}) {
+        const auto texture = openbus::assets::resolveCaseInsensitivePath(candidate);
+        if (!std::filesystem::is_regular_file(texture)) {
+            continue;
+        }
+        const auto config = openbus::config::loadTextureSurfaceConfiguration(texture);
+        for (const auto& diagnostic : config.diagnostics.entries) {
+            gameLog.Warning("Road texture surface " + openbus::pathToUtf8(texture) + ":" +
+                            std::to_string(diagnostic.line) + ": " + diagnostic.message);
+        }
+        if (!config.configFound || config.diagnostics.hasErrors()) {
+            return std::nullopt;
+        }
+        return CollisionSurface{config.surfaceType, config.supportsMoisture,
+                                config.supportsPuddles};
+    }
+    return std::nullopt;
 }
 
 std::size_t surfaceSubdivisions(double uvSpan, int pixels) {
@@ -506,6 +534,9 @@ std::optional<MapPoleCollision> makeMapPoleCollision(const MapSceneryCollisionOb
 
 void flushTileCollisionMesh(StaticCollisionMesh& tileMesh, MapRoadCollisionResult& result) {
     if (!tileMesh.indices.empty()) {
+        if (!tileMesh.triangleSurfaces.empty()) {
+            tileMesh.triangleSurfaces.resize(tileMesh.indices.size() / 3);
+        }
         result.meshes.push_back(std::move(tileMesh));
     }
     tileMesh = {};
@@ -914,6 +945,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
     std::unordered_set<std::string> failedProfiles;
     std::unordered_map<std::string, std::optional<std::filesystem::path>> surfaceMapPaths;
     std::unordered_map<std::string, std::optional<openbus::rendering::Image>> surfaceMaps;
+    std::unordered_map<std::string, std::optional<CollisionSurface>> roadSurfaces;
 
     for (const MapTileReference& tileReference : map.tiles) {
         if (selectedTile != nullptr &&
@@ -988,6 +1020,14 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                     profile.textures[static_cast<std::size_t>(section.textureIndex)];
                 bool surfaceHeightMapApplied = false;
                 const std::string surfaceRequestKey = profileKey + '\0' + texturePath;
+                auto roadSurface = roadSurfaces.find(surfaceRequestKey);
+                if (roadSurface == roadSurfaces.end()) {
+                    roadSurface =
+                        roadSurfaces
+                            .emplace(surfaceRequestKey,
+                                     loadRoadSurface(map, omsiRoot, profilePath, texturePath))
+                            .first;
+                }
                 auto surfacePath = surfaceMapPaths.find(surfaceRequestKey);
                 if (surfacePath == surfaceMapPaths.end()) {
                     std::filesystem::path resolved =
@@ -1052,6 +1092,10 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                         baseVertex + sectionGeometry.indices[index + 1]};
                     tileMesh.indices.insert(tileMesh.indices.end(), triangle.begin(),
                                             triangle.end());
+                    if (roadSurface->second || !tileMesh.triangleSurfaces.empty()) {
+                        tileMesh.triangleSurfaces.resize(tileMesh.indices.size() / 3 - 1);
+                        tileMesh.triangleSurfaces.push_back(roadSurface->second);
+                    }
                     if (surfaceHeightMapApplied) {
                         tileMesh.surfaceHeightMapIndices.insert(
                             tileMesh.surfaceHeightMapIndices.end(), triangle.begin(),

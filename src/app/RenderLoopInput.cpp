@@ -106,6 +106,42 @@ double RenderLoop::currentFieldOfView() const {
 
 void RenderLoop::beginFrame(double fixedTimeStep) {
     TraceScope trace("frame", "RenderLoop::beginFrame");
+    if (activeMetarStations_.refreshIfDue() && activeMetarStations_.failed())
+        gameLog.Error(activeMetarStations_.status());
+    const bool directoryWasPending = activeMetarStations_.pending();
+    if (auto codes = activeMetarStations_.poll()) {
+        auto updatedStations = openbus::matchMetarStations(weatherStations_, *codes);
+        openbus::remapMetarStationSelection(weatherStationPicker_,
+                                            recentWeatherStationsAvailable_ ? recentWeatherStations_
+                                                                            : weatherStations_,
+                                            updatedStations);
+        recentWeatherStations_ = std::move(updatedStations);
+        recentWeatherStationsAvailable_ = true;
+        gameLog.Log(activeMetarStations_.status());
+    } else if (directoryWasPending && !activeMetarStations_.pending() &&
+               activeMetarStations_.failed()) {
+        gameLog.Error(activeMetarStations_.status());
+    }
+    if (weatherSelection_.refreshIfDue()) {
+        weatherUiMessage_ = weatherSelection_.status();
+        weatherUiError_ = weatherSelection_.failed();
+        if (weatherUiError_)
+            gameLog.Error(weatherUiMessage_);
+        else
+            gameLog.Log(weatherUiMessage_);
+    }
+    const bool weatherWasPending = weatherSelection_.pending();
+    const auto metarWeather = weatherSelection_.poll();
+    if (metarWeather) {
+        SetWeather(*metarWeather);
+        weatherUiMessage_ = weatherSelection_.status();
+        weatherUiError_ = false;
+        gameLog.Log(weatherUiMessage_);
+    } else if (weatherWasPending && !weatherSelection_.pending() && weatherSelection_.failed()) {
+        weatherUiMessage_ = weatherSelection_.status();
+        weatherUiError_ = true;
+        gameLog.Error(weatherUiMessage_);
+    }
     steamPresence_.runCallbacks();
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.pollEvents");
@@ -116,6 +152,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     const bool keyboardAvailable =
         !imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard || pauseMenuOpen_ || debugMenuOpen_;
+    const bool typingText = imguiEnabled_ && ImGui::GetIO().WantTextInput;
     const bool pauseMenuTogglePressed = glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS;
     if (fixedTimeStep < 0.0 && keyboardAvailable && pauseMenuTogglePressed &&
         !previousPauseMenuToggleState_) {
@@ -132,7 +169,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     previousPauseMenuToggleState_ = pauseMenuTogglePressed;
 
     const bool pauseTogglePressed = glfwGetKey(window_, GLFW_KEY_P) == GLFW_PRESS;
-    if (fixedTimeStep < 0.0 && keyboardAvailable && pauseTogglePressed &&
+    if (fixedTimeStep < 0.0 && keyboardAvailable && !typingText && pauseTogglePressed &&
         !previousPauseToggleState_) {
         const bool resume = paused_;
         setPausedState(!paused_);
@@ -192,7 +229,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             const bool dumpVariables = binding.action == "debug_dump_variables";
             const bool freeCameraToggle = binding.key == GLFW_KEY_F3;
             const bool trafficSplineDebugToggle = binding.key == GLFW_KEY_F2;
-            if (changed) {
+            if (changed && !typingText) {
                 if (mouseControlToggle && pressed && playerVehicle_ != nullptr) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
                     if (mouseControlEnabled_) {
@@ -210,7 +247,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                                   (pressed ? " pressed" : " released"));
                 }
             }
-            if (!mouseControlToggle && !dumpVariables && !freeCameraToggle &&
+            if (!typingText && !mouseControlToggle && !dumpVariables && !freeCameraToggle &&
                 binding.key != GLFW_KEY_P && !trafficSplineDebugToggle && !paused_ &&
                 playerVehicle_ != nullptr && playerVehicle_->scripts &&
                 openbus::input::shouldDispatchKeyBinding(binding.flags, pressed,
@@ -220,13 +257,13 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             previousVehicleKeyStates_[index] = pressed;
         }
         const bool freeCameraTogglePressed = glfwGetKey(window_, GLFW_KEY_F3) == GLFW_PRESS;
-        if (freeCameraTogglePressed && !previousFreeCameraToggleState_ &&
+        if (!typingText && freeCameraTogglePressed && !previousFreeCameraToggleState_ &&
             playerVehicle_ != nullptr) {
             setFreeCameraEnabled(!freeCameraEnabled_);
         }
         previousFreeCameraToggleState_ = freeCameraTogglePressed;
         const bool profileTogglePressed = glfwGetKey(window_, GLFW_KEY_F10) == GLFW_PRESS;
-        if (profileTogglePressed && !previousProfileToggleState_) {
+        if (!typingText && profileTogglePressed && !previousProfileToggleState_) {
 #if OPENBUS_ENABLE_PERF_TRACE
             const bool wasRecording = openbus::rendering::IsRecording();
             const bool recording = openbus::rendering::SetRecording(!wasRecording);
@@ -257,7 +294,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                     break;
                 }
             }
-            if (!freeCameraEnabled_ && keyDown && !previousViewKeyStates_[index] &&
+            if (!typingText && !freeCameraEnabled_ && keyDown && !previousViewKeyStates_[index] &&
                 !vehicleBindingPressedForKey) {
                 if (index == 0 || index <= vehicleCameras_.size()) {
                     cameraView_ = static_cast<int>(index);
@@ -272,7 +309,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.cameraNavigation");
         const bool mouseLookTogglePressed = glfwGetKey(window_, GLFW_KEY_F4) == GLFW_PRESS;
-        if (mouseLookTogglePressed && !previousMouseLookToggleState_) {
+        if (!typingText && mouseLookTogglePressed && !previousMouseLookToggleState_) {
             mouseLookEnabled_ = !mouseLookEnabled_;
             draggingCamera_ = false;
             previousCursorX_ = cursorX;
@@ -302,7 +339,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         if (!mouseLookEnabled_) {
             for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
                 const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
-                if (!freeCameraEnabled_ && pressed && !previousCameraNavigationStates_[index]) {
+                if (!typingText && !freeCameraEnabled_ && pressed &&
+                    !previousCameraNavigationStates_[index]) {
                     selectVehicleCamera(index == 0 ? -1 : 1);
                 }
                 previousCameraNavigationStates_[index] = pressed;
@@ -311,7 +349,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.freeCameraMovement");
-        if (freeCameraEnabled_ && playerVehicle_ != nullptr) {
+        if (!typingText && freeCameraEnabled_ && playerVehicle_ != nullptr) {
             const double forward =
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS) -
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS);
@@ -328,14 +366,14 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.captureInput");
         const bool captureKeyPressed = glfwGetKey(window_, GLFW_KEY_F12) == GLFW_PRESS;
-        if (captureKeyPressed && !previousCaptureKeyState_) {
+        if (!typingText && captureKeyPressed && !previousCaptureKeyState_) {
             captureRequested_ = true;
         }
         previousCaptureKeyState_ = captureKeyPressed;
     }
     {
         const bool clickableDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS;
-        if (clickableDebugKeyPressed && !previousClickableDebugKeyState_) {
+        if (!typingText && clickableDebugKeyPressed && !previousClickableDebugKeyState_) {
             clickableDebugOverlay_ = !clickableDebugOverlay_;
             gameLog.Log(std::string("Clickable component overlay ") +
                         (clickableDebugOverlay_ ? "enabled" : "disabled"));
@@ -350,7 +388,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool collisionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_C) == GLFW_PRESS;
-        if (collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
+        if (!typingText && collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
             collisionDebugOverlay_ = !collisionDebugOverlay_;
             gameLog.Log(std::string("Collision wireframe overlay ") +
                         (collisionDebugOverlay_
@@ -362,7 +400,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool tileBoundaryDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F11) == GLFW_PRESS;
-        if (tileBoundaryDebugKeyPressed && !previousTileBoundaryDebugKeyState_) {
+        if (!typingText && tileBoundaryDebugKeyPressed && !previousTileBoundaryDebugKeyState_) {
             tileBoundaryDebugOverlay_ = !tileBoundaryDebugOverlay_;
             gameLog.Log(
                 std::string("Active map tile boundary overlay ") +
@@ -372,7 +410,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool trafficSplineDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F2) == GLFW_PRESS;
-        if (trafficSplineDebugKeyPressed && !previousTrafficSplineDebugKeyState_) {
+        if (!typingText && trafficSplineDebugKeyPressed && !previousTrafficSplineDebugKeyState_) {
             trafficSplineDebugOverlay_ = !trafficSplineDebugOverlay_;
             gameLog.Log(
                 std::string("AI and human traffic spline overlay ") +
@@ -397,7 +435,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool raisePlayerKeyPressed = glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS;
-        if (raisePlayerKeyPressed && !previousRaisePlayerKeyState_) {
+        if (!typingText && raisePlayerKeyPressed && !previousRaisePlayerKeyState_) {
             raisePlayerRequestPending_ = true;
         }
         previousRaisePlayerKeyState_ = raisePlayerKeyPressed;
@@ -489,7 +527,6 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         TraceScope phase("render", "RenderLoop::beginFrame.setupView");
         viewport_ = {0, 0, width, height};
         glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         setPerspective(static_cast<double>(width), static_cast<double>(height),
                        currentFieldOfView());
     }

@@ -1,9 +1,11 @@
 #include "render/CoreRenderer.h"
+#include "core/Variables.h"
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
 #include "render/RendererReflection.h"
 #include "render/map/MapRendererInternal.h"
 #include "app/vehicle/VehicleDrawSorting.h"
+#include "app/vehicle/VehicleSpotlight.h"
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
 
@@ -14,11 +16,55 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <numbers>
+#include <stdexcept>
 
 using namespace openbus::rendering;
 
 int main() {
+    using openbus::app::vehicle::makeSpotlight;
+    using openbus::app::vehicle::SpotlightStatus;
+    ModelSpotlight high;
+    high.parameters = {1, 2, 3, 0, 1, -0.3, 255, 128, 0, 500, 30, 70};
+    ModelSpotlight low = high;
+    low.parameters[9] = 100;
+    const std::vector<ModelSpotlight> definitions = {high, low};
+    const Matrix4 vehicleView = multiplyMatrix4(translationMatrix({10, 20, 30}),
+                                                 rotationMatrix(90, 0, 0, 1));
+    VehicleSpotlight transformed;
+    if (makeSpotlight(definitions, -1, vehicleView, transformed) != SpotlightStatus::Off ||
+        makeSpotlight(definitions, 2, vehicleView, transformed) != SpotlightStatus::Invalid ||
+        makeSpotlight(definitions, 1, vehicleView, transformed) != SpotlightStatus::Active ||
+        transformed.range != 100 || std::abs(transformed.position[0] - 11) > 1e-8 ||
+        std::abs(transformed.position[1] - 22) > 1e-8 ||
+        std::abs(transformed.position[2] - 33) > 1e-8 ||
+        std::abs(transformed.direction[0]) > 1e-8 ||
+        std::abs(transformed.direction[1] - 1) > 1e-8 ||
+        std::abs(transformed.direction[2] + 0.3) > 1e-8 ||
+        makeSpotlight(definitions, 0, multiplyMatrix4(translationMatrix({-5, 0, 0}), vehicleView),
+                      transformed) != SpotlightStatus::Active ||
+        transformed.range != 500 || std::abs(transformed.position[0] - 6) > 1e-8 ||
+        std::abs(transformed.direction[1] - 1) > 1e-8) {
+        std::cerr << "vehicle spotlight selection or per-view transform failed\n";
+        return 1;
+    }
+    if (makeSpotlight(definitions, 0.6, vehicleView, transformed) != SpotlightStatus::Active ||
+        transformed.range != 100 ||
+        makeSpotlight(definitions, -0.6, vehicleView, transformed) != SpotlightStatus::Off) {
+        std::cerr << "vehicle spotlight selector was not rounded\n";
+        return 1;
+    }
+    ModelSpotlight invalidSpotlight = high;
+    invalidSpotlight.parameters[3] = 0;
+    invalidSpotlight.parameters[4] = 0;
+    invalidSpotlight.parameters[5] = 0;
+    if (makeSpotlight({invalidSpotlight}, 0, vehicleView, transformed) != SpotlightStatus::Invalid ||
+        makeSpotlight(definitions, std::numeric_limits<double>::quiet_NaN(), vehicleView,
+                      transformed) != SpotlightStatus::Invalid) {
+        std::cerr << "invalid vehicle spotlight was accepted\n";
+        return 1;
+    }
     MapPoleState pole;
     pole.basePosition = {51.0, 50.3, 5.5};
     pole.rotationAxis = {0.0, 1.0, 0.0};
@@ -576,6 +622,276 @@ int main() {
         std::cerr << "multi-material visibility fade did not scale fragment opacity\n";
         passed = false;
     }
+    setWeatherLighting(0.0);
+    setWeatherFog(std::nullopt);
+    const VehicleSpotlight testSpotlight{{0, 0, -2}, {0, 0, 1}, {1, 0.5, 0.25},
+                                         10, 30, 70};
+    const auto spotlightPixel = [&](bool multiMaterial) {
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (multiMaterial) {
+            drawMaterialBatch(buffer, 3, materialColors, {white}, {false}, 0, 0.5);
+        } else {
+            drawModelBatch(buffer, 3, material, {1, 1, 1}, 0.5, 2);
+        }
+        std::array<std::uint8_t, 4> result = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+        return result;
+    };
+    for (const bool multiMaterial : {false, true}) {
+        setVehicleSpotlights({});
+        const auto unlit = spotlightPixel(multiMaterial);
+        setVehicleSpotlights({testSpotlight});
+        const auto illuminated = spotlightPixel(multiMaterial);
+        VehicleSpotlight coneEdge = testSpotlight;
+        coneEdge.direction = {0.5, 0, 0.866025403784};
+        setVehicleSpotlights({coneEdge});
+        const auto softenedCone = spotlightPixel(multiMaterial);
+        VehicleSpotlight nearerRange = testSpotlight;
+        nearerRange.range = 2.0;
+        setVehicleSpotlights({nearerRange});
+        const auto attenuated = spotlightPixel(multiMaterial);
+        VehicleSpotlight away = testSpotlight;
+        away.direction = {0, 0, -1};
+        setVehicleSpotlights({away});
+        const auto outsideCone = spotlightPixel(multiMaterial);
+        VehicleSpotlight shortRange = testSpotlight;
+        shortRange.range = 0.1;
+        setVehicleSpotlights({shortRange});
+        const auto outsideRange = spotlightPixel(multiMaterial);
+        const double distance = std::sqrt(1.0 + 2.0 / (32.0 * 32.0));
+        const double relativeDistance = distance / testSpotlight.range;
+        const int expectedRedIncrease = static_cast<int>(std::lround(
+            255.0 * (0.1 + 0.3 / distance) /
+            (0.2 + relativeDistance + 40.0 * relativeDistance * relativeDistance)));
+        if (illuminated[0] <= unlit[0] + 30 || illuminated[1] <= unlit[1] + 10 ||
+            illuminated[0] <= illuminated[1] || illuminated[1] <= illuminated[2] ||
+            std::abs((illuminated[0] - unlit[0]) - expectedRedIncrease) > 3 ||
+            softenedCone[0] <= unlit[0] + 2 || softenedCone[0] >= illuminated[0] - 5 ||
+            attenuated[0] <= unlit[0] + 2 || attenuated[0] >= illuminated[0] - 5 ||
+            outsideCone != unlit || outsideRange != unlit || illuminated[3] != unlit[3]) {
+            std::cerr << "vehicle spotlight illumination, cone, range, or alpha failed for "
+                      << (multiMaterial ? "material" : "model") << " shader\n";
+            passed = false;
+        }
+    }
+    setVehicleSpotlights({});
+    setWeatherLighting(std::nullopt);
+    const auto fogSample = [&](bool multiMaterial, double distance) {
+        setModelViewMatrix(translationMatrix({0, 0, 1.0 - distance}));
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (multiMaterial) {
+            drawMaterialBatch(buffer, 3, materialColors, {white}, {false}, 0, 0.5);
+        } else {
+            drawModelBatch(buffer, 3, material, {1, 1, 1}, 0.5, 2);
+        }
+        std::array<std::uint8_t, 4> result = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+        return result;
+    };
+    material.textured = true;
+    material.texture = blue;
+    setWeatherFog(std::nullopt);
+    const auto bareRoad = fogSample(false, 1.0);
+    material.snowCoverage = 0.85F;
+    const auto snowyRoad = fogSample(false, 1.0);
+    setWeatherFog(5.0);
+    const auto foggySnow = fogSample(false, 1.0);
+    const double snowTransmission = std::exp(-std::log(50.0) *
+                                             std::sqrt(1.0 + 2.0 / (32.0 * 32.0)) / 5.0);
+    constexpr std::array<double, 3> weatherFogColor = {0.45, 0.65, 0.88};
+    for (std::size_t channel = 0; channel < 3; ++channel) {
+        const int expected = static_cast<int>(std::lround(
+            255.0 * weatherFogColor[channel] * (1.0 - snowTransmission) +
+            snowyRoad[channel] * snowTransmission));
+        if (snowyRoad[channel] <= bareRoad[channel] || !close(foggySnow[channel], expected)) {
+            std::cerr << "snow albedo did not respond correctly to lighting and fog\n";
+            passed = false;
+        }
+    }
+    if (snowyRoad[3] != bareRoad[3] || foggySnow[3] != bareRoad[3]) {
+        std::cerr << "snow or fog changed road opacity\n";
+        passed = false;
+    }
+    material = {};
+    for (bool multiMaterial : {false, true}) {
+        setWeatherFog(std::nullopt);
+        const auto clearNear = fogSample(multiMaterial, 1.0);
+        const auto clearFar = fogSample(multiMaterial, 10.0);
+        setWeatherFog(5.0);
+        const auto fogNear = fogSample(multiMaterial, 1.0);
+        const auto fogFar = fogSample(multiMaterial, 10.0);
+        const auto expected = [](int clear, double distance, double fogColor) {
+            const double pixelDistance = distance * std::sqrt(1.0 + 2.0 / (32.0 * 32.0));
+            const double transmission = std::exp(-std::log(50.0) * pixelDistance / 5.0);
+            return static_cast<int>(std::lround(255.0 * fogColor * (1.0 - transmission) +
+                                                clear * transmission));
+        };
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            constexpr std::array<double, 3> fogColor = {0.45, 0.65, 0.88};
+            if (!close(fogNear[channel], expected(clearNear[channel], 1.0, fogColor[channel])) ||
+                !close(fogFar[channel], expected(clearFar[channel], 10.0, fogColor[channel]))) {
+                std::cerr << "visibility fog did not match near/far GPU transmission\n";
+                passed = false;
+                break;
+            }
+        }
+        if (!close(fogNear[3], 128) || !close(fogFar[3], 128)) {
+            std::cerr << "visibility fog changed fragment opacity\n";
+            passed = false;
+        }
+        setWeatherFog(std::nullopt);
+        if (fogSample(multiMaterial, 1.0) != clearNear) {
+            std::cerr << "disabling fog did not restore clear rendering\n";
+            passed = false;
+        }
+    }
+    for (bool multiMaterial : {false, true}) {
+        setWeatherFog(std::nullopt);
+        const auto clear = fogSample(multiMaterial, 10.0);
+        setWeatherFog(5.0);
+        const auto full = fogSample(multiMaterial, 10.0);
+        const auto half = fogSample(multiMaterial, 5.0);
+        setWeatherFog(5.0, 5.0);
+        setWeatherFogView(identityMatrix(), -20.0);
+        const auto above = fogSample(multiMaterial, 10.0);
+        setWeatherFogView(identityMatrix(), -10.0);
+        const auto crossing = fogSample(multiMaterial, 10.0);
+        setWeatherFogView(identityMatrix(), 0.0);
+        const auto below = fogSample(multiMaterial, 10.0);
+        for (std::size_t channel = 0; channel < 4; ++channel) {
+            if (!close(above[channel], clear[channel]) ||
+                !close(crossing[channel], half[channel]) ||
+                !close(below[channel], full[channel])) {
+                std::cerr << "height fog did not integrate the camera-to-fragment layer path\n";
+                passed = false;
+                break;
+            }
+        }
+    }
+    setWeatherFog(5.0, 5.0);
+    setWeatherFogView(identityMatrix(), 0.0);
+    const auto validHeightFog = fogSample(false, 10.0);
+    for (double invalid : {-1.0, std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()}) {
+        bool rejected = false;
+        try {
+            setWeatherFog(5.0, invalid);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        if (!rejected || fogSample(false, 10.0) != validHeightFog) {
+            std::cerr << "invalid fog height changed renderer state\n";
+            passed = false;
+        }
+    }
+    setWeatherFog(0.0);
+    const auto zeroVisibility = fogSample(false, 1.0);
+    setWeatherFog(1.0);
+    if (fogSample(false, 1.0) != zeroVisibility) {
+        std::cerr << "zero visibility was not clamped to one meter\n";
+        passed = false;
+    }
+    for (double invalid : {-1.0, std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()}) {
+        bool rejected = false;
+        try {
+            setWeatherFog(invalid);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        if (!rejected || fogSample(false, 1.0) != zeroVisibility) {
+            std::cerr << "invalid visibility was not rejected without changing fog\n";
+            passed = false;
+        }
+    }
+    setWeatherFog(std::nullopt);
+    setModelViewMatrix(identityMatrix());
+    {
+        SystemVariables clock;
+        clock.configureSimulationClock(2024, 3, 20, 43200);
+        clock.configureDayNight(0);
+        setWeatherLighting(clock.environmentBrightness());
+        const auto day = fogSample(false, 1.0);
+        const auto daySky = weatherBackgroundColor(clock.environmentBrightness());
+        clock.updateSimulationClock(43200);
+        setWeatherLighting(clock.environmentBrightness());
+        const auto night = fogSample(false, 1.0);
+        const auto nightSky = weatherBackgroundColor(clock.environmentBrightness());
+        if (night[0] >= day[0] / 2 || nightSky[0] >= daySky[0] / 2) {
+            std::cerr << "simulation clock did not darken surface and sky\n";
+            passed = false;
+        }
+    }
+    for (bool multiMaterial : {false, true}) {
+        setWeatherLighting(std::nullopt);
+        const auto day = fogSample(multiMaterial, 1.0);
+        setWeatherLighting(0.5);
+        const auto twilight = fogSample(multiMaterial, 1.0);
+        setWeatherLighting(0.0);
+        const auto night = fogSample(multiMaterial, 1.0);
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            if (!close(twilight[channel], static_cast<int>(std::lround(day[channel] * 0.5))) ||
+                night[channel] > 2) {
+                std::cerr << "weather brightness did not scale GPU surface lighting\n";
+                passed = false;
+                break;
+            }
+        }
+        if (night[3] != day[3] || twilight[3] != day[3]) {
+            std::cerr << "weather brightness changed surface opacity\n";
+            passed = false;
+        }
+        setWeatherLighting(std::nullopt);
+        if (fogSample(multiMaterial, 1.0) != day) {
+            std::cerr << "removing brightness did not restore daylight lighting\n";
+            passed = false;
+        }
+    }
+    setWeatherLighting(0.5);
+    const auto halfBackground = weatherBackgroundColor(0.5);
+    if (std::abs(halfBackground[0] - 0.225F) > 0.0001F ||
+        std::abs(halfBackground[1] - 0.325F) > 0.0001F ||
+        std::abs(halfBackground[2] - 0.44F) > 0.0001F) {
+        std::cerr << "weather background did not scale with lighting\n";
+        passed = false;
+    }
+    const auto halfLighting = fogSample(false, 1.0);
+    for (double invalid : {-0.1, 1.1, std::numeric_limits<double>::quiet_NaN()}) {
+        bool rejected = false;
+        try {
+            setWeatherLighting(invalid);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        if (!rejected || fogSample(false, 1.0) != halfLighting) {
+            std::cerr << "invalid brightness was not rejected without changing lighting\n";
+            passed = false;
+        }
+    }
+    setWeatherFog(1.0);
+    const auto fogAtHalfBrightness = fogSample(false, 1.0);
+    if (!close(fogAtHalfBrightness[0], static_cast<int>(std::lround(255.0 * halfBackground[0]))) ||
+        !close(fogAtHalfBrightness[1], static_cast<int>(std::lround(255.0 * halfBackground[1]))) ||
+        !close(fogAtHalfBrightness[2], static_cast<int>(std::lround(255.0 * halfBackground[2])))) {
+        std::cerr << "dense fog did not approach the weather-adjusted background\n";
+        passed = false;
+    }
+    setWeatherFog(std::nullopt);
+    setWeatherLighting(0.0);
+    material.emissionColor = {1, 1, 1};
+    const auto emissionAtNight = draw(material, {1, 1, 1}, 1.0);
+    material = {};
+    material.nightmap = white;
+    material.useNightmap = true;
+    material.nightmapStrength = 1.0F;
+    const auto nightmapAtNight = draw(material, {1, 1, 1}, 1.0);
+    if (emissionAtNight[0] < 250 || nightmapAtNight[0] < 250) {
+        std::cerr << "weather brightness suppressed self-lit materials or nightmaps\n";
+        passed = false;
+    }
+    material = {};
+    setWeatherLighting(std::nullopt);
+    setModelViewMatrix(identityMatrix());
     material.useTextTexture = true;
     material.textTexture = blue;
     auto pixel = draw(material, {1, 1, 1}, 1.0);
@@ -583,6 +899,24 @@ int main() {
         std::cerr << "text texture did not preserve its authored colour\n";
         passed = false;
     }
+    setWeatherLighting(0.25);
+    const auto unlitDisplay = draw(material, {1, 1, 1}, 1.0);
+    material.weatherLitDynamicTexture = true;
+    const auto litSign = draw(material, {1, 1, 1}, 1.0);
+    if (!close(unlitDisplay[2], 112) || !close(litSign[0], 16) ||
+        !close(litSign[1], 21) || !close(litSign[2], 28) ||
+        litSign[3] != unlitDisplay[3]) {
+        std::cerr << "scenery text did not follow weather brightness or preserve alpha\n";
+        passed = false;
+    }
+    material.emissionColor = {1, 1, 1};
+    if (draw(material, {1, 1, 1}, 1.0) != unlitDisplay) {
+        std::cerr << "emissive scenery text did not remain illuminated\n";
+        passed = false;
+    }
+    material.emissionColor = {};
+    material.weatherLitDynamicTexture = false;
+    setWeatherLighting(std::nullopt);
     material.textTexture = white;
     pixel = draw(material, {1, 1, 1}, 1.0);
     if (!close(pixel[0], 255) || !close(pixel[1], 255) || !close(pixel[2], 255)) {
@@ -618,6 +952,22 @@ int main() {
         std::cerr << "free texture did not preserve its authored colour\n";
         passed = false;
     }
+    setWeatherLighting(0.25);
+    material.weatherLitDynamicTexture = true;
+    const auto litFreeTexture = draw(material, {1, 1, 1}, 1.0);
+    if (!close(litFreeTexture[0], 16) || !close(litFreeTexture[1], 21) ||
+        !close(litFreeTexture[2], 28) || litFreeTexture[3] != pixel[3]) {
+        std::cerr << "scenery free texture did not follow weather brightness or preserve alpha\n";
+        passed = false;
+    }
+    material.emissionColor = {1, 1, 1};
+    if (draw(material, {1, 1, 1}, 1.0) != pixel) {
+        std::cerr << "emissive scenery free texture did not remain illuminated\n";
+        passed = false;
+    }
+    material.emissionColor = {};
+    material.weatherLitDynamicTexture = false;
+    setWeatherLighting(std::nullopt);
     material.freeTexture = white;
     pixel = draw(material, {1, 1, 1}, 1.0);
     if (!close(pixel[0], 255) || !close(pixel[1], 255) || !close(pixel[2], 255)) {
@@ -698,6 +1048,39 @@ int main() {
         std::cerr << "environment reflection opacity endpoints were not respected\n";
         passed = false;
     }
+    setWeatherLighting(0.5);
+    const auto dimEnvironment = sampleEnvironment(1.0);
+    if (!close(dimEnvironment[0], 128) || dimEnvironment[1] != 0 ||
+        dimEnvironment[2] != 0 || dimEnvironment[3] != 255) {
+        std::cerr << "environment reflection did not follow weather brightness\n";
+        passed = false;
+    }
+    setWeatherLighting(std::nullopt);
+    setWeatherFog(5.0);
+    const auto foggedEnvironment = sampleEnvironment(1.0);
+    const double transmission = std::exp(-std::log(50.0) *
+                                         std::sqrt(1.0 + 2.0 / (32.0 * 32.0)) / 5.0);
+    if (!close(foggedEnvironment[0], static_cast<int>(std::lround(
+                                             255.0 * (0.45 * (1.0 - transmission) + transmission)))) ||
+        !close(foggedEnvironment[1], static_cast<int>(std::lround(
+                                             255.0 * 0.65 * (1.0 - transmission)))) ||
+        !close(foggedEnvironment[2], static_cast<int>(std::lround(
+                                             255.0 * 0.88 * (1.0 - transmission)))) ||
+        foggedEnvironment[3] != 255) {
+        std::cerr << "environment reflection did not retain opacity under fog\n";
+        passed = false;
+    }
+    setWeatherFog(5.0, 0.5);
+    setWeatherFogView(identityMatrix(), -10.0);
+    const auto aboveEnvironmentFog = sampleEnvironment(1.0);
+    setWeatherFogView(identityMatrix(), 0.0);
+    const auto insideEnvironmentFog = sampleEnvironment(1.0);
+    if (aboveEnvironmentFog != std::array<std::uint8_t, 4>{255, 0, 0, 255} ||
+        insideEnvironmentFog != foggedEnvironment) {
+        std::cerr << "environment reflection did not respect the fog layer\n";
+        passed = false;
+    }
+    setWeatherFog(std::nullopt);
     for (std::size_t index = 0; index < environmentVertices.size(); index += 13) {
         environmentVertices[index + 6] = -normalX;
     }
@@ -868,6 +1251,13 @@ int main() {
         std::cerr << "material specular highlight was not rendered\n";
         passed = false;
     }
+    setWeatherLighting(0.0);
+    const auto specularAtNight = draw(material, {0.15, 0.15, 0.15}, 1.0);
+    if (specularAtNight[0] > 2 || specularAtNight[1] > 2 || specularAtNight[2] > 2) {
+        std::cerr << "weather brightness did not attenuate specular highlights\n";
+        passed = false;
+    }
+    setWeatherLighting(std::nullopt);
     constexpr std::array<float, 39> coloredVertices = {
         -2, -2, -1, 0, 0, 0, 0, 0, -1, 0.5F, 0.25F, 1.0F, 0.5F,
          2, -2, -1, 1, 0, 0, 0, 0, -1, 0.5F, 0.25F, 1.0F, 0.5F,
@@ -978,6 +1368,16 @@ int main() {
             std::cerr << "camera lighting probe did not exercise directional lighting\n";
             passed = false;
         }
+        setLightingViewMatrix(identityMatrix(), std::array<double, 3>{0.6, 0.0, 0.8});
+        const auto sunlit = drawLighting();
+        setLightingViewMatrix(identityMatrix(), std::array<double, 3>{-0.6, 0.0, -0.8});
+        const auto shaded = drawLighting();
+        if (sunlit[0] <= shaded[0] + 30) {
+            std::cerr << "solar direction did not affect directional shading; source=" << source
+                      << '\n';
+            passed = false;
+        }
+        setLightingViewMatrix(identityMatrix());
         if (source == 1) {
             const ModelMaterial bumpedMaterial = material;
             material.useBumpmap = false;

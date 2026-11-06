@@ -1,6 +1,7 @@
 #include "map/MapCollisionBuilder.h"
 #include "map/MapRoadGeometry.h"
 #include "map/MapSplineProfile.h"
+#include "physics/World.h"
 #include "ProbeTempDirectory.h"
 
 #include <ode/ode.h>
@@ -347,6 +348,8 @@ void runSurfaceHeightMapProbe() {
                            "[profilepnt]\n-2\n0\n0\n0.1\n"
                            "[profilepnt]\n2\n0\n1\n0.1\n");
     writeText(texturePath, "fixture texture");
+    writeText(omsiRoot / "Texture" / "Markings" / "White.dds.CFG",
+              "[puddles]\n[surface]\n8\n");
     writeSurfaceBitmap(surfacePath);
 
     MapDefinition map;
@@ -365,6 +368,40 @@ void runSurfaceHeightMapProbe() {
     require(result.splineSectionsAdded == 1 && result.meshes.size() == 1,
             "surface height map retains road marking collision");
     const StaticCollisionMesh& mesh = result.meshes.front();
+    require(mesh.triangleSurfaces.size() == mesh.indices.size() / 3 &&
+                std::all_of(mesh.triangleSurfaces.begin(), mesh.triangleSurfaces.end(),
+                            [](const auto& surface) {
+                                return surface && surface->type == 8 && surface->moisture &&
+                                       surface->puddles;
+                            }),
+            "road collision triangles retain texture surface metadata");
+    {
+        World world(0.0, {}, {mesh}, false);
+        const dGeomID geometry = dSpaceGetGeom(world.collisionSpace(), 0);
+        const auto surface = world.collisionSurface(geometry, 0);
+        require(surface && surface->type == 8 && surface->moisture && surface->puddles &&
+                    !world.collisionSurface(geometry, -1) &&
+                    !world.collisionSurface(geometry, static_cast<int>(mesh.indices.size() / 3)),
+                "wheel-contact surface lookup retains metadata and checks triangle bounds");
+        world.addMapTileCollision(1, 0, std::nullopt, {mesh, mesh, mesh});
+        const auto afterGrowth = world.collisionSurface(geometry, 0);
+        require(afterGrowth && afterGrowth->type == 8,
+                "surface lookup survives collision storage growth");
+        world.removeMapTileCollision(1, 0);
+        const auto afterUnload = world.collisionSurface(geometry, 0);
+        require(afterUnload && afterUnload->type == 8,
+                "surface lookup survives another tile unloading");
+        StaticCollisionMesh invalid = mesh;
+        invalid.triangleSurfaces.pop_back();
+        bool rejected = false;
+        try {
+            world.addMapTileCollision(2, 0, std::nullopt, {invalid});
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected && world.loadedMapCollisionTileCount() == 0,
+                "misaligned surface metadata is rejected without publishing a collision tile");
+    }
     double minimumHeight = std::numeric_limits<double>::infinity();
     double maximumHeight = -std::numeric_limits<double>::infinity();
     for (std::size_t index = 2; index < mesh.vertices.size(); index += 3) {
@@ -480,6 +517,9 @@ void runProbe() {
     writeText(omsiRoot / "Splines" / "Test.sli", "Test profile\n[texture]\nroad.bmp\n[profile]\n0\n"
                                                  "[profilepnt]\n-2\n0\n0\n0\n"
                                                  "[profilepnt]\n2\n0\n1\n0\n");
+    writeText(omsiRoot / "Splines" / "texture" / "road.bmp", "fixture texture");
+    writeText(omsiRoot / "Splines" / "texture" / "road.bmp.cfg",
+              "[moisture]\n[surface]\n0\n");
 
     openbus::map::MapDefinition map;
     map.rootPath = mapRoot;
@@ -518,6 +558,16 @@ void runProbe() {
         openbus::map::buildMapSplineCollisionTile(map, omsiRoot, 0, -1);
     require(selectedTile.tilesVisited == 1 && selectedTile.meshes.size() == 1,
             "streaming collision builder processes only the requested tile");
+    require(selectedSplineTile.meshes.size() == 1, "spline collision fixture has one mesh");
+    const auto& combinedSurfaces = selectedTile.meshes[0].triangleSurfaces;
+    const std::size_t splineTriangles = selectedSplineTile.meshes[0].indices.size() / 3;
+    require(combinedSurfaces.size() == selectedTile.meshes[0].indices.size() / 3 &&
+                combinedSurfaces.size() > splineTriangles &&
+                std::all_of(combinedSurfaces.begin(), combinedSurfaces.begin() + splineTriangles,
+                            [](const auto& surface) { return surface && surface->moisture; }) &&
+                std::all_of(combinedSurfaces.begin() + splineTriangles, combinedSurfaces.end(),
+                            [](const auto& surface) { return !surface; }),
+            "scenery triangles appended to classified roads do not inherit their metadata");
     require(selectedSplineTile.tilesVisited == 1 && selectedSplineTile.meshes.size() == 1 &&
                 selectedSplineTile.meshes[0].vertices.size() <=
                     selectedTile.meshes[0].vertices.size() &&
