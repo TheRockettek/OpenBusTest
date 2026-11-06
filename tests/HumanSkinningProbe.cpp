@@ -27,21 +27,67 @@ bool near(double first, double second) {
 void runProbe() {
     ParsedObj mesh;
     mesh.positions.resize(4);
-    mesh.bones = {{"left", {{0, 0.25F}, {0, 0.5F}, {1, 1.0F}, {9, 1.0F}}},
-                  {"right", {{0, 0.5F}, {2, 0.5F}, {3, -1.0F},
+    mesh.bones = {{"left", {{0, 0.25F}, {0, 0.25F}, {1, 1.0F}, {9, 1.0F}}},
+                  {"right", {{0, 0.75F}, {2, 0.5F}, {3, -1.0F},
                              {3, std::numeric_limits<float>::quiet_NaN()}}},
                   {"unbound", {{0, 1.0F}}}};
     const auto resolved = resolveHumanSkinWeights(mesh, {{"LEFT", -2}, {"right", -3}});
     require(resolved.hasWeights && resolved.invalidRecords == 3 && resolved.unboundBones == 1 &&
                 resolved.unweightedVertices == 1 && !hasCompleteHumanSkinWeights(resolved),
             "weight diagnostics did not report invalid and unweighted records");
-    require(near(resolved.vertices[0][0], 0.5) && near(resolved.vertices[0][1], 0.5) &&
+    require(near(resolved.vertices[0][humanBoneSlotIndex(HumanBoneSlot::LeftUpperLeg)], 0.25) &&
+                near(resolved.vertices[0][humanBoneSlotIndex(HumanBoneSlot::RightUpperLeg)], 0.75) &&
                 near(resolved.vertices[1][0], 1.0) && near(resolved.vertices[2][1], 1.0) &&
                 near(resolved.vertices[3][0], 0.0),
             "duplicate, normalized, or unweighted vertex influences are incorrect");
     const auto conflict = resolveHumanSkinWeights(mesh, {{"left", -2}, {"LEFT", -3}});
     require(conflict.invalidRecords > 0 && !conflict.hasWeights,
             "conflicting bone bindings were accepted");
+
+    constexpr std::array<const char*, HUMAN_BONE_COUNT> omsiBoneNames = {
+        "OS_L", "OS_R", "US_L", "US_R", "OA_L", "OA_R", "UA_L",
+        "UA_R", "Hip",  "Main", "Head", "Hand_L", "Hand_R",
+    };
+    ParsedObj omsiMesh;
+    omsiMesh.positions.resize(HUMAN_BONE_COUNT);
+    std::vector<ModelBoneBinding> omsiBindings;
+    for (std::size_t index = 0; index < HUMAN_BONE_COUNT; ++index) {
+        omsiMesh.bones.push_back(
+            {omsiBoneNames[index], {{static_cast<std::uint32_t>(index), 1.0F}}});
+        omsiBindings.push_back(
+            {omsiBoneNames[index], -2 - static_cast<int>(index)});
+        const auto slot = humanBoneSlotFromOmsiIndex(-2 - static_cast<int>(index));
+        require(slot && humanBoneSlotIndex(*slot) == index,
+                "OMSI negative bone indices do not map to the expected palette slots");
+    }
+    const auto omsiLayout = resolveHumanSkinWeights(omsiMesh, omsiBindings);
+    require(hasCompleteHumanSkinWeights(omsiLayout),
+            "the OMSI 13-bone layout did not resolve completely");
+    for (std::size_t index = 0; index < HUMAN_BONE_COUNT; ++index) {
+        require(near(omsiLayout.vertices[index][index], 1.0),
+                "an OMSI bone name was assigned to the wrong palette slot");
+    }
+    require(!humanBoneSlotFromOmsiIndex(-1) && !humanBoneSlotFromOmsiIndex(-15),
+            "out-of-range OMSI bone indices were accepted");
+
+    ParsedObj aliasMesh;
+    aliasMesh.positions.resize(1);
+    aliasMesh.bones = {{"left", {{0, 0.2F}, {0, 0.2F}}},
+                       {"left_alias", {{0, 0.3F}}},
+                       {"right", {{0, 0.5F}}}};
+    const auto aliases = resolveHumanSkinWeights(
+        aliasMesh, {{"left", -2}, {"left_alias", -2}, {"right", -3}});
+    require(hasCompleteHumanSkinWeights(aliases) &&
+                near(aliases.vertices[0][humanBoneSlotIndex(HumanBoneSlot::LeftUpperLeg)], 0.5) &&
+                near(aliases.vertices[0][humanBoneSlotIndex(HumanBoneSlot::RightUpperLeg)], 0.5),
+            "repeated records or multiple named bones sharing a slot were not combined correctly");
+    aliasMesh.bones[0].weights[1].weight = 0.4F;
+    const auto conflictingWeights = resolveHumanSkinWeights(
+        aliasMesh, {{"left", -2}, {"left_alias", -2}, {"right", -3}});
+    require(conflictingWeights.invalidRecords == 1 &&
+                !hasCompleteHumanSkinWeights(conflictingWeights),
+            "conflicting duplicate weights were not surfaced as invalid");
+
     ParsedObj completeMesh;
     completeMesh.positions.resize(1);
     completeMesh.bones = {{"root", {{0, 1.0F}}}};
@@ -132,10 +178,12 @@ void runProbe() {
     const auto armWeights = inferHumanSkinWeights({0.6, 0.0, 1.3}, *joints, 1.7);
     const auto upperArmWeights = inferHumanSkinWeights({0.2, -0.03, 1.34}, *joints, 1.7);
     const auto headWeights = inferHumanSkinWeights({0.0, 0.0, 1.6}, *joints, 1.7);
-    require(near(legWeights[3], 1.0) && near(bodyWeights[9], 1.0) &&
-                armWeights[7] > 0.99F,
+    require(near(legWeights[humanBoneSlotIndex(HumanBoneSlot::RightLowerLeg)], 1.0) &&
+                near(bodyWeights[humanBoneSlotIndex(HumanBoneSlot::Main)], 1.0) &&
+                armWeights[humanBoneSlotIndex(HumanBoneSlot::RightLowerArm)] > 0.99F,
             "fallback skinning assigns legs, chest and lower arms to their respective bones");
-    require(upperArmWeights[5] > 0.99F && headWeights[10] > 0.99F,
+    require(upperArmWeights[humanBoneSlotIndex(HumanBoneSlot::RightUpperArm)] > 0.99F &&
+                headWeights[humanBoneSlotIndex(HumanBoneSlot::Head)] > 0.99F,
             "fallback skinning animates upper arms and head separately from the pelvis");
     const auto blendedWeights = inferHumanSkinWeights({-0.1, 0.0, joints->hip[2]}, *joints, 1.7);
     double weightSum = 0.0;
@@ -143,7 +191,9 @@ void runProbe() {
         require(value >= 0.0F, "inferred skin weights must not be negative");
         weightSum += value;
     }
-    require(near(weightSum, 1.0) && blendedWeights[0] > 0.0F && blendedWeights[8] > 0.0F,
+    require(near(weightSum, 1.0) &&
+                blendedWeights[humanBoneSlotIndex(HumanBoneSlot::LeftUpperLeg)] > 0.0F &&
+                blendedWeights[humanBoneSlotIndex(HumanBoneSlot::Hip)] > 0.0F,
             "inferred hip weights blend continuously and sum to one");
     bool invalidHeightRejected = false;
     try {

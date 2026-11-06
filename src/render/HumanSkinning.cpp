@@ -65,6 +65,7 @@ HumanSkinWeights resolveHumanSkinWeights(const ParsedObj& mesh,
     HumanSkinWeights result;
     result.vertices.resize(mesh.positions.size());
     std::unordered_map<std::string, int> boneIndices;
+    std::unordered_map<std::string, std::unordered_map<std::uint32_t, float>> seenWeights;
     for (const ModelBoneBinding& binding : bindings) {
         const std::string name = boneKey(binding.name);
         const auto [it, inserted] = boneIndices.emplace(name, binding.index);
@@ -74,19 +75,35 @@ HumanSkinWeights resolveHumanSkinWeights(const ParsedObj& mesh,
         }
     }
     for (const ObjBone& bone : mesh.bones) {
-        const auto binding = boneIndices.find(boneKey(bone.name));
-        if (binding == boneIndices.end() || binding->second > -2 || binding->second < -14) {
+        const std::string name = boneKey(bone.name);
+        const auto binding = boneIndices.find(name);
+        if (binding == boneIndices.end()) {
             ++result.unboundBones;
             continue;
         }
-        const std::size_t slot = static_cast<std::size_t>(-binding->second - 2);
+        const std::optional<HumanBoneSlot> slot = humanBoneSlotFromOmsiIndex(binding->second);
+        if (!slot) {
+            ++result.unboundBones;
+            continue;
+        }
+        const std::size_t slotIndex = humanBoneSlotIndex(*slot);
+        auto& seenForBone = seenWeights[name];
+        seenForBone.reserve(seenForBone.size() + bone.weights.size());
         for (const ObjBoneWeight& weight : bone.weights) {
             if (weight.sourceIndex >= result.vertices.size() || !std::isfinite(weight.weight) ||
                 weight.weight < 0.0F || weight.weight > 1.0F) {
                 ++result.invalidRecords;
                 continue;
             }
-            result.vertices[weight.sourceIndex][slot] = weight.weight;
+            const auto [previous, inserted] =
+                seenForBone.emplace(weight.sourceIndex, weight.weight);
+            if (!inserted) {
+                if (previous->second != weight.weight) {
+                    ++result.invalidRecords;
+                }
+                continue;
+            }
+            result.vertices[weight.sourceIndex][slotIndex] += weight.weight;
         }
     }
     for (HumanVertexWeights& weights : result.vertices) {
@@ -125,6 +142,14 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
     }
     HumanVertexWeights weights = {};
     const std::size_t side = position[0] < 0.0 ? 0 : 1;
+    const HumanBoneSlot upperLeg =
+        side == 0 ? HumanBoneSlot::LeftUpperLeg : HumanBoneSlot::RightUpperLeg;
+    const HumanBoneSlot lowerLegSlot =
+        side == 0 ? HumanBoneSlot::LeftLowerLeg : HumanBoneSlot::RightLowerLeg;
+    const HumanBoneSlot upperArm =
+        side == 0 ? HumanBoneSlot::LeftUpperArm : HumanBoneSlot::RightUpperArm;
+    const HumanBoneSlot lowerArm =
+        side == 0 ? HumanBoneSlot::LeftLowerArm : HumanBoneSlot::RightLowerArm;
     const double x = std::abs(position[0]);
     const double leg = 1.0 - smoothWeight(joints.hip[2] - 0.04 * height,
                                           joints.hip[2] + 0.04 * height, position[2]);
@@ -149,10 +174,11 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
     const double armAffinity = upperArmAffinity + lowerArmAffinity;
     const double upperArmFraction =
         armAffinity > 1.0e-6 ? upperArmAffinity / armAffinity : 1.0;
-    weights[side] = static_cast<float>(leg * (1.0 - lowerLeg));
-    weights[2 + side] = static_cast<float>(leg * lowerLeg);
-    weights[4 + side] = static_cast<float>(armWeight * upperArmFraction);
-    weights[6 + side] = static_cast<float>(armWeight * (1.0 - upperArmFraction));
+    weights[humanBoneSlotIndex(upperLeg)] = static_cast<float>(leg * (1.0 - lowerLeg));
+    weights[humanBoneSlotIndex(lowerLegSlot)] = static_cast<float>(leg * lowerLeg);
+    weights[humanBoneSlotIndex(upperArm)] = static_cast<float>(armWeight * upperArmFraction);
+    weights[humanBoneSlotIndex(lowerArm)] =
+        static_cast<float>(armWeight * (1.0 - upperArmFraction));
     const double torso = std::max(0.0, 1.0 - leg - armWeight);
     const double waistHeight = std::max(joints.hip[2], joints.waist[2]);
     double pelvisFraction = 1.0 - smoothWeight(waistHeight - 0.05 * height,
@@ -165,9 +191,10 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
         pelvisFraction /= spineFraction;
         neckFraction /= spineFraction;
     }
-    weights[8] = static_cast<float>(torso * pelvisFraction);
-    weights[9] = static_cast<float>(torso * (1.0 - pelvisFraction - neckFraction));
-    weights[10] = static_cast<float>(torso * neckFraction);
+    weights[humanBoneSlotIndex(HumanBoneSlot::Hip)] = static_cast<float>(torso * pelvisFraction);
+    weights[humanBoneSlotIndex(HumanBoneSlot::Main)] =
+        static_cast<float>(torso * (1.0 - pelvisFraction - neckFraction));
+    weights[humanBoneSlotIndex(HumanBoneSlot::Head)] = static_cast<float>(torso * neckFraction);
     return weights;
 }
 
@@ -181,18 +208,29 @@ HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGait
         rotateAt({0.0, joints.hip[1], joints.hip[2]}, sway * 5.0 * gait.hipSway, 0, 1, 0);
     const Matrix4 chest =
         multiplyMatrix4(hip, rotateAt(joints.waist, sway * 2.0 * gait.waistAnimation, 1, 0, 0));
-    palette[8] = hip;
-    palette[9] = chest;
-    palette[10] = multiplyMatrix4(chest, rotateAt(joints.neck, -sway * 2.0, 1, 0, 0));
+    palette[humanBoneSlotIndex(HumanBoneSlot::Hip)] = hip;
+    palette[humanBoneSlotIndex(HumanBoneSlot::Main)] = chest;
+    palette[humanBoneSlotIndex(HumanBoneSlot::Head)] =
+        multiplyMatrix4(chest, rotateAt(joints.neck, -sway * 2.0, 1, 0, 0));
     for (std::size_t index = 0; index < 2; ++index) {
         const double side = index == 0 ? -1.0 : 1.0;
         const double phase = gait.phaseRadians + (index == 0 ? std::numbers::pi : 0.0);
+        const HumanBoneSlot upperLegSlot =
+            index == 0 ? HumanBoneSlot::LeftUpperLeg : HumanBoneSlot::RightUpperLeg;
+        const HumanBoneSlot lowerLegSlot =
+            index == 0 ? HumanBoneSlot::LeftLowerLeg : HumanBoneSlot::RightLowerLeg;
+        const HumanBoneSlot upperArmSlot =
+            index == 0 ? HumanBoneSlot::LeftUpperArm : HumanBoneSlot::RightUpperArm;
+        const HumanBoneSlot lowerArmSlot =
+            index == 0 ? HumanBoneSlot::LeftLowerArm : HumanBoneSlot::RightLowerArm;
+        const HumanBoneSlot handSlot =
+            index == 0 ? HumanBoneSlot::LeftHand : HumanBoneSlot::RightHand;
         const double swing = std::sin(phase) * weight * (1.0 - seated);
         const double kneeBend = std::max(0.0, std::cos(phase)) * weight * (1.0 - seated);
         const Matrix4 upperLeg = multiplyMatrix4(
             hip, rotateAt(sideJoint(joints.hip, side), swing * 24.0 + seated * 90.0, 1, 0, 0));
-        palette[index] = upperLeg;
-        palette[2 + index] =
+        palette[humanBoneSlotIndex(upperLegSlot)] = upperLeg;
+        palette[humanBoneSlotIndex(lowerLegSlot)] =
             multiplyMatrix4(upperLeg, rotateAt(sideJoint(joints.knee, side),
                                                -kneeBend * 28.0 - seated * 90.0, 1, 0, 0));
         const Matrix4 shoulderSwing =
@@ -201,12 +239,12 @@ HumanBonePalette makeHumanBonePalette(const HumanJoints& joints, const HumanGait
             rotateAt(sideJoint(joints.shoulder, side), side * gait.upperArmBetaDegrees, 0, 1, 0);
         const Matrix4 upperArm =
             multiplyMatrix4(chest, multiplyMatrix4(shoulderSwing, shoulderLower));
-        palette[4 + index] = upperArm;
+        palette[humanBoneSlotIndex(upperArmSlot)] = upperArm;
         const Matrix4 lowerArm =
             multiplyMatrix4(upperArm, rotateAt(sideJoint(joints.elbow, side),
                                                swing * 8.0 * gait.armSwing, 1, 0, 0));
-        palette[6 + index] = lowerArm;
-        palette[11 + index] = multiplyMatrix4(
+        palette[humanBoneSlotIndex(lowerArmSlot)] = lowerArm;
+        palette[humanBoneSlotIndex(handSlot)] = multiplyMatrix4(
             lowerArm, rotateAt(sideJoint(joints.hand, side), swing * 4.0 * gait.armSwing, 1, 0, 0));
     }
     return palette;

@@ -6,12 +6,22 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace openbus::rendering {
 
 using HumanVertexWeights = std::array<float, HUMAN_WEIGHT_COUNT>;
 using HumanBonePalette = std::array<Matrix4, HUMAN_BONE_COUNT>;
+
+constexpr std::optional<HumanBoneSlot> humanBoneSlotFromOmsiIndex(int index) noexcept {
+    constexpr int firstIndex = -2;
+    constexpr int lastIndex = firstIndex - static_cast<int>(HUMAN_BONE_COUNT) + 1;
+    if (index < lastIndex || index > firstIndex) {
+        return std::nullopt;
+    }
+    return static_cast<HumanBoneSlot>(firstIndex - index);
+}
 
 struct HumanSkinWeights {
     std::vector<HumanVertexWeights> vertices;
