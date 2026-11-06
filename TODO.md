@@ -583,20 +583,29 @@ for alignment is not mistaken for supporting it.
 - [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
   vertical/layout, and alpha semantics; basic alignment and the enhanced
   font-height/visible-pixel grid modes are supported. Modes 3–5 center using
-  font advances, with modes 4/5 resolving odd-pixel ties left/right; native
-  spacing-aware parity and the fallback font rasterizer remain incomplete.
+  font advances, with modes 4/5 resolving odd-pixel ties left/right. The
+  fallback 5x7 renderer now scales multiline text to fit its complete block;
+  native spacing-aware parity and broader fallback glyph coverage remain
+  incomplete.
   Font-directory indexes
   now refresh on directory timestamp changes and do not cache missing
   directories; regression coverage includes added and removed definitions and
-  case-distinct paths. Missing authored-font glyphs prefer a defined `?`
-  glyph, falling back to the first defined glyph when none exists. The
-  no-OFT 5x7 fallback decodes UTF-8 sequences as single glyphs, draws `°`,
-  preserves lowercase glyph shapes, treats `@` as a line break, and covers
-  common ASCII punctuation; broader font parity remains incomplete.
+  case-distinct paths. Missing lowercase authored-font glyphs first retry
+  their uppercase OFT glyph, matching OMSI lookup; any other missing authored
+  glyph uses the defined `?` glyph when available, then the first defined
+  glyph. OMSI's behavior for other missing glyphs remains unverified. The
+  OFT parser now decodes UTF-8 literals in the Latin-1 code range, alongside
+  raw single-byte and numeric glyph identifiers. The no-OFT 5x7 fallback
+  decodes UTF-8 sequences as single glyphs, draws `°`, preserves lowercase
+  glyph shapes, treats `@` as a line break, and covers common ASCII
+  punctuation; broader font parity remains incomplete.
   Cached OFT paths are checked by file timestamp and size, and cached misses
   detect changed OFT metadata even when the directory timestamp is unchanged.
-  Same-size edits with unchanged file timestamps may still be missed, and
-  already-created script runtimes retain their loaded font results.
+  Existing text textures recheck fonts when `Refresh_Strings` is requested,
+  and script font handles recheck on draw or `TextLength`. Cached fonts also
+  recheck their referenced color and alpha bitmap timestamps and sizes, causing
+  refreshed text textures to reload changed images. Same-size edits with
+  unchanged file timestamps may still be missed.
 
 #### General CFG dialects
 

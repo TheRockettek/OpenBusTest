@@ -49,9 +49,11 @@ those references as disk filenames. Both script backends allow drawing between
 `STTextOut`'s Full Colour argument selects font colours; zero uses `STSetColor`,
 not a transparent packed colour. Font/layout parity beyond this subset remains
 unverified. Font-directory indexes refresh when directory timestamps change,
-including after definitions are added or removed. Timestamp resolution can
-limit detection, in-place changes to OFT font names do not refresh the index,
-and fonts already cached by a script runtime are not live-reloaded.
+including after definitions are added or removed, and cached OFT entries detect
+file metadata changes even when the directory timestamp is unchanged. Runtime
+font caches recheck OFT definitions and referenced color/alpha bitmaps by
+timestamp and size when text is refreshed or a script font is used. Same-size
+edits with unchanged file timestamps may still be missed.
 
 Vehicle `[matl_nightmap]` layers normally fade in with darkness (`nightlighta` /
 `envir_brightness`). Nightmaps on script-selected material items, and on meshes gated
@@ -81,7 +83,7 @@ override is applied.
 | `[tex_detail_factor]` | Partial | Finite scalar is retained and serialized in model-config JSON; detail-texture rendering is not implemented. |
 | `[terrainmapping]` | Partial | Variable-length payloads are retained verbatim and serialized in model-config JSON; terrain/material rendering is not implemented. |
 | `[origin_from_mesh]` | Partial | Source transform metadata supplies the pivot when available; otherwise the parsed mesh bounds center is used. Native pivot parity remains unverified. |
-| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, font-height/visible-pixel vertical alignment, font alpha masks, OFT missing-glyph substitution, and UTF-8/degree/`@`/lowercase/common-punctuation handling in the 5x7 fallback are active. Native spacing-aware alignment parity and broader fallback glyph coverage remain unverified/incomplete. |
+| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, font-height/visible-pixel vertical alignment, uppercase retry for missing lowercase OFT glyphs, question-mark/first-defined fallback for other missing OFT glyphs, Latin-1-range UTF-8 OFT glyph identifiers, UTF-8/degree/`@`/lowercase/common-punctuation handling in the 5x7 fallback, and OFT/bitmap reload on text refresh or script-font use are active. Native spacing-aware alignment parity, other missing-glyph behavior, and broader fallback glyph coverage remain unverified/incomplete; same-size asset edits with unchanged timestamps may be missed. |
 | `[illumination_interior]`, `[interiorlight]` | Partial | Controller-driven point-light shading, mesh assignments, and distance attenuation are active. GPU coverage exercises color, zero strength, and attenuation; controller integration with representative assets and OMSI intensity parity remain unverified. |
 | `[mouseevent]` | Partial | Transformed-triangle picking, captured press/held-drag/release, and player W/A/S/D event transitions are active. Handler lookup and dispatch normalize authored punctuation consistently (including DL05 `bus_20h-switch`); drag/release handlers are optional. Configurable key maps and scenery-object mouse dispatch are not complete. |
 

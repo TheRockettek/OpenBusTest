@@ -102,6 +102,12 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
               "{end}\n"
               "{trigger:reset_surface}\n"
               "1 (M.V.STNewTex)\n"
+              "{end}\n"
+              "{trigger:draw_font}\n"
+              "1 (M.V.STNewTex)\n"
+              "1 255 0 0 0 (M.V.STSetColor)\n"
+              "1 0 0 (L.L.font_index) 0 0 \"A\" (M.V.STTextOut)\n"
+              "(L.L.font_index) \"AB\" (M.V.TextLength) (S.L.text_width)\n"
               "{end}\n";
     source.close();
     std::string error;
@@ -110,6 +116,31 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         return false;
     }
     ScriptRuntime::prepareFontSearch(root / "drawing.bus", {"ProbeFont", "UnitFont", "GridFont"});
+    const auto probeFontPath = root / "Fonts" / "probe.oft";
+    const auto fontDirectoryTime = std::filesystem::last_write_time(root / "Fonts");
+    int fontTimestampOffset = 60;
+    const auto rewriteProbeFont = [&](int aLeft, int aRight, int horizontalGap) {
+        std::ofstream font(probeFontPath, std::ios::trunc);
+        font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n" << horizontalGap
+             << "\n[char]\nA\n" << aLeft << '\n' << aRight << "\n0\n"
+                "[char]\nB\n2\n4\n0\n[char]\n0\n0\n2\n0\n[char]\n1\n2\n4\n0\n"
+                "[char]\n?\n2\n4\n0\n";
+        font.close();
+        if (font.fail()) {
+            return false;
+        }
+        std::error_code stampError;
+        std::filesystem::last_write_time(
+            probeFontPath, std::filesystem::file_time_type::clock::now() +
+                               std::chrono::seconds(fontTimestampOffset),
+            stampError);
+        if (stampError) {
+            return false;
+        }
+        fontTimestampOffset += 60;
+        std::filesystem::last_write_time(root / "Fonts", fontDirectoryTime, stampError);
+        return !stampError;
+    };
     for (const char* backend : {"native", "lua"}) {
         if (!setScriptBackend(backend)) {
             return false;
@@ -142,6 +173,32 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
             pixel(3, 0) != std::array<std::uint8_t, 4>{80, 80, 80, 128} ||
             pixel(6, 6) != std::array<std::uint8_t, 4>{0, 0, 0, 255}) {
             std::cerr << backend << ": clipped drawing, RGBA order or full-colour flag failed\n";
+            return false;
+        }
+        if (!rewriteProbeFont(2, 4, 1)) {
+            std::cerr << backend << ": could not update the OFT font in place\n";
+            return false;
+        }
+        runtime.invokeEntryPoint("trigger_draw_font");
+        ScriptRuntime::ScriptTextureSnapshot reloadedFontTexture;
+        if (!runtime.copyScriptTexture(1, reloadedFontTexture) ||
+            reloadedFontTexture.pixels[3] != 128 || variables.get("text_width") != 5.0F) {
+            std::cerr << backend << ": existing script font index did not reload edited OFT data"
+                      << " (alpha="
+                      << (reloadedFontTexture.pixels.size() > 3
+                              ? static_cast<int>(reloadedFontTexture.pixels[3])
+                              : -1)
+                      << ", text_width=" << variables.get("text_width") << ")\n";
+            return false;
+        }
+        if (!rewriteProbeFont(0, 2, 0)) {
+            std::cerr << backend << ": could not restore the OFT font after refresh check\n";
+            return false;
+        }
+        runtime.invokeEntryPoint("trigger_draw_font");
+        if (!runtime.copyScriptTexture(1, reloadedFontTexture) ||
+            reloadedFontTexture.pixels[3] != 255 || variables.get("text_width") != 4.0F) {
+            std::cerr << backend << ": existing script font index did not reload restored OFT data\n";
             return false;
         }
         for (int reset = 0; reset < 6; ++reset) {
@@ -183,7 +240,7 @@ int main() {
     unitFont << "[newfont]\nUnitFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
                 "[char]\nA\n0\n1\n0\n"
                 "[char]\nc\n1\n2\n0\n"
-                "[char]\n176\n2\n4\n0\n";
+                "[char]\n\xc2\xb0\n2\n4\n0\n";
     unitFont.close();
     std::ofstream legacyFont(fonts / "legacy.oft");
     legacyFont << "[newfont]\nLegacyFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
@@ -836,7 +893,12 @@ int main() {
          ModelTextTexture{
              20, true, {"lowercasefallbackdisplay", "MissingFont", "160", "10", "0", "255", "255", "255", "1", "0"}},
          ModelTextTexture{
-             21, true, {"uppercasefallbackdisplay", "MissingFont", "160", "10", "0", "255", "255", "255", "1", "0"}}});
+             21, true, {"uppercasefallbackdisplay", "MissingFont", "160", "10", "0", "255", "255", "255", "1", "0"}},
+         ModelTextTexture{
+             22, true, {"fallbackmultilinedisplay", "MissingFont", "24", "20", "0", "255", "255", "255", "1", "0"}},
+         ModelTextTexture{
+             23, true, {"lowercaseauthored", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
+         });
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
@@ -864,6 +926,8 @@ int main() {
     variables.setString("fallbackpunctuationdisplay", "!?;()");
     variables.setString("lowercasefallbackdisplay", "abcdefghijklmnopqrstuvwxyz");
     variables.setString("uppercasefallbackdisplay", "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    variables.setString("fallbackmultilinedisplay", "A@A");
+    variables.setString("lowercaseauthored", "a");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
     ScriptRuntime::ScriptTextureSnapshot initialPlateText;
@@ -916,6 +980,8 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot fallbackPunctuationText;
     ScriptRuntime::ScriptTextureSnapshot lowercaseFallbackText;
     ScriptRuntime::ScriptTextureSnapshot uppercaseFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot fallbackMultilineText;
+    ScriptRuntime::ScriptTextureSnapshot lowercaseAuthoredText;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -945,7 +1011,9 @@ int main() {
         !runtime.copyTextTexture(18, fallbackUnicodeText) ||
         !runtime.copyTextTexture(19, fallbackPunctuationText) ||
         !runtime.copyTextTexture(20, lowercaseFallbackText) ||
-        !runtime.copyTextTexture(21, uppercaseFallbackText)) {
+        !runtime.copyTextTexture(21, uppercaseFallbackText) ||
+        !runtime.copyTextTexture(22, fallbackMultilineText) ||
+        !runtime.copyTextTexture(23, lowercaseAuthoredText)) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -1096,6 +1164,22 @@ int main() {
         std::cerr << "fallback text did not preserve lowercase glyph shapes\n";
         return 1;
     }
+    if (fallbackMultilineText.pixels[(2U * 24U + 1U) * 4U + 3U] != 255 ||
+        fallbackMultilineText.pixels[(3U * 24U + 1U) * 4U + 3U] != 0 ||
+        fallbackMultilineText.pixels[(10U * 24U + 1U) * 4U + 3U] != 255) {
+        std::cerr << "fallback multiline text did not preserve glyph row and line spacing: "
+                  << static_cast<int>(fallbackMultilineText.pixels[(2U * 24U + 1U) * 4U + 3U])
+                  << ','
+                  << static_cast<int>(fallbackMultilineText.pixels[(3U * 24U + 1U) * 4U + 3U])
+                  << ','
+                  << static_cast<int>(fallbackMultilineText.pixels[(10U * 24U + 1U) * 4U + 3U])
+                  << '\n';
+        return 1;
+    }
+    if (lowercaseAuthoredText.pixels != centerTextTexture.pixels) {
+        std::cerr << "missing OFT lowercase glyph did not retry its uppercase form\n";
+        return 1;
+    }
     const std::uint64_t firstTextRevision = textTexture.revision;
     variables.set("refresh_strings", 1.0);
     runtime.update(false);
@@ -1136,6 +1220,85 @@ int main() {
     if (!runtime.copyTextTexture(0, changedTextTexture) ||
         changedTextTexture.revision == firstTextRevision) {
         std::cerr << "changed text texture was not regenerated\n";
+        return 1;
+    }
+    const auto probeFontPath = fonts / "probe.oft";
+    const auto fontDirectoryTime = std::filesystem::last_write_time(fonts);
+    const auto originalFontSize = std::filesystem::file_size(probeFontPath);
+    std::ofstream updatedProbeFont(probeFontPath, std::ios::trunc);
+    updatedProbeFont << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
+                        "[char]\nA\n0\n2\n0\n[char]\nB\n2\n4\n0\n"
+                        "[char]\n0\n2\n4\n0\n[char]\n1\n2\n4\n0\n"
+                        "[char]\n?\n2\n4\n0\n";
+    updatedProbeFont.close();
+    std::error_code fontUpdateError;
+    std::filesystem::last_write_time(
+        probeFontPath, std::filesystem::file_time_type::clock::now() +
+                           std::chrono::seconds(300),
+        fontUpdateError);
+    if (fontUpdateError || std::filesystem::file_size(probeFontPath) != originalFontSize) {
+        std::cerr << "could not prepare same-size OFT glyph update\n";
+        return 1;
+    }
+    std::filesystem::last_write_time(fonts, fontDirectoryTime, fontUpdateError);
+    if (fontUpdateError) {
+        std::cerr << "could not preserve font directory timestamp during glyph update\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot reloadedDigits;
+    if (!runtime.copyTextTexture(1, reloadedDigits) ||
+        reloadedDigits.revision <= digits.revision ||
+        reloadedDigits.pixels[(1U * 6U + 2U) * 4U + 3U] != 128) {
+        std::cerr << "unchanged text texture did not reload its edited OFT glyph\n";
+        return 1;
+    }
+    const auto rewriteFontImage = [&](const std::filesystem::path& path,
+                                      const std::vector<std::uint8_t>& pixels, int timestampOffset) {
+        const auto originalSize = std::filesystem::file_size(path);
+        writeTestBmp(path, 4, 2, pixels);
+        if (std::filesystem::file_size(path) != originalSize) {
+            return false;
+        }
+        std::error_code imageUpdateError;
+        std::filesystem::last_write_time(
+            path, std::filesystem::file_time_type::clock::now() +
+                      std::chrono::seconds(timestampOffset),
+            imageUpdateError);
+        if (imageUpdateError) {
+            return false;
+        }
+        std::filesystem::last_write_time(fonts, fontDirectoryTime, imageUpdateError);
+        return !imageUpdateError;
+    };
+    const std::uint64_t beforeAlphaReload = reloadedDigits.revision;
+    if (!rewriteFontImage(fonts / "probe_alpha.bmp",
+                          {255, 255, 64, 64, 255, 255, 64, 64}, 360)) {
+        std::cerr << "could not prepare same-size font alpha image update\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    if (!runtime.copyTextTexture(1, reloadedDigits) ||
+        reloadedDigits.revision <= beforeAlphaReload ||
+        reloadedDigits.pixels[(1U * 6U + 2U) * 4U + 3U] != 64) {
+        std::cerr << "unchanged text texture did not reload its edited font alpha image\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot reloadedColorText;
+    if (!rewriteFontImage(fonts / "probe.bmp", {200, 200, 90, 90, 200, 200, 90, 90}, 420)) {
+        std::cerr << "could not prepare same-size font color image update\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    if (!runtime.copyTextTexture(2, reloadedColorText) ||
+        reloadedColorText.pixels[centeredFontPixel] != 200 ||
+        reloadedColorText.pixels[centeredFontPixel + 1] != 200 ||
+        reloadedColorText.pixels[centeredFontPixel + 2] != 200 ||
+        reloadedColorText.pixels[centeredFontPixel + 3] != 255) {
+        std::cerr << "unchanged text texture did not reload its edited font color image\n";
         return 1;
     }
     openbus::probe::removeProbeDirectory(root);

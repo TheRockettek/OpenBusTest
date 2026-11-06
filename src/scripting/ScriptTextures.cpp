@@ -546,7 +546,31 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
     const std::string name = lower(requestedName);
     const auto cached = fonts.find(name);
     if (cached != fonts.end()) {
-        return cached->second;
+        if (cached->second != nullptr) {
+            const auto stampMatches = [](const std::filesystem::path& path,
+                                         std::filesystem::file_time_type modified,
+                                         std::uintmax_t size, std::error_code& error) {
+                FontFileStamp currentStamp;
+                return readFontFileStamp(path, currentStamp, error) &&
+                       currentStamp.modified == modified && currentStamp.size == size;
+            };
+            std::error_code stampError;
+            if (stampMatches(cached->second->sourcePath, cached->second->sourceModified,
+                             cached->second->sourceSize, stampError) &&
+                stampMatches(cached->second->colorImagePath, cached->second->colorImageModified,
+                             cached->second->colorImageSize, stampError) &&
+                stampMatches(cached->second->alphaImagePath, cached->second->alphaImageModified,
+                             cached->second->alphaImageSize, stampError)) {
+                return cached->second;
+            }
+            if (stampError && stampError != std::errc::no_such_file_or_directory &&
+                stampError != std::errc::not_a_directory) {
+                scriptRuntimeLogger.Warning(
+                    "Could not validate cached font definition '" +
+                    cached->second->sourcePath.string() + "': " + stampError.message());
+            }
+        }
+        fonts.erase(cached);
     }
     const auto trimFontLine = [](const std::string& value) {
         const std::size_t first = value.find_first_not_of(" \t\r\n");
@@ -580,7 +604,17 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
         return nullptr;
     }
 
+    FontFileStamp sourceStamp;
+    std::error_code sourceStampError;
+    if (!readFontFileStamp(fontPath, sourceStamp, sourceStampError)) {
+        scriptRuntimeLogger.Warning("Could not read font definition metadata '" +
+                                    fontPath.string() + "': " + sourceStampError.message());
+        return nullptr;
+    }
     auto font = std::make_shared<FontAsset>();
+    font->sourcePath = fontPath;
+    font->sourceModified = sourceStamp.modified;
+    font->sourceSize = sourceStamp.size;
     std::vector<std::string> lines;
     bool readSucceeded = false;
     {
@@ -618,19 +652,40 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             }
             font->height = height;
             font->horizontalGap = horizontalGap;
+            font->colorImagePath = fontPath.parent_path() / trimFontLine(values[1]);
+            font->alphaImagePath = fontPath.parent_path() / trimFontLine(values[2]);
+            FontFileStamp colorStamp;
+            FontFileStamp alphaStamp;
+            std::error_code imageStampError;
+            if (!readFontFileStamp(font->colorImagePath, colorStamp, imageStampError)) {
+                scriptRuntimeLogger.Warning("Could not read font color image metadata '" +
+                                            font->colorImagePath.string() + "': " +
+                                            imageStampError.message());
+                continue;
+            }
+            if (!readFontFileStamp(font->alphaImagePath, alphaStamp, imageStampError)) {
+                scriptRuntimeLogger.Warning("Could not read font alpha image metadata '" +
+                                            font->alphaImagePath.string() + "': " +
+                                            imageStampError.message());
+                continue;
+            }
+            font->colorImageModified = colorStamp.modified;
+            font->colorImageSize = colorStamp.size;
+            font->alphaImageModified = alphaStamp.modified;
+            font->alphaImageSize = alphaStamp.size;
             bool colorLoaded = false;
             bool alphaLoaded = false;
             {
                 openbus::rendering::TraceScope colorTrace("script",
                                                           "ScriptRuntime.loadFont.colorImage");
                 colorLoaded = openbus::rendering::TextureLoader::readImage(
-                    fontPath.parent_path() / trimFontLine(values[1]), font->colorImage);
+                    font->colorImagePath, font->colorImage);
             }
             {
                 openbus::rendering::TraceScope alphaTrace("script",
                                                           "ScriptRuntime.loadFont.alphaImage");
                 alphaLoaded = openbus::rendering::TextureLoader::readImage(
-                    fontPath.parent_path() / trimFontLine(values[2]), font->alphaImage);
+                    font->alphaImagePath, font->alphaImage);
             }
             if (!colorLoaded || !alphaLoaded) {
                 continue;
@@ -651,6 +706,13 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             if (values[0].size() > 1 && parseInteger(values[0], numericCode) && numericCode >= 0 &&
                 numericCode <= 255) {
                 code = numericCode;
+            } else if (values[0].size() > 1) {
+                const auto firstByte = static_cast<unsigned char>(values[0][0]);
+                const auto secondByte = static_cast<unsigned char>(values[0][1]);
+                if ((firstByte == 0xc2U || firstByte == 0xc3U) &&
+                    (secondByte & 0xc0U) == 0x80U) {
+                    code = ((firstByte & 0x1fU) << 6U) | (secondByte & 0x3fU);
+                }
             }
             font->glyphs[static_cast<std::size_t>(code)] = {left, right, top, true};
         }
@@ -799,16 +861,16 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
         }
     }
     longestLine = std::max(longestLine, currentLineLength);
-    const int heightScale = std::max(1, (texture.height - 2) / 7);
+    const int verticalScale =
+        std::max(1, (texture.height - 2) / static_cast<int>(lineCount * 8 - 1));
     const int spacing = std::max(0, letterSpacing);
     const int availableWidth = std::max(
         1, texture.width - 2 - spacing * static_cast<int>(longestLine > 0 ? longestLine - 1 : 0));
     const int widthScale =
         std::max(1, availableWidth / std::max(1, 6 * static_cast<int>(longestLine)));
-    const int multilineHeight = std::max(1, (texture.height - 2) / static_cast<int>(7 * lineCount));
-    const int scale = std::max(1, std::min({maximumScale, heightScale, widthScale}));
+    const int scale = std::max(1, std::min({maximumScale, verticalScale, widthScale}));
     const int advance = 6 * scale + letterSpacing;
-    const int lineScale = std::max(1, std::min(scale, multilineHeight));
+    const int lineScale = scale;
     const int textBlockHeight =
         static_cast<int>((lineCount - 1) * 8 * lineScale + 6 * lineScale + scale);
     const int verticalOffset =
@@ -907,9 +969,16 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
             code = 176;
             ++characterIndex;
         }
-        const std::size_t glyphIndex = font.glyphs[static_cast<std::size_t>(code)].defined
-                                           ? static_cast<std::size_t>(code)
-                                           : static_cast<std::size_t>(fallbackCode);
+        std::size_t glyphIndex = static_cast<std::size_t>(code);
+        if (!font.glyphs[glyphIndex].defined && code >= 'a' && code <= 'z') {
+            const std::size_t uppercaseIndex = static_cast<std::size_t>(code - 'a' + 'A');
+            if (font.glyphs[uppercaseIndex].defined) {
+                glyphIndex = uppercaseIndex;
+            }
+        }
+        if (!font.glyphs[glyphIndex].defined) {
+            glyphIndex = static_cast<std::size_t>(fallbackCode);
+        }
         lines.back().push_back(&font.glyphs[glyphIndex]);
     }
 
@@ -1054,11 +1123,18 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
             continue;
         }
         const std::string value = localState.getString(definition.variable);
-        if (definition.hasRenderedValue && value == definition.lastValue) {
+        std::shared_ptr<FontAsset> font;
+        {
+            openbus::rendering::TraceScope fontTrace("script", "updateTextTextures.loadFont");
+            font = loadFont(definition.font);
+        }
+        const bool fontChanged = definition.renderedFont != font;
+        if (definition.hasRenderedValue && value == definition.lastValue && !fontChanged) {
             continue;
         }
         definition.lastValue = value;
         definition.hasRenderedValue = true;
+        definition.renderedFont = font;
         ScriptTexture& texture = textTextures[index];
         texture.width = definition.width;
         texture.height = definition.height;
@@ -1067,11 +1143,6 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
             clearTexture(texture);
         }
         const int maximumScale = 8;
-        std::shared_ptr<FontAsset> font;
-        {
-            openbus::rendering::TraceScope fontTrace("script", "updateTextTextures.loadFont");
-            font = loadFont(definition.font);
-        }
         bool bitmapFontRendered = false;
         if (font != nullptr) {
             openbus::rendering::TraceScope bitmapTrace("script",
@@ -1338,45 +1409,72 @@ int ScriptRuntime::Impl::safeTextLength(lua_State* lua) {
 }
 
 int ScriptRuntime::Impl::scriptFontIndex(const std::string& name) {
-    const bool attempted = fonts.contains(lower(name));
+    const std::string normalizedName = lower(name);
     const auto font = loadFont(name);
     if (!font) {
-        if (!attempted) {
+        if (warnedMissingFontHandles.insert(normalizedName).second) {
             log(LogLevel::Warning, "Script font not found: " + name);
         }
         return -1;
     }
-    const auto found = std::find(scriptFonts.begin(), scriptFonts.end(), font);
-    if (found != scriptFonts.end()) {
-        return static_cast<int>(found - scriptFonts.begin());
+    warnedMissingFontHandles.erase(normalizedName);
+    const auto found = std::find(scriptFontNames.begin(), scriptFontNames.end(), normalizedName);
+    if (found != scriptFontNames.end()) {
+        const auto index = static_cast<std::size_t>(found - scriptFontNames.begin());
+        scriptFonts[index] = font;
+        return static_cast<int>(index);
     }
     scriptFonts.push_back(font);
+    scriptFontNames.push_back(normalizedName);
     return static_cast<int>(scriptFonts.size() - 1);
 }
 
 void ScriptRuntime::Impl::drawScriptText(int index, int x, int y, int fontIndex, bool fullColor,
                                          int letterSpacing, const std::string& value) {
     openbus::rendering::TraceScope trace("script", "ScriptRuntime.drawScriptText");
-    if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
+    if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size() ||
+        static_cast<std::size_t>(fontIndex) >= scriptFontNames.size()) {
         log(LogLevel::Warning, "Invalid script font index: " + std::to_string(fontIndex));
         return;
     }
+    const std::string& fontName = scriptFontNames[static_cast<std::size_t>(fontIndex)];
+    const auto font = loadFont(fontName);
+    if (!font) {
+        if (warnedMissingFontHandles.insert(fontName).second) {
+            log(LogLevel::Warning, "Script font no longer available: " + fontName);
+        }
+        scriptFonts[static_cast<std::size_t>(fontIndex)].reset();
+        return;
+    }
+    warnedMissingFontHandles.erase(fontName);
+    scriptFonts[static_cast<std::size_t>(fontIndex)] = font;
     ScriptTexture& texture = scriptTextures[index];
     TextTextureDefinition definition;
     definition.alignment = TextAlignment::Left;
     definition.useFontColor = fullColor;
     definition.color = {texture.color[1], texture.color[2], texture.color[3], texture.color[0]};
-    drawBitmapFontText(texture, value, x, y, definition, *scriptFonts[fontIndex], false,
-                       letterSpacing);
+    drawBitmapFontText(texture, value, x, y, definition, *font, false, letterSpacing);
 }
 
-float ScriptRuntime::Impl::scriptTextLength(int fontIndex, const std::string& value) const {
-    if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
+float ScriptRuntime::Impl::scriptTextLength(int fontIndex, const std::string& value) {
+    if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size() ||
+        static_cast<std::size_t>(fontIndex) >= scriptFontNames.size()) {
         log(LogLevel::Warning,
             "Invalid script font index for TextLength: " + std::to_string(fontIndex));
         return 0.0F;
     }
-    const FontAsset& font = *scriptFonts[fontIndex];
+    const std::string& fontName = scriptFontNames[static_cast<std::size_t>(fontIndex)];
+    const auto loadedFont = loadFont(fontName);
+    if (!loadedFont) {
+        if (warnedMissingFontHandles.insert(fontName).second) {
+            log(LogLevel::Warning, "Script font no longer available: " + fontName);
+        }
+        scriptFonts[static_cast<std::size_t>(fontIndex)].reset();
+        return 0.0F;
+    }
+    warnedMissingFontHandles.erase(fontName);
+    scriptFonts[static_cast<std::size_t>(fontIndex)] = loadedFont;
+    const FontAsset& font = *loadedFont;
     int width = 0;
     for (const unsigned char character : value) {
         const FontGlyph& glyph = font.glyphs[character];

@@ -97,6 +97,7 @@ struct ScriptRuntime::Impl {
     std::vector<std::string> errors;
     std::vector<float> floatStack;
     std::vector<std::string> stringStack;
+    std::unordered_set<std::string> warnedMissingFontHandles;
     std::unordered_set<std::string> warnedUnavailableMacros;
     std::unordered_set<std::string> warnedMissingSystemTriggers;
     HofData hofData;
@@ -134,6 +135,12 @@ struct ScriptRuntime::Impl {
         std::filesystem::path sourcePath;
         std::filesystem::file_time_type sourceModified;
         std::uintmax_t sourceSize = 0;
+        std::filesystem::path colorImagePath;
+        std::filesystem::file_time_type colorImageModified;
+        std::uintmax_t colorImageSize = 0;
+        std::filesystem::path alphaImagePath;
+        std::filesystem::file_time_type alphaImageModified;
+        std::uintmax_t alphaImageSize = 0;
         std::array<FontGlyph, 256> glyphs = {};
         openbus::rendering::Image colorImage;
         openbus::rendering::Image alphaImage;
