@@ -181,6 +181,10 @@ that fixed surface; out-of-bounds pixels do not resize or shift its canvas.
 Defines a named text-rendering surface. Common fields include name, font,
 width, height, font-colour mode, and RGB colour. Basic text is centered
 horizontally; OpenBus vertically centers the rendered line block in the surface.
+When the OFT font is unavailable, the built-in 5x7 fallback decodes UTF-8
+sequences as single glyphs, draws the degree sign, and treats `@` as a line
+break. Lowercase shapes and common ASCII punctuation are included, but
+fallback font parity remains approximate; unsupported glyphs render as `?`.
 
 ### `[texttexture_enh]`
 

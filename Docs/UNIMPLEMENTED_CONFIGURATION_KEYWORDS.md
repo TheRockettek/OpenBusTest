@@ -28,7 +28,7 @@ These are the known bus-model keyword gaps:
 | `[VFDmaxmin]` | Partial | Six display bounds and the optional view-context flag are retained; they do not affect rendering. |
 | `[tex_detail_factor]` | Partial | The finite factor is retained and serialized, but detail-texture rendering does not use it. |
 | `[origin_from_mesh]` | Partial | Source transform metadata supplies the pivot when available; otherwise the parsed mesh bounds center is used. Native pivot parity remains unverified. |
-| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, grid vertical alignment, and font alpha masks work; native spacing-aware alignment parity and fallback font rasterization remain unverified/incomplete. |
+| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, grid vertical alignment, font alpha masks, OFT missing-glyph substitution, and UTF-8/degree/`@`/lowercase/common-punctuation handling in the 5x7 fallback work; native spacing-aware alignment parity and broader fallback glyph coverage remain unverified/incomplete. |
 | `[illumination_interior]`, `[interiorlight]` | Partial | Point-light shading and metadata serialization work, but controller integration and native intensity parity remain incomplete or unverified. |
 | `[mouseevent]` | Partial | Vehicle picking and basic event transitions work; configurable key maps and scenery-object dispatch are incomplete. |
 | `[terrainmapping]` | Partial | Variable-length payloads are retained verbatim and serialized; terrain/material rendering is not implemented. |

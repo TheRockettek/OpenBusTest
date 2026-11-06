@@ -217,6 +217,11 @@ text textures are horizontally center-aligned. Common values include:
 
 Exact trailing values vary by model version.
 
+When no OFT font is available, OpenBus uses a built-in 5x7 fallback. It treats
+valid UTF-8 sequences as one glyph, draws the degree sign, and interprets `@`
+as a line break. Lowercase shapes and common ASCII punctuation are included;
+unsupported fallback glyphs render as `?`.
+
 ### `[texttexture_enh]`
 
 Enhanced text texture definition. The examples commonly contain a texture

@@ -4,8 +4,14 @@
 
 namespace {
 
+struct FontFileStamp {
+    std::filesystem::file_time_type modified;
+    std::uintmax_t size = 0;
+};
+
 struct FontDirectoryIndex {
     std::filesystem::file_time_type modified;
+    std::unordered_map<std::string, FontFileStamp> fileStampsByPath;
     std::unordered_map<std::string, std::filesystem::path> pathsByName;
 };
 
@@ -35,6 +41,64 @@ std::string normalizedFontDirectoryKey(const std::filesystem::path& directory) {
     return key;
 }
 
+std::string normalizedFontFileKey(const std::filesystem::path& path) {
+    std::string key = path.lexically_normal().generic_string();
+#ifdef _WIN32
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+#endif
+    return key;
+}
+
+bool readFontFileStamp(const std::filesystem::path& path, FontFileStamp& stamp,
+                       std::error_code& error) {
+    stamp.modified = std::filesystem::last_write_time(path, error);
+    if (error) {
+        return false;
+    }
+    stamp.size = std::filesystem::file_size(path, error);
+    return !error;
+}
+
+bool sameFontFileStamp(const FontFileStamp& left, const FontFileStamp& right) {
+    return left.modified == right.modified && left.size == right.size;
+}
+
+bool fontDirectoryFilesUnchanged(
+    const std::filesystem::path& directory,
+    const std::unordered_map<std::string, FontFileStamp>& indexedStamps) {
+    std::unordered_map<std::string, FontFileStamp> currentStamps;
+    std::error_code error;
+    std::filesystem::directory_iterator entry(directory, error);
+    const std::filesystem::directory_iterator end;
+    for (; !error && entry != end; entry.increment(error)) {
+        std::error_code statusError;
+        if (!entry->is_regular_file(statusError) || statusError ||
+            lower(entry->path().extension().string()) != ".oft") {
+            if (statusError) {
+                return false;
+            }
+            continue;
+        }
+        FontFileStamp stamp;
+        if (!readFontFileStamp(entry->path(), stamp, statusError)) {
+            return false;
+        }
+        currentStamps.emplace(normalizedFontFileKey(entry->path()), stamp);
+    }
+    if (error || currentStamps.size() != indexedStamps.size()) {
+        return false;
+    }
+    for (const auto& [path, stamp] : indexedStamps) {
+        const auto current = currentStamps.find(path);
+        if (current == currentStamps.end() || !sameFontFileStamp(stamp, current->second)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::vector<std::string> readFontLines(const std::filesystem::path& path, bool& succeeded) {
     std::vector<std::string> lines;
     std::ifstream input(path);
@@ -61,7 +125,7 @@ std::vector<std::string> readFontLines(const std::filesystem::path& path, bool& 
 }
 
 std::shared_ptr<const FontDirectoryIndex>
-fontDirectoryIndex(const std::filesystem::path& directory) {
+fontDirectoryIndex(const std::filesystem::path& directory, const std::string& requestedName) {
     const std::string key = normalizedFontDirectoryKey(directory);
     std::lock_guard<std::mutex> lock(fontDirectoryIndexMutex());
     auto& indexes = fontDirectoryIndexes();
@@ -85,7 +149,19 @@ fontDirectoryIndex(const std::filesystem::path& directory) {
     }
     const auto cached = indexes.find(key);
     if (cached != indexes.end() && cached->second->modified == modified) {
-        return cached->second;
+        const auto found = cached->second->pathsByName.find(requestedName);
+        if (found != cached->second->pathsByName.end()) {
+            const auto indexedStamp = cached->second->fileStampsByPath.find(
+                normalizedFontFileKey(found->second));
+            FontFileStamp currentStamp;
+            if (indexedStamp != cached->second->fileStampsByPath.end() &&
+                readFontFileStamp(found->second, currentStamp, error) &&
+                sameFontFileStamp(indexedStamp->second, currentStamp)) {
+                return cached->second;
+            }
+        } else if (fontDirectoryFilesUnchanged(directory, cached->second->fileStampsByPath)) {
+            return cached->second;
+        }
     }
 
     auto index = std::make_shared<FontDirectoryIndex>();
@@ -104,6 +180,14 @@ fontDirectoryIndex(const std::filesystem::path& directory) {
             }
             continue;
         }
+        FontFileStamp stamp;
+        if (!readFontFileStamp(entry->path(), stamp, statusError)) {
+            complete = false;
+            scriptRuntimeLogger.Warning("Could not read font file metadata '" +
+                                        entry->path().string() + "': " + statusError.message());
+            continue;
+        }
+        index->fileStampsByPath.emplace(normalizedFontFileKey(entry->path()), stamp);
         bool readSucceeded = false;
         const std::vector<std::string> lines = readFontLines(entry->path(), readSucceeded);
         complete = complete && readSucceeded;
@@ -141,7 +225,7 @@ std::filesystem::path findFontPath(const std::filesystem::path& sourcePath,
     std::filesystem::path sourceDirectory = sourcePath.parent_path();
     while (!sourceDirectory.empty()) {
         const std::shared_ptr<const FontDirectoryIndex> index =
-            fontDirectoryIndex(sourceDirectory / "Fonts");
+            fontDirectoryIndex(sourceDirectory / "Fonts", name);
         const auto found = index->pathsByName.find(name);
         if (found != index->pathsByName.end()) {
             return found->second;
@@ -258,8 +342,8 @@ ScriptRuntime::Impl::ScriptTexture ScriptRuntime::Impl::configuredScriptTexture(
     return texture;
 }
 
-std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(char character) {
-    switch (static_cast<char>(std::toupper(static_cast<unsigned char>(character)))) {
+std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(int character) {
+    switch (character) {
     case 'A':
         return {14, 17, 17, 31, 17, 17, 17};
     case 'B':
@@ -312,6 +396,58 @@ std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(char character) {
         return {17, 17, 10, 4, 4, 4, 4};
     case 'Z':
         return {31, 1, 2, 4, 8, 16, 31};
+    case 'a':
+        return {0, 0, 14, 1, 15, 17, 15};
+    case 'b':
+        return {16, 16, 30, 17, 17, 17, 30};
+    case 'c':
+        return {0, 0, 14, 16, 16, 17, 14};
+    case 'd':
+        return {1, 1, 15, 17, 17, 17, 15};
+    case 'e':
+        return {0, 0, 14, 17, 31, 16, 14};
+    case 'f':
+        return {6, 9, 8, 28, 8, 8, 8};
+    case 'g':
+        return {0, 15, 17, 17, 15, 1, 14};
+    case 'h':
+        return {16, 16, 30, 17, 17, 17, 17};
+    case 'i':
+        return {4, 0, 12, 4, 4, 4, 14};
+    case 'j':
+        return {2, 0, 6, 2, 2, 18, 12};
+    case 'k':
+        return {16, 16, 18, 20, 24, 20, 18};
+    case 'l':
+        return {12, 4, 4, 4, 4, 4, 14};
+    case 'm':
+        return {0, 0, 26, 21, 21, 21, 21};
+    case 'n':
+        return {0, 0, 30, 17, 17, 17, 17};
+    case 'o':
+        return {0, 0, 14, 17, 17, 17, 14};
+    case 'p':
+        return {0, 30, 17, 17, 30, 16, 16};
+    case 'q':
+        return {0, 15, 17, 17, 15, 1, 1};
+    case 'r':
+        return {0, 0, 22, 25, 16, 16, 16};
+    case 's':
+        return {0, 0, 15, 16, 14, 1, 30};
+    case 't':
+        return {8, 8, 28, 8, 8, 9, 6};
+    case 'u':
+        return {0, 0, 17, 17, 17, 19, 13};
+    case 'v':
+        return {0, 0, 17, 17, 17, 10, 4};
+    case 'w':
+        return {0, 0, 17, 17, 21, 21, 10};
+    case 'x':
+        return {0, 0, 17, 10, 4, 10, 17};
+    case 'y':
+        return {0, 0, 17, 17, 15, 1, 14};
+    case 'z':
+        return {0, 0, 31, 2, 4, 8, 31};
     case '0':
         return {14, 17, 19, 21, 25, 17, 14};
     case '1':
@@ -332,10 +468,58 @@ std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(char character) {
         return {14, 17, 17, 14, 17, 17, 14};
     case '9':
         return {14, 17, 17, 15, 1, 1, 14};
+    case '!':
+        return {4, 4, 4, 4, 4, 0, 4};
+    case '"':
+        return {10, 10, 10, 0, 0, 0, 0};
+    case '#':
+        return {10, 31, 10, 10, 31, 10, 0};
+    case '$':
+        return {4, 15, 20, 14, 5, 30, 4};
+    case '%':
+        return {24, 25, 2, 4, 8, 19, 3};
+    case '&':
+        return {12, 18, 20, 8, 21, 18, 13};
+    case '\'':
+        return {4, 4, 2, 0, 0, 0, 0};
+    case '(':
+        return {2, 4, 8, 8, 8, 4, 2};
+    case ')':
+        return {8, 4, 2, 2, 2, 4, 8};
+    case '*':
+        return {0, 4, 21, 14, 21, 4, 0};
+    case ',':
+        return {0, 0, 0, 0, 4, 4, 8};
+    case ';':
+        return {0, 4, 0, 0, 4, 4, 8};
+    case '<':
+        return {2, 4, 8, 16, 8, 4, 2};
+    case '=':
+        return {0, 31, 0, 31, 0, 0, 0};
+    case '>':
+        return {8, 4, 2, 1, 2, 4, 8};
     case '-':
         return {0, 0, 0, 31, 0, 0, 0};
     case '_':
         return {0, 0, 0, 0, 0, 0, 31};
+    case '[':
+        return {14, 8, 8, 8, 8, 8, 14};
+    case '\\':
+        return {16, 8, 8, 4, 2, 2, 1};
+    case ']':
+        return {14, 2, 2, 2, 2, 2, 14};
+    case '^':
+        return {4, 10, 17, 0, 0, 0, 0};
+    case '`':
+        return {8, 4, 2, 0, 0, 0, 0};
+    case '{':
+        return {2, 4, 4, 8, 4, 4, 2};
+    case '|':
+        return {4, 4, 4, 4, 4, 4, 4};
+    case '}':
+        return {8, 4, 4, 2, 4, 4, 8};
+    case '~':
+        return {0, 0, 9, 22, 0, 0, 0};
     case '.':
         return {0, 0, 0, 0, 0, 0, 4};
     case ':':
@@ -346,6 +530,8 @@ std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(char character) {
         return {0, 4, 4, 31, 4, 4, 0};
     case '?':
         return {14, 17, 1, 2, 4, 0, 4};
+    case 0xb0:
+        return {4, 10, 4, 0, 0, 0, 0};
     case ' ':
         return {0, 0, 0, 0, 0, 0, 0};
     default:
@@ -546,12 +732,63 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return;
     }
+    std::vector<int> characters;
+    characters.reserve(value.size());
+    for (std::size_t offset = 0; offset < value.size(); ++offset) {
+        const auto firstByte = static_cast<unsigned char>(value[offset]);
+        if (firstByte < 0x80U) {
+            characters.push_back(firstByte);
+            continue;
+        }
+
+        std::size_t sequenceLength = 0;
+        std::uint32_t codepoint = 0;
+        if (firstByte >= 0xc2U && firstByte <= 0xdfU) {
+            sequenceLength = 2;
+            codepoint = firstByte & 0x1fU;
+        } else if (firstByte >= 0xe0U && firstByte <= 0xefU) {
+            sequenceLength = 3;
+            codepoint = firstByte & 0x0fU;
+        } else if (firstByte >= 0xf0U && firstByte <= 0xf4U) {
+            sequenceLength = 4;
+            codepoint = firstByte & 0x07U;
+        }
+
+        bool validSequence = sequenceLength != 0 && offset + sequenceLength <= value.size();
+        for (std::size_t index = 1; validSequence && index < sequenceLength; ++index) {
+            const auto nextByte = static_cast<unsigned char>(value[offset + index]);
+            validSequence = (nextByte & 0xc0U) == 0x80U;
+            codepoint = (codepoint << 6U) | (nextByte & 0x3fU);
+        }
+        if (validSequence) {
+            validSequence =
+                (sequenceLength != 3 ||
+                 (firstByte != 0xe0U ||
+                  static_cast<unsigned char>(value[offset + 1]) >= 0xa0U)) &&
+                (sequenceLength != 3 ||
+                 (firstByte != 0xedU ||
+                  static_cast<unsigned char>(value[offset + 1]) < 0xa0U)) &&
+                (sequenceLength != 4 ||
+                 (firstByte != 0xf0U ||
+                  static_cast<unsigned char>(value[offset + 1]) >= 0x90U)) &&
+                (sequenceLength != 4 ||
+                 (firstByte != 0xf4U ||
+                  static_cast<unsigned char>(value[offset + 1]) <= 0x8fU));
+        }
+        if (validSequence) {
+            characters.push_back(static_cast<int>(codepoint));
+            offset += sequenceLength - 1;
+        } else {
+            characters.push_back('?');
+        }
+    }
+
     std::size_t lineCount = 1;
     std::size_t longestLine = 0;
     std::size_t currentLineLength = 0;
     std::vector<std::size_t> lineLengths(1, 0);
-    for (const char character : value) {
-        if (character == '\n') {
+    for (const int character : characters) {
+        if (character == '@' || character == '\n') {
             longestLine = std::max(longestLine, currentLineLength);
             currentLineLength = 0;
             ++lineCount;
@@ -578,8 +815,8 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
         centerVertically ? std::max(0, (texture.height - textBlockHeight) / 2) : 0;
     int line = 0;
     int columnIndex = 0;
-    for (const char character : value) {
-        if (character == '\n') {
+    for (const int character : characters) {
+        if (character == '@' || character == '\n') {
             ++line;
             columnIndex = 0;
             continue;
@@ -634,11 +871,10 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return false;
     }
-    int fallbackCode = -1;
+    int fallbackCode = font.glyphs[static_cast<std::size_t>('?')].defined ? '?' : -1;
     for (std::size_t index = 0; index < font.glyphs.size(); ++index) {
-        if (font.glyphs[index].defined) {
+        if (fallbackCode < 0 && font.glyphs[index].defined) {
             fallbackCode = static_cast<int>(index);
-            break;
         }
     }
     if (fallbackCode < 0 || font.colorImage.width <= 0 || font.alphaImage.width <= 0) {

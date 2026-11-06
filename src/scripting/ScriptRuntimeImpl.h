@@ -106,6 +106,7 @@ struct ScriptRuntime::Impl {
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
     enum class TextAlignment { Left, Center, Right, CenterLeftBias, CenterRightBias };
 
+    struct FontAsset;
     struct TextTextureDefinition {
         std::string variable;
         std::string font;
@@ -117,6 +118,7 @@ struct ScriptRuntime::Impl {
         bool useFontColor = false;
         std::string lastValue;
         bool hasRenderedValue = false;
+        std::shared_ptr<FontAsset> renderedFont;
     };
     std::unordered_map<int, TextTextureDefinition> textTextureDefinitions;
     std::unordered_map<int, ScriptTexture> textTextures;
@@ -129,12 +131,16 @@ struct ScriptRuntime::Impl {
     struct FontAsset {
         int height = 0;
         int horizontalGap = 0;
+        std::filesystem::path sourcePath;
+        std::filesystem::file_time_type sourceModified;
+        std::uintmax_t sourceSize = 0;
         std::array<FontGlyph, 256> glyphs = {};
         openbus::rendering::Image colorImage;
         openbus::rendering::Image alphaImage;
     };
     std::unordered_map<std::string, std::shared_ptr<FontAsset>> fonts;
     std::vector<std::shared_ptr<FontAsset>> scriptFonts;
+    std::vector<std::string> scriptFontNames;
     std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
     std::vector<std::shared_ptr<const OscProgram>> nativePrograms;
@@ -157,13 +163,13 @@ struct ScriptRuntime::Impl {
 
     ScriptTexture configuredScriptTexture(int index);
 
-    static std::array<std::uint8_t, 7> glyph(char character);
+    static std::array<std::uint8_t, 7> glyph(int character);
 
     std::shared_ptr<FontAsset> loadFont(const std::string& requestedName);
     int scriptFontIndex(const std::string& name);
     void drawScriptText(int index, int x, int y, int fontIndex, bool fullColor, int letterSpacing,
                         const std::string& value);
-    float scriptTextLength(int fontIndex, const std::string& value) const;
+    float scriptTextLength(int fontIndex, const std::string& value);
 
     float nativePopFloat();
 

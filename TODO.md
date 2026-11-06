@@ -588,9 +588,15 @@ for alignment is not mistaken for supporting it.
   Font-directory indexes
   now refresh on directory timestamp changes and do not cache missing
   directories; regression coverage includes added and removed definitions and
-  case-distinct paths. The index depends on filesystem timestamp resolution and
-  does not detect in-place changes to OFT font names; already-created script
-  runtimes also retain their font results.
+  case-distinct paths. Missing authored-font glyphs prefer a defined `?`
+  glyph, falling back to the first defined glyph when none exists. The
+  no-OFT 5x7 fallback decodes UTF-8 sequences as single glyphs, draws `°`,
+  preserves lowercase glyph shapes, treats `@` as a line break, and covers
+  common ASCII punctuation; broader font parity remains incomplete.
+  Cached OFT paths are checked by file timestamp and size, and cached misses
+  detect changed OFT metadata even when the directory timestamp is unchanged.
+  Same-size edits with unchanged file timestamps may still be missed, and
+  already-created script runtimes retain their loaded font results.
 
 #### General CFG dialects
 

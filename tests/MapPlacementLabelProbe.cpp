@@ -196,6 +196,34 @@ int main() {
         return 1;
     }
 
+    const auto delayedFontPath = fonts / "delayed.oft";
+    const auto fontDirectoryTime = std::filesystem::last_write_time(fonts);
+    const auto originalFontSize = std::filesystem::file_size(delayedFontPath);
+    std::ofstream renamedFont(delayedFontPath, std::ios::trunc);
+    renamedFont << "Documentation preamble\n[newfont]\n{font name}\n{bitmap}\n{alpha}\n"
+                   "{height}\n{spacing}\n[char]\n{character}\n{left}\n{right}\n{top}\n"
+                   "[newfont]\nRenamedFont\nfixture.bmp\nfixture.bmp\n2\n0\n"
+                   "[char]\n5\n0\n1\n0\n[char]\n0\n1\n3\n0\n";
+    renamedFont.close();
+    std::error_code stampError;
+    std::filesystem::last_write_time(
+        delayedFontPath, std::filesystem::file_time_type::clock::now() +
+                             std::chrono::seconds(40),
+        stampError);
+    if (stampError || std::filesystem::file_size(delayedFontPath) != originalFontSize) {
+        std::cerr << "could not prepare same-size in-place OFT font rename\n";
+        return 1;
+    }
+    std::filesystem::last_write_time(fonts, fontDirectoryTime, stampError);
+    if (stampError) {
+        std::cerr << "could not preserve font directory timestamp during OFT edit\n";
+        return 1;
+    }
+    if (!checkFontPixels(configuration, sharedState, "RenamedFont", 6) ||
+        !checkFontPixels(configuration, sharedState, "DelayedFont", 15)) {
+        return 1;
+    }
+
     const auto upperRoot = root / "CASE";
     const auto lowerRoot = root / "case";
     std::filesystem::create_directories(upperRoot / "Fonts");
@@ -207,13 +235,13 @@ int main() {
         VehicleConfig lowerConfiguration = configuration;
         upperConfiguration.sourcePath = upperRoot / "label.sco";
         lowerConfiguration.sourcePath = lowerRoot / "label.sco";
-        if (!checkFontPixels(upperConfiguration, sharedState, "DelayedFont", 6)) {
+        if (!checkFontPixels(upperConfiguration, sharedState, "RenamedFont", 6)) {
             return 1;
         }
         std::filesystem::remove(fonts / "delayed.oft");
         std::filesystem::last_write_time(fonts, std::filesystem::file_time_type::clock::now() +
                                                     std::chrono::seconds(30));
-        if (!checkFontPixels(lowerConfiguration, sharedState, "DelayedFont", 6)) {
+        if (!checkFontPixels(lowerConfiguration, sharedState, "RenamedFont", 6)) {
             return 1;
         }
     }

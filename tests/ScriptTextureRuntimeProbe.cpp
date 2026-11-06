@@ -176,7 +176,8 @@ int main() {
             "[char]\nA\n0\n2\n0\n"
             "[char]\nB\n2\n4\n0\n";
     font << "[char]\n0\n0\n2\n0\n"
-            "[char]\n1\n2\n4\n0\n";
+            "[char]\n1\n2\n4\n0\n"
+            "[char]\n?\n2\n4\n0\n";
     font.close();
     std::ofstream unitFont(fonts / "unit.oft");
     unitFont << "[newfont]\nUnitFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
@@ -825,7 +826,17 @@ int main() {
          ModelTextTexture{
              15, true, {"leftbiasdisplay", "ProbeFont", "7", "4", "0", "255", "255", "255", "4", "0"}},
          ModelTextTexture{
-             16, true, {"rightbiasdisplay", "ProbeFont", "7", "4", "0", "255", "255", "255", "5", "0"}}});
+             16, true, {"rightbiasdisplay", "ProbeFont", "7", "4", "0", "255", "255", "255", "5", "0"}},
+         ModelTextTexture{
+             17, true, {"fallbackdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "1", "0"}},
+         ModelTextTexture{
+             18, true, {"fallbackunicodedisplay", "MissingFont", "24", "20", "0", "255", "255", "255", "1", "0"}},
+         ModelTextTexture{
+             19, true, {"fallbackpunctuationdisplay", "MissingFont", "40", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             20, true, {"lowercasefallbackdisplay", "MissingFont", "160", "10", "0", "255", "255", "255", "1", "0"}},
+         ModelTextTexture{
+             21, true, {"uppercasefallbackdisplay", "MissingFont", "160", "10", "0", "255", "255", "255", "1", "0"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
@@ -848,6 +859,11 @@ int main() {
     variables.setString("gridpixelsdisplay", "A");
     variables.setString("leftbiasdisplay", "AB");
     variables.setString("rightbiasdisplay", "AB");
+    variables.setString("fallbackdisplay", "X");
+    variables.setString("fallbackunicodedisplay", std::string("\xc2\xb0" "C@A", 5));
+    variables.setString("fallbackpunctuationdisplay", "!?;()");
+    variables.setString("lowercasefallbackdisplay", "abcdefghijklmnopqrstuvwxyz");
+    variables.setString("uppercasefallbackdisplay", "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
     ScriptRuntime::ScriptTextureSnapshot initialPlateText;
@@ -895,6 +911,11 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot gridPixelAlignedText;
     ScriptRuntime::ScriptTextureSnapshot leftBiasText;
     ScriptRuntime::ScriptTextureSnapshot rightBiasText;
+    ScriptRuntime::ScriptTextureSnapshot fallbackGlyphText;
+    ScriptRuntime::ScriptTextureSnapshot fallbackUnicodeText;
+    ScriptRuntime::ScriptTextureSnapshot fallbackPunctuationText;
+    ScriptRuntime::ScriptTextureSnapshot lowercaseFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot uppercaseFallbackText;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -919,7 +940,12 @@ int main() {
         !runtime.copyTextTexture(13, gridBoxAlignedText) ||
         !runtime.copyTextTexture(14, gridPixelAlignedText) ||
         !runtime.copyTextTexture(15, leftBiasText) ||
-        !runtime.copyTextTexture(16, rightBiasText)) {
+        !runtime.copyTextTexture(16, rightBiasText) ||
+        !runtime.copyTextTexture(17, fallbackGlyphText) ||
+        !runtime.copyTextTexture(18, fallbackUnicodeText) ||
+        !runtime.copyTextTexture(19, fallbackPunctuationText) ||
+        !runtime.copyTextTexture(20, lowercaseFallbackText) ||
+        !runtime.copyTextTexture(21, uppercaseFallbackText)) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -1033,7 +1059,12 @@ int main() {
         leftBiasText.pixels[(1U * 7U + 1U) * 4U + 3U] != 255 ||
         leftBiasText.pixels[(1U * 7U + 3U) * 4U + 3U] != 128 ||
         rightBiasText.pixels[(1U * 7U + 2U) * 4U + 3U] != 255 ||
-        rightBiasText.pixels[(1U * 7U + 4U) * 4U + 3U] != 128) {
+        rightBiasText.pixels[(1U * 7U + 4U) * 4U + 3U] != 128 ||
+        fallbackGlyphText.pixels[(1U * 6U) * 4U + 3U] != 128 ||
+        fallbackUnicodeText.pixels[(3U * 24U + 1U) * 4U + 3U] != 255 ||
+        fallbackUnicodeText.pixels[(3U * 24U + 3U) * 4U + 3U] != 255 ||
+        fallbackUnicodeText.pixels[(4U * 24U + 6U) * 4U + 3U] != 255 ||
+        fallbackUnicodeText.pixels[(10U * 24U + 1U) * 4U + 3U] != 255) {
         std::cerr << "OMSI text layout/color mismatch: centered font RGBA="
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel]) << ','
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 1]) << ','
@@ -1048,6 +1079,21 @@ int main() {
                   << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 3])
                   << ", block bounds=" << blockMinX << ',' << blockMinY << "-" << blockMaxX << ','
                   << blockMaxY << ", revision=" << blockColorTextTexture.revision << '\n';
+        return 1;
+    }
+    std::size_t fallbackPunctuationPixelCount = 0;
+    for (std::size_t offset = 3; offset < fallbackPunctuationText.pixels.size(); offset += 4) {
+        fallbackPunctuationPixelCount += fallbackPunctuationText.pixels[offset] != 0 ? 1U : 0U;
+    }
+    if (fallbackPunctuationPixelCount != 33U) {
+        std::cerr << "fallback text did not rasterize its common punctuation glyphs\n";
+        return 1;
+    }
+    if (lowercaseFallbackText.pixels == uppercaseFallbackText.pixels ||
+        lowercaseFallbackText.pixels[(3U * 160U + 1U) * 4U + 3U] != 255 ||
+        lowercaseFallbackText.pixels[(1U * 160U + 1U) * 4U + 3U] != 0 ||
+        uppercaseFallbackText.pixels[(1U * 160U + 1U) * 4U + 3U] != 255) {
+        std::cerr << "fallback text did not preserve lowercase glyph shapes\n";
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;
