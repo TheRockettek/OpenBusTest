@@ -840,7 +840,7 @@ void verifyPlayerTimetableController() {
     require(matchingPlayerTimetableRouteCount({independentRoute}, unrelatedHof) == 0,
             "HOF auto-matching rejects files with no compatible map timetable route");
     const std::vector<openbus::map::MapAiTimetableCourse> independentCourses{
-        {"course", {{"hof-trip", 0, 480.0}}}};
+        {"course", {{"hof-trip", 0, 480.0}}, true}};
     PlayerTimetableCatalog independentCatalog;
     independentCatalog.update({independentRoute}, independentCourses, hof);
     require(independentCatalog.lines.size() == 1 &&
@@ -911,7 +911,7 @@ void verifyPlayerTimetableController() {
     openbus::config::HofData stopOnlyHof;
     stopOnlyHof.routes = {{"4201", 0, false, {"Alpha", "Beta", "Gamma"}, "Outbound", "42"}};
     const std::vector<openbus::map::MapAiTimetableCourse> stopOnlyCourses{
-        {"course", {{"stop-only", 0, 480.0}}}};
+        {"course", {{"stop-only", 0, 480.0}}, true}};
     PlayerTimetableCatalog stopOnlyCatalog;
     stopOnlyCatalog.update(unlocatedNetwork.routes, stopOnlyCourses, stopOnlyHof);
     PlayerTimetableController stopOnlyController;
@@ -1169,7 +1169,8 @@ void verifyPlayerTimetableController() {
             "an absent or empty HOF does not expose unrelated map routes");
     const std::vector<PassengerStopRouteState> hofRoutes{hofRoute, routes[1]};
     const std::vector<openbus::map::MapAiTimetableCourse> hofCourses{
-        {"HOF course", {{"hof-trip", 0, 480.0}, {"return", 0, 520.0}}}};
+        {"HOF course", {{"hof-trip", 0, 480.0}, {"return", 0, 520.0}}, true},
+        {"AI-only course", {{"hof-trip", 0, 481.0}}}};
     PlayerTimetableCatalog catalog;
     require(catalog.update(hofRoutes, hofCourses, hof) && catalog.routes.size() == 2 &&
                 catalog.routes[0].status == PassengerHofMatchStatus::Matched &&
@@ -1181,6 +1182,12 @@ void verifyPlayerTimetableController() {
                 catalog.lines[0].courses[0].trips[0].tripIndex == 0 &&
                 catalog.lines[0].courses[0].trips[0].routeIndex == 0,
             "catalog caches only HOF-compatible course trips");
+    const std::vector<openbus::map::MapAiTimetableCourse> aiOnlyCourses{
+        {"AI-only course", {{"hof-trip", 0, 480.0}}}};
+    PlayerTimetableCatalog aiOnlyCatalog;
+    require(aiOnlyCatalog.update({hofRoute}, aiOnlyCourses, hof) &&
+                aiOnlyCatalog.routes.size() == 1 && aiOnlyCatalog.lines.empty(),
+            "the player catalog omits matched routes whose timetable line is not user-allowed");
     require(!catalog.update(hofRoutes, hofCourses, {}) && catalog.lines.size() == 1,
             "repeated frames reuse the catalog without matching the HOF again");
     catalog.invalidate();
@@ -1191,7 +1198,7 @@ void verifyPlayerTimetableController() {
     appendedRoute.timetableKey = "second-trip";
     const std::vector<PassengerStopRouteState> expandedRoutes{hofRoute, appendedRoute};
     const std::vector<openbus::map::MapAiTimetableCourse> expandedCourses{
-        {"updated", {{"second-trip", 0, 520.0}, {"hof-trip", 0, 480.0}}}};
+        {"updated", {{"second-trip", 0, 520.0}, {"hof-trip", 0, 480.0}}, true}};
     catalog.invalidate();
     require(catalog.update(expandedRoutes, expandedCourses, hof) &&
                 catalog.lines.size() == 1 && catalog.lines[0].courses[0].trips.size() == 2 &&
@@ -1202,7 +1209,7 @@ void verifyPlayerTimetableController() {
             "catalog sorts matched course trips by departure time");
     const std::vector<openbus::map::MapAiTimetableCourse> duplicateTrips{
         {"duplicate entries",
-         {{"hof-trip", 0, 480.0}, {"hof-trip", 0, 480.0}, {"hof-trip", 1, 480.0}}}};
+         {{"hof-trip", 0, 480.0}, {"hof-trip", 0, 480.0}, {"hof-trip", 1, 480.0}}, true}};
     catalog.invalidate();
     require(catalog.update(hofRoutes, duplicateTrips, hof) &&
                 catalog.lines.size() == 1 &&

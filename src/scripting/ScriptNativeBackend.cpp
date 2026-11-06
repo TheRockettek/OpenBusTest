@@ -446,9 +446,9 @@ bool ScriptRuntime::Impl::executeNativeFunction(const std::string& functionName,
         errors.push_back("native OSC call depth exceeded in " + functionName);
         return false;
     }
-    for (const std::shared_ptr<const OscProgram>& program : nativePrograms) {
-        const auto found = program->functions.find(functionName);
-        if (found == program->functions.end()) {
+    for (auto program = nativePrograms.rbegin(); program != nativePrograms.rend(); ++program) {
+        const auto found = (*program)->functions.find(functionName);
+        if (found == (*program)->functions.end()) {
             continue;
         }
 

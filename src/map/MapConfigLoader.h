@@ -243,6 +243,7 @@ struct MapAiTimetableCourseTrip {
 struct MapAiTimetableCourse {
     std::string name;
     std::vector<MapAiTimetableCourseTrip> trips;
+    bool userAllowed = false;
 };
 
 std::optional<std::size_t>

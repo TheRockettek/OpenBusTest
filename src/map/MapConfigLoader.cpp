@@ -1017,7 +1017,12 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         MapAiTimetableCourse course;
         course.name = pathToUtf8(linePath.stem());
         for (std::size_t lineIndex = 0; lineIndex < lineLines.size(); ++lineIndex) {
-            if (lowerAscii(trim(lineLines[lineIndex])) != "[addtrip]") {
+            const std::string section = lowerAscii(trim(lineLines[lineIndex]));
+            if (section == "[userallowed]") {
+                course.userAllowed = true;
+                continue;
+            }
+            if (section != "[addtrip]") {
                 continue;
             }
             std::array<std::string, 3> fields;

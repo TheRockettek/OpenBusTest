@@ -443,9 +443,17 @@ objects, and each generated spline-attachment instance. It does not replace
 ordinary terrain-relative height sampling or the spline's authored elevation.
 This interpretation is an implementation hypothesis, not OMSI-verified
 semantics; the installed maps establish that the marker occurs on all three
-record families, but do not establish whether OMSI instead or additionally
-changes their height. `[spline_terrain_align_2]` remains separately preserved
-and unsupported.
+record families. Static native tracing also connects marked runtime objects
+to a gated terrain-hole-related polygon processing path under eligible refresh
+and processing conditions; complete geometry, collision, and placement
+effects remain unverified. `[spline_terrain_align_2]` remains separately
+preserved and unsupported.
+
+The inspected native terrain-hole path obtains polygons from a scenery
+model's `[terrainhole]` source and may read or generate an adjacent `.hole`
+cache. OpenBus does not implement this directive. Isolate model assets and
+their caches as well as map files when testing OMSI, because native polygon
+generation can write the sidecar.
 
 Scenery-object configuration files can contain the marker `[onlyeditor]`.
 OpenBus skips placements for editor-only SCOs, but if the SCO also defines a
@@ -542,7 +550,7 @@ field semantics.
 | `Busstops.cfg` | File banner and header lines, then repeated `[busstop]` groups. Model fields are name, tile index, ID, exiting-passenger value, `line4`, `line5`, subname (7 positions). | Parser converts tile index and ID; the exiting-passenger model annotation and parser conversion are not fully consistent. Keep raw text until checked against OMSI. |
 | `StnLinks.cfg` | Repeated optional comment + `[StnLink]`, then 9 fixed positions: `line1`, start busstop ID, end busstop ID, `line4`…`line9`; nested `[StnLink_entry]` groups have 7 fixed values: ID, `line2`, tile index, length, `line5`…`line7`, then optional chrono-file lines. | Busstop IDs, entry IDs, and tile indices are integer-converted. Most other values remain strings. |
 | `*.ttr` | Header/dividers, then repeated comment/index line + `[track_entry]` + up to 7 positions: ID, `line2`, tile index, `line4`, length, `line6`, optional `line7`. | IDs/tile indices are integers; other columns are largely opaque. The leading comment/index line is part of each entry. |
-| `*.ttl` | Header/dividers, optional `[userallowed]`, `[priority]` + one value, then repeated divider + `[newtour]` + tour name, optional AI-group name and `line3`; each tour can contain repeated preceding comment + `[addtrip]` + trip name, `line2`, departure time. | File/name associations are not resolved into typed cross-file objects by this parser. Preserve the exact trip/tour names and any blank slots. |
+| `*.ttl` | Header/dividers, optional `[userallowed]`, `[priority]` + one value, then repeated divider + `[newtour]` + tour name, optional AI-group name and `line3`; each tour can contain repeated preceding comment + `[addtrip]` + trip name, `line2`, departure time. | `[userallowed]` is preserved as a line-file flag and gates player timetable choices. Unmarked files are still parsed for map/AI timetable use, but do not produce selectable player lines. Preserve the exact trip/tour names and any blank slots. |
 | `*.ttp` | Header/dividers; `[trip]` plus 3 lines; optional `[trainreverse]`; dotted `Stations` section with `[station]` or `[station_typ2]` records; dotted `Profiles` section followed by lines retained as profile data. | `[station]` has 8 positions: integer ID, interval, name, integer tile index, then `line5`…`line8`. `[station_typ2]` contains one integer ID. Profile subrecords are not fully semantically decoded by the merger. |
 
 Grande Porto profile-related tags include `[profile]`,

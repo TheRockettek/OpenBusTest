@@ -173,8 +173,9 @@ void runFixtureProbe() {
                      "[station]\n19001\n0\nFirst Stop\n0\n0\n0\n0\n0\n"
                      "[station]\n19002\n0\nLast Stop\n0\n0\n0\n0\n0\n");
         writeUtf16Le(timetableDirectory / "Broken.ttr", "[track_entry]\ninvalid\n");
-        writeUtf16Le(timetableDirectory / "BusOnly.ttl", "[newtour]\nBus\n1\nDep.: 8:15:0\n"
-                                                         "[addtrip]\nBusOnly\n0\n495.000\n");
+        writeUtf16Le(timetableDirectory / "BusOnly.ttl",
+                     "[userallowed]\n[newtour]\nBus\n1\nDep.: 8:15:0\n"
+                     "[addtrip]\nBusOnly\n0\n495.000\n");
         writeUtf16Le(timetableDirectory / "Busstops.cfg",
                      "[busstop]\nMain Stop\n0\n15479\n0\n0\n0\n"
                      "[busstop]\nIncomplete Stop\n"
@@ -823,15 +824,18 @@ void runFixtureProbe() {
                 "driving routes with station-ID-only trips resolve linked passenger stops");
         require(definition.aiTraffic.timetableCourses.size() == 3 &&
                     definition.aiTraffic.timetableCourses[0].name == "BusOnly" &&
+                    definition.aiTraffic.timetableCourses[0].userAllowed &&
                     definition.aiTraffic.timetableCourses[0].trips ==
                         std::vector<openbus::map::MapAiTimetableCourseTrip>{
                             {"busonly", 0, 495.0}} &&
                     definition.aiTraffic.timetableCourses[1].name == "Fixture" &&
+                    !definition.aiTraffic.timetableCourses[1].userAllowed &&
                     definition.aiTraffic.timetableCourses[1].trips ==
                         std::vector<openbus::map::MapAiTimetableCourseTrip>{
                             {"fixturetrip", 1, 495.0}, {"fixturetrip", 0, 405.0},
                             {"broken", 0, 515.0}} &&
                     definition.aiTraffic.timetableCourses[2].name == "TrackFixture" &&
+                    !definition.aiTraffic.timetableCourses[2].userAllowed &&
                     definition.aiTraffic.timetableCourses[2].trips ==
                         std::vector<openbus::map::MapAiTimetableCourseTrip>{
                             {"trackfixture", 0, 495.0}},

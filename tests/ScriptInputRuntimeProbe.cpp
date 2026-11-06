@@ -507,6 +507,22 @@ bool checkSystemTriggers(const VehicleConfig& configuration, const char* backend
     return passed;
 }
 
+bool checkScriptPrecedence(const VehicleConfig& configuration, const char* backend) {
+    if (!selectBackend(backend)) {
+        return false;
+    }
+    openbus::scripting::Vehicle local;
+    SimulationState simulation;
+    ScriptRuntime runtime(configuration, local, simulation);
+    runtime.invokeEntryPoint("trigger_precedence");
+    const bool passed =
+        runtime.errors().empty() && local.get("precedence_value") == 2.0F;
+    if (!passed) {
+        std::cerr << backend << ": later script did not override an earlier entry point\n";
+    }
+    return passed;
+}
+
 } // namespace
 
 int main() {
@@ -656,7 +672,8 @@ int main() {
                   "{trigger:dragonly_drag}\n(L.L.dragonly_count) 1 + (S.L.dragonly_count)\n"
                   "(L.S.mouse_y) (S.L.dragonly_y)\n{end}\n"
                   "{trigger:control_off}\n(L.L.release_count) 1 + (S.L.release_count)\n"
-                  "(L.S.mouse_y) (S.L.release_mouse)\n{end}\n";
+                  "(L.S.mouse_y) (S.L.release_mouse)\n{end}\n"
+                  "{trigger:precedence}\n1 (S.L.precedence_value)\n{end}\n";
     }
     {
         std::ofstream hof(root / "fixture.hof");
@@ -675,13 +692,22 @@ int main() {
         std::cerr << error << '\n';
         return 1;
     }
+    const auto overrideScript = root / "override.osc";
+    {
+        std::ofstream source(overrideScript);
+        source << "{trigger:precedence}\n2 (S.L.precedence_value)\n{end}\n";
+    }
+    if (!convertOscToLua(overrideScript, generatedLuaPath(overrideScript), error)) {
+        std::cerr << error << '\n';
+        return 1;
+    }
     {
         std::ofstream lua(generatedLuaPath(script), std::ios::app);
         lua << "\nfunction trigger_failed_drag() error('expected probe failure') end\n";
     }
     VehicleConfig configuration;
     configuration.sourcePath = root / "input.bus";
-    configuration.scripts = {script.filename().string()};
+    configuration.scripts = {script.filename().string(), overrideScript.filename().string()};
     const bool nativePassed = check(configuration, "native");
     const bool luaPassed = check(configuration, "lua");
     const bool nativeHofPassed = checkHofMacros(configuration, "native");
@@ -692,6 +718,8 @@ int main() {
     const bool luaHeightPassed = checkHeightProvider(configuration, "lua");
     const bool nativeTriggersPassed = checkSystemTriggers(configuration, "native");
     const bool luaTriggersPassed = checkSystemTriggers(configuration, "lua");
+    const bool nativePrecedencePassed = checkScriptPrecedence(configuration, "native");
+    const bool luaPrecedencePassed = checkScriptPrecedence(configuration, "lua");
     Logger::Flush();
     std::ifstream logInput(logPath);
     const bool logOpened = logInput.is_open();
@@ -732,6 +760,7 @@ int main() {
     return nativePassed && luaPassed && nativeHofPassed && luaHofPassed &&
                    nativeSceneryPassed && luaSceneryPassed && nativeHeightPassed &&
                    luaHeightPassed && nativeTriggersPassed && luaTriggersPassed &&
+                   nativePrecedencePassed && luaPrecedencePassed &&
                    warningCountsValid
                ? 0
                : 1;

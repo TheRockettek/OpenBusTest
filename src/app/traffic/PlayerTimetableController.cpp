@@ -454,6 +454,9 @@ bool PlayerTimetableCatalog::update(const std::vector<PassengerStopRouteState>& 
     for (PlayerTimetableCatalogLine& line : newLines) {
         const auto& routeByKey = routeByLineAndKey.at(line.name);
         for (std::size_t courseIndex = 0; courseIndex < courses.size(); ++courseIndex) {
+            if (!courses[courseIndex].userAllowed) {
+                continue;
+            }
             PlayerTimetableCatalogCourse course{courseIndex, {}};
             std::vector<openbus::map::MapAiTimetableCourseTrip> includedTrips;
             for (std::size_t tripIndex = 0; tripIndex < courses[courseIndex].trips.size();
@@ -476,6 +479,9 @@ bool PlayerTimetableCatalog::update(const std::vector<PassengerStopRouteState>& 
             }
         }
     }
+    std::erase_if(newLines, [](const PlayerTimetableCatalogLine& line) {
+        return line.courses.empty();
+    });
     routes = std::move(newRoutes);
     lines = std::move(newLines);
     valid_ = true;
