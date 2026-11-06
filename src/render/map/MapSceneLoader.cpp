@@ -6,6 +6,32 @@
 
 namespace openbus::rendering {
 
+namespace {
+
+double carParkChancePercent() {
+    constexpr double defaultValue = 50.0;
+    constexpr const char* environmentName = "OPENBUS_CARPARK_CHANCE_PERCENT";
+    const char* value = openbus::getEnvironment(environmentName);
+    if (value == nullptr) {
+        return defaultValue;
+    }
+    try {
+        std::size_t parsed = 0;
+        const double percentage = std::stod(value, &parsed);
+        if (value[parsed] != '\0' || !std::isfinite(percentage) || percentage < 0.0 ||
+            percentage > 100.0) {
+            throw std::invalid_argument("Expected a percentage from 0 to 100");
+        }
+        return percentage;
+    } catch (const std::exception&) {
+        gameLog.Warning(std::string("Invalid ") + environmentName +
+                        "; using the default car-park occupancy of 50%");
+        return defaultValue;
+    }
+}
+
+} // namespace
+
 MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
                                std::size_t centerTile, std::size_t groundTexture,
                                const std::filesystem::path& omsiRootDirectory,
@@ -16,6 +42,9 @@ MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
       verboseAlphaMaterials(
           parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"))),
       roadConnections(mapDefinition.coordinates) {
+    carParkChancePercent_ = carParkChancePercent();
+    gameLog.Log("Car-park vehicle occupancy chance: " +
+                std::to_string(carParkChancePercent_) + "%.");
     splineCantWidth =
         [this](const openbus::map::MapSplinePlacement& spline) -> std::optional<double> {
         const auto found = splineCantWidths.find(spline.assetPath);

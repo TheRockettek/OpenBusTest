@@ -4,7 +4,61 @@
 
 #include "core/Utf8Path.h"
 
+#include <fstream>
+
 namespace openbus::rendering {
+
+const std::vector<std::string>& MapSceneLoader::loadCarparkVehicleList(int listIndex) {
+    const auto [entry, inserted] = carparkVehicleLists_.try_emplace(listIndex);
+    if (!inserted) {
+        return entry->second;
+    }
+
+    const std::string filename =
+        listIndex == 0 ? "parklist_p.txt" : "parklist_p_" + std::to_string(listIndex) + ".txt";
+    const std::filesystem::path requestedPath = map.rootPath / filename;
+    const std::filesystem::path listPath =
+        openbus::assets::resolveCaseInsensitivePath(requestedPath);
+    std::ifstream input(listPath);
+    if (!input) {
+        recordSkipped(skipped, "[carpark_p] park lists that could not be read",
+                      openbus::pathToUtf8(requestedPath), 1, LogLevel::Warning);
+        return entry->second;
+    }
+
+    std::vector<std::string> availableEntries;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (availableEntries.empty() && line.size() >= 3 &&
+            static_cast<unsigned char>(line[0]) == 0xEF &&
+            static_cast<unsigned char>(line[1]) == 0xBB &&
+            static_cast<unsigned char>(line[2]) == 0xBF) {
+            line.erase(0, 3);
+        }
+        const std::size_t first = line.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos || line[first] == ';' || line[first] == '#') {
+            continue;
+        }
+        const std::size_t last = line.find_last_not_of(" \t\r\n");
+        const std::string assetPath = line.substr(first, last - first + 1);
+        if (resolveSceneryConfigPath(assetPath).empty()) {
+            recordSkipped(skipped, "[carpark_p] park-list entries with missing scenery configs",
+                          assetPath, 1, LogLevel::Warning);
+            continue;
+        }
+        availableEntries.push_back(assetPath);
+    }
+    if (input.bad()) {
+        recordSkipped(skipped, "[carpark_p] park lists that could not be read completely",
+                      openbus::pathToUtf8(listPath), 1, LogLevel::Warning);
+    }
+    if (availableEntries.empty()) {
+        recordSkipped(skipped, "[carpark_p] park lists with no available vehicle configs",
+                      openbus::pathToUtf8(listPath), 1, LogLevel::Warning);
+    }
+    entry->second = std::move(availableEntries);
+    return entry->second;
+}
 
 std::filesystem::path MapSceneLoader::resolveSceneryConfigPath(const std::string& assetPath) const {
     const std::filesystem::path relative = normalizedAssetPath(assetPath);

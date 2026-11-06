@@ -12,6 +12,14 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
   directional lighting as upward spline surfaces. Live-map parity remains
   unverified.
 - `[onlyeditor]` is respected: those placements are omitted from runtime rendering (except tree preview handling).
+- `[carpark_p]` markers select a static scenery object from the map's
+  `parklist_p.txt` at the marker transform. Duplicate list entries retain their
+  selection weight, and `OPENBUS_CARPARK_CHANCE_PERCENT` controls deterministic
+  per-marker occupancy (default `50`, valid range `0`-`100`). Numbered marker
+  labels select `parklist_p_<index>.txt`; missing list entries are reported.
+- `[entrypoint]` SCOs are editor markers; playable bus spawn positions continue
+  to come from the map's global `[entrypoints]` records, which OpenBus already
+  parses and uses.
 - `[absheight]` affects scenery height placement. `[new_attachment]` transforms can be used to resolve static `[attachObj]` children.
 - `[attachObj]` translations follow the decoded scenery mesh's local X/Y basis. This keeps the London traffic-light bracket's authored CFG-Y arm offset aligned with its O3D mesh; attachment rotation parity remains provisional.
 - Repeated SCO `[matl]` overrides are associated with O3D material slots by matching texture basename and authored occurrence order when numeric slot IDs disagree. This handles the London underground entrance's repeated `Fence_3.dds` alpha modes without overwriting unrelated entrance and kerb textures.

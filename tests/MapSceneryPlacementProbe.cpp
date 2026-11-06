@@ -66,6 +66,26 @@ void runProbe() {
                 selectMapSceneryLod(sceneryLodThresholds,
                                     std::numeric_limits<double>::infinity()) == 0,
             "empty and invalid-distance LOD selection safely falls back to level zero");
+    require(!selectMapCarparkVehicle(0.0, 5, 0, 0, 1).has_value() &&
+                !selectMapCarparkVehicle(50.0, 0, 0, 0, 1).has_value() &&
+                !selectMapCarparkVehicle(-1.0, 5, 0, 0, 1).has_value() &&
+                !selectMapCarparkVehicle(101.0, 5, 0, 0, 1).has_value() &&
+                !selectMapCarparkVehicle(std::numeric_limits<double>::quiet_NaN(), 5, 0, 0, 1)
+                     .has_value(),
+            "zero occupancy, empty lists and invalid percentages select no parked vehicle");
+    const auto fullCarparkSelection = selectMapCarparkVehicle(100.0, 5, 2, -3, 42);
+    require(fullCarparkSelection.has_value() && *fullCarparkSelection < 5 &&
+                fullCarparkSelection ==
+                    selectMapCarparkVehicle(100.0, 5, 2, -3, 42),
+            "full occupancy selects a stable in-range park-list entry");
+    std::size_t halfFullSelections = 0;
+    for (int objectId = 0; objectId < 10000; ++objectId) {
+        if (selectMapCarparkVehicle(50.0, 1, 0, 0, objectId).has_value()) {
+            ++halfFullSelections;
+        }
+    }
+    require(halfFullSelections > 4700 && halfFullSelections < 5300,
+            "car-park occupancy follows the configured percentage across placements");
 
     MapSceneryPlacement ordinaryObject;
     ordinaryObject.localPosition = {12.5, -3.25, 4.75};

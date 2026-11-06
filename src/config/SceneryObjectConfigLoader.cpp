@@ -372,6 +372,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.onlyEditor = true;
             continue;
         }
+        if (keyword == "carpark_p") {
+            result.carPark = true;
+            continue;
+        }
         if (keyword == "absheight") {
             result.absoluteHeight = true;
             continue;

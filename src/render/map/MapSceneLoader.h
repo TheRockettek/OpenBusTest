@@ -235,6 +235,7 @@ class MapSceneLoader {
     [[nodiscard]] std::filesystem::path
     resolveSceneryConfigPath(const std::string& assetPath) const;
     const SceneryObjectConfig* loadSceneryObjectMetadata(const std::string& assetPath);
+    const std::vector<std::string>& loadCarparkVehicleList(int listIndex);
     const std::vector<std::size_t>& loadSceneryAsset(const std::filesystem::path& configPath);
     const openbus::map::MapSplineProfile* cachedSplineProfile(const std::filesystem::path& path);
     void applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
@@ -282,6 +283,7 @@ class MapSceneLoader {
 
     std::unordered_map<std::string, std::vector<std::size_t>> sceneryAssetBatches;
     std::unordered_map<std::string, SceneryObjectConfig> sceneryObjectMetadata;
+    std::unordered_map<int, std::vector<std::string>> carparkVehicleLists_;
     std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
     std::unordered_map<std::string, std::vector<ModelAttachmentPoint>> sceneryAttachmentPoints;
     std::unordered_map<std::string, std::vector<SceneryObjectTrafficPath>> sceneryTrafficPaths;
@@ -310,6 +312,7 @@ class MapSceneLoader {
     std::unordered_set<std::string> editorOnlySceneryAssets;
     std::unordered_set<std::string> absoluteHeightSceneryAssets;
     bool verboseAlphaMaterials = false;
+    double carParkChancePercent_ = 50.0;
 
     std::map<std::string, RoadMeshGeometry> roadVertices;
     std::unordered_map<std::string, openbus::map::MapSplineProfile> splineProfiles;

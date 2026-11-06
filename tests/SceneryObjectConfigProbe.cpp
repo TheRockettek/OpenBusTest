@@ -74,6 +74,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path nonFinitePolePath = directory / "non-finite-pole.sco";
     const std::filesystem::path editorStopPath = directory / "editor-stop.sco";
     const std::filesystem::path editorPassengersPath = directory / "editor-passengers.sco";
+    const std::filesystem::path carParkPath = directory / "car-park.sco";
     const std::filesystem::path missingPassengersPath = directory / "missing-passengers.sco";
     const std::filesystem::path textureAddressPath = directory / "texture-address.sco";
     const std::filesystem::path detailPath = directory / "detail.sco";
@@ -207,6 +208,10 @@ int main(int argc, char** argv) {
                  "[passpos]\n0.5\n-1.4\n0.25\n0\n181\n";
     }
     {
+        std::ofstream output(carParkPath);
+        output << "[onlyeditor]\n[mesh]\nmarker.x\n[carpark_p]\n";
+    }
+    {
         std::ofstream output(missingPassengersPath);
         output << "[onlyeditor]\n[mesh]\npeople.x\n[passengercabin]\nmissing.cfg\n";
     }
@@ -251,6 +256,7 @@ int main(int argc, char** argv) {
         loadSceneryObjectFile(nonFinitePolePath);
     const SceneryObjectConfig editorStop = loadSceneryObjectFile(editorStopPath);
     const SceneryObjectConfig editorPassengers = loadSceneryObjectFile(editorPassengersPath);
+    const SceneryObjectConfig carPark = loadSceneryObjectFile(carParkPath);
     const SceneryObjectConfig missingPassengers = loadSceneryObjectFile(missingPassengersPath);
     const SceneryObjectConfig textureAddressObject = loadSceneryObjectFile(textureAddressPath);
     const SceneryObjectConfig detail = loadSceneryObjectFile(detailPath);
@@ -340,6 +346,8 @@ int main(int argc, char** argv) {
     valid &= require(editorStop.onlyEditor && editorStop.busStop && editorStop.hasBoundingBox &&
                          !editorStop.diagnostics.hasErrors(),
                      "editor bus stop and its bounding box are parsed");
+    valid &= require(carPark.onlyEditor && carPark.carPark && !carPark.diagnostics.hasErrors(),
+                     "editor car-park marker is parsed");
     valid &= require(editorPassengers.onlyEditor && editorPassengers.hasPassengerCabin &&
                          editorPassengers.passengerPositions.size() == 2 &&
                          editorPassengers.passengerPositions[0].position[0] == -0.2 &&

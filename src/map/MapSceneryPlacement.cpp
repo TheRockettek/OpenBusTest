@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
 #include <unordered_set>
 
@@ -288,6 +289,42 @@ std::size_t selectMapSceneryLod(const std::vector<double>& thresholds, double di
         }
     }
     return selected;
+}
+
+namespace {
+
+std::uint64_t mixCarparkSeed(std::uint64_t value) noexcept {
+    value += 0x9E3779B97F4A7C15ULL;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+    return value ^ (value >> 31);
+}
+
+} // namespace
+
+std::optional<std::size_t> selectMapCarparkVehicle(double occupancyPercent,
+                                                   std::size_t candidateCount, int tileX,
+                                                   int tileY, int objectId) noexcept {
+    if (!std::isfinite(occupancyPercent) || occupancyPercent < 0.0 ||
+        occupancyPercent > 100.0 || occupancyPercent == 0.0 || candidateCount == 0) {
+        return std::nullopt;
+    }
+
+    std::uint64_t seed = mixCarparkSeed(static_cast<std::uint32_t>(tileX));
+    seed = mixCarparkSeed(
+        seed ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tileY)) << 32));
+    seed = mixCarparkSeed(seed ^ static_cast<std::uint32_t>(objectId));
+    constexpr std::uint64_t probabilityScale = 1'000'000;
+    const std::uint64_t occupancyRoll = mixCarparkSeed(seed ^ 0xA0761D6478BD642FULL) %
+                                        probabilityScale;
+    const double threshold =
+        occupancyPercent * static_cast<double>(probabilityScale) / 100.0;
+    if (static_cast<double>(occupancyRoll) >= threshold) {
+        return std::nullopt;
+    }
+
+    const std::uint64_t vehicleRoll = mixCarparkSeed(seed ^ 0xE7037ED1A0B428DBULL);
+    return static_cast<std::size_t>(vehicleRoll % candidateCount);
 }
 
 namespace {
