@@ -1,4 +1,5 @@
 #include "map/MapConfigLoader.h"
+#include "map/MapSceneryPlacement.h"
 #include "ProbeTempDirectory.h"
 
 #include <algorithm>
@@ -12,6 +13,8 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -1537,6 +1540,99 @@ void runInstalledMapProbe(const std::filesystem::path& root) {
     }
 }
 
+void runSplineAttachmentAudit(const std::filesystem::path& root) {
+    const openbus::map::MapDefinition definition = openbus::map::loadMapDefinition(root);
+    struct TileContent {
+        openbus::map::MapTileReference reference;
+        openbus::map::MapTileData data;
+    };
+    std::vector<TileContent> tiles;
+    tiles.reserve(definition.tiles.size());
+    std::unordered_map<int, openbus::map::MapSplinePlacementReference> splinesById;
+    std::unordered_set<int> ambiguousSplineIds;
+    for (const openbus::map::MapTileReference& reference : definition.tiles) {
+        TileContent tile{reference, openbus::map::loadMapTile(reference)};
+        for (const openbus::map::MapSplinePlacement& spline : tile.data.splines) {
+            if (spline.splineId == 0 || ambiguousSplineIds.contains(spline.splineId)) {
+                continue;
+            }
+            const auto [existing, inserted] = splinesById.try_emplace(
+                spline.splineId,
+                openbus::map::MapSplinePlacementReference{
+                    spline, reference.x, reference.y, definition.coordinates});
+            if (!inserted) {
+                splinesById.erase(existing);
+                ambiguousSplineIds.insert(spline.splineId);
+            }
+        }
+        tiles.push_back(std::move(tile));
+    }
+
+    const openbus::map::MapSplineChainResolver resolver =
+        [&splinesById](int splineId)
+        -> std::optional<openbus::map::MapSplinePlacementReference> {
+        const auto found = splinesById.find(splineId);
+        return found == splinesById.end()
+                   ? std::nullopt
+                   : std::optional<openbus::map::MapSplinePlacementReference>(found->second);
+    };
+    std::size_t unplacedCount = 0;
+    for (const TileContent& tile : tiles) {
+        for (const openbus::map::MapSplineAttachment& attachment : tile.data.splineAttachments) {
+            const auto poses = openbus::map::placeMapSplineAttachment(
+                attachment, tile.data.splines, tile.reference.x, tile.reference.y, resolver, {},
+                definition.coordinates);
+            if (!poses.empty()) {
+                continue;
+            }
+            ++unplacedCount;
+            std::cout << "unplaced tile=" << tile.reference.x << ',' << tile.reference.y
+                      << " type=" << (attachment.repeater ? "repeater" : "attachment")
+                      << " label=" << attachment.label << " asset=" << attachment.assetPath
+                      << " splineIndex=" << attachment.splineIndex
+                      << " localSplineCount=" << tile.data.splines.size()
+                      << " transformValid=" << attachment.transformValid
+                      << " interval=" << attachment.interval << " range=" << attachment.range
+                      << " offsetDistance=" << attachment.offset[2];
+            if (attachment.repeater) {
+                std::cout << " masterTileIndex=" << attachment.repeaterMasterTileIndex
+                          << " firstObjectIndex=" << attachment.repeaterFirstObjectIndex;
+            }
+            if (attachment.splineIndex >= 0 &&
+                static_cast<std::size_t>(attachment.splineIndex) < tile.data.splines.size()) {
+                const openbus::map::MapSplinePlacement& owner =
+                    tile.data.splines[static_cast<std::size_t>(attachment.splineIndex)];
+                std::cout << " ownerId=" << owner.splineId
+                          << " ownerPreviousId=" << owner.previousSplineId
+                          << " ownerNextId=" << owner.nextSplineId
+                          << " ownerGeometryValid=" << owner.geometryValid
+                          << " ownerLength=" << owner.length
+                          << " ownerChainOffsetValid=" << owner.chainOffsetValid
+                          << " ownerChainOffset=" << owner.chainOffset;
+                if (ambiguousSplineIds.contains(owner.splineId)) {
+                    std::cout << " ownerIdAmbiguous=true";
+                }
+                const auto nextSpline = splinesById.find(owner.nextSplineId);
+                if (owner.nextSplineId != 0) {
+                    if (ambiguousSplineIds.contains(owner.nextSplineId)) {
+                        std::cout << " nextSplineAmbiguous=true";
+                    } else if (nextSpline == splinesById.end()) {
+                        std::cout << " nextSplineMissing=true";
+                    } else {
+                        std::cout << " nextSplinePreviousId="
+                                  << nextSpline->second.placement.previousSplineId
+                                  << " nextSplineNextId="
+                                  << nextSpline->second.placement.nextSplineId
+                                  << " nextSplineLength=" << nextSpline->second.placement.length;
+                    }
+                }
+            }
+            std::cout << '\n';
+        }
+    }
+    std::cout << "unplaced_spline_attachments=" << unplacedCount << '\n';
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1545,8 +1641,11 @@ int main(int argc, char** argv) {
             runFixtureProbe();
         } else if (argc == 2) {
             runInstalledMapProbe(argv[1]);
+        } else if (argc == 3 && std::string(argv[1]) == "--audit-spline-attachments") {
+            runSplineAttachmentAudit(argv[2]);
         } else {
-            std::cerr << "usage: OpenBusMapConfigProbe [map-directory]\n";
+            std::cerr << "usage: OpenBusMapConfigProbe [map-directory] | "
+                         "--audit-spline-attachments map-directory\n";
             return 2;
         }
     } catch (const std::exception& error) {

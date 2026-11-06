@@ -949,10 +949,13 @@ int main() {
             mapDefinition, mapCalendarYear * 10000 + mapCalendarMonth * 100 + mapCalendarDay);
         applicationLog.Log("Active Chrono timetable scenarios: " +
                            std::to_string(chronoTimetableCount));
+        const auto chronoTileCount = openbus::map::applyMapChronoTiles(
+            mapDefinition, mapCalendarYear * 10000 + mapCalendarMonth * 100 + mapCalendarDay);
+        applicationLog.Log("Active Chrono map tile overrides: " +
+                           std::to_string(chronoTileCount));
         int mapAiStartWeekdayIndex = static_cast<int>(
             std::chrono::weekday{std::chrono::sys_days{mapCalendarDate}}.c_encoding());
         double mapAiStartSimulationTime = 0.0;
-        applicationLog.Log("Chrono map tile overrides are disabled; using base map tile files.");
         const std::size_t terrainSidecars = static_cast<std::size_t>(std::count_if(
             mapDefinition.tiles.begin(), mapDefinition.tiles.end(),
             [](const openbus::map::MapTileReference& tile) { return tile.hasTerrainFile; }));

@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -650,6 +651,7 @@ class MapTrafficLaneNetwork {
                bool allowIntermediarySegmentsBetweenRequired = false,
                bool allowReverseTraversalForRequired = false) const;
     std::size_t laneCount(int splineId) const;
+    std::vector<int> splineIdsInTiles(const std::vector<std::pair<int, int>>& tiles) const;
     std::optional<MapPassengerPedestrianJourney>
     passengerJourneyNear(const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition,
                          std::size_t seed, double maximumDistanceMeters = 25.0) const;
@@ -696,6 +698,7 @@ class MapTrafficLaneNetwork {
     std::unordered_map<int, std::vector<std::size_t>> lanesBySpline_;
     std::vector<MapTrafficPose> laneStarts_;
     std::vector<MapTrafficPose> laneEnds_;
+    std::map<std::pair<int, int>, std::set<int>> splineIdsByTile_;
     std::vector<MapTrafficLaneStart> spawnLanes_;
     std::vector<std::size_t> incoming_;
     std::vector<double> maximumCurvatures_;

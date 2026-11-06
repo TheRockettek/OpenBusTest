@@ -1661,6 +1661,266 @@ void applyChronoTileSidecars(
     }
 }
 
+struct MapChronoSelectorEdits {
+    bool deleteTarget = false;
+    std::optional<std::size_t> deleteLine;
+    std::optional<std::string> assetPath;
+    std::optional<std::vector<std::string>> labels;
+    std::vector<MapTileRule> rules;
+};
+
+MapChronoSelectorEdits parseMapChronoSelectorEdits(
+    const MapChronoSelector& selector, const std::filesystem::path& path,
+    ConfigurationDiagnostics& diagnostics) {
+    MapChronoSelectorEdits edits;
+    const auto warn = [&](std::size_t line, const std::string& keyword,
+                          const std::string& message) {
+        openbus::config::logUnhandledConfigurationTag("Chrono map tile", path, line, keyword,
+                                                       message);
+        diagnostics.warning(line, keyword, message);
+    };
+    for (std::size_t index = 0; index < selector.followingLines.size(); ++index) {
+        const std::string section = trim(selector.followingLines[index]);
+        const std::size_t line = selector.idLine + index + 1;
+        if (section.empty()) {
+            continue;
+        }
+        if (section == "[delete]") {
+            edits.deleteTarget = true;
+            edits.deleteLine = line;
+        } else if (section == "[typ]" || section == "[relabel]" ||
+                   section == "[rule]" || section == "[kill_rule]") {
+            std::size_t valueIndex = index + 1;
+            while (valueIndex < selector.followingLines.size() &&
+                   trim(selector.followingLines[valueIndex]).empty()) {
+                ++valueIndex;
+            }
+            if (valueIndex >= selector.followingLines.size() ||
+                isSectionHeaderLine(trim(selector.followingLines[valueIndex]))) {
+                warn(line, section.substr(1, section.size() - 2),
+                     "Chrono selector operation is missing its value");
+                continue;
+            }
+            if (section == "[typ]") {
+                const std::string assetPath = trim(selector.followingLines[valueIndex]);
+                if (assetPath.empty()) {
+                    warn(line, "typ", "Chrono object type path is empty");
+                } else {
+                    edits.assetPath = assetPath;
+                }
+            } else {
+                if (section == "[rule]" || section == "[kill_rule]") {
+                    if (selector.followingLines.size() - valueIndex < 4) {
+                        warn(line, section.substr(1, section.size() - 2),
+                             "Chrono rule is missing one or more of its four fields");
+                        continue;
+                    }
+                    MapTileRule rule;
+                    rule.kill = section == "[kill_rule]";
+                    bool valid = true;
+                    for (std::size_t fieldIndex = 0; fieldIndex < rule.fields.size();
+                         ++fieldIndex) {
+                        const std::string& field =
+                            selector.followingLines[valueIndex + fieldIndex];
+                        if (isSectionHeaderLine(trim(field))) {
+                            warn(line, section.substr(1, section.size() - 2),
+                                 "Chrono rule is truncated before its four fields");
+                            valid = false;
+                            break;
+                        }
+                        rule.fields[fieldIndex] = field;
+                    }
+                    if (valid) {
+                        if (selector.keyword == "selspline") {
+                            edits.rules.push_back(std::move(rule));
+                        } else {
+                            warn(line, section.substr(1, section.size() - 2),
+                                 "Chrono object selector rule edits are not implemented");
+                        }
+                        index = valueIndex + 3;
+                    }
+                    continue;
+                }
+                std::size_t labelCount = 0;
+                const std::string countText = trim(selector.followingLines[valueIndex]);
+                if (!parseSize(countText, labelCount) || labelCount > 4096 ||
+                    labelCount > selector.followingLines.size() - valueIndex - 1) {
+                    warn(line, "relabel", "Chrono relabel count is invalid or truncated");
+                    index = valueIndex;
+                    continue;
+                }
+                std::vector<std::string> labels;
+                labels.reserve(labelCount);
+                for (std::size_t labelIndex = 0; labelIndex < labelCount; ++labelIndex) {
+                    labels.push_back(selector.followingLines[valueIndex + 1 + labelIndex]);
+                }
+                edits.labels = std::move(labels);
+                index = valueIndex + labelCount;
+                continue;
+            }
+            index = valueIndex;
+        } else if (isSectionHeaderLine(section)) {
+            warn(line, section.substr(1, section.size() - 2),
+                 "Chrono selector operation is not implemented");
+        }
+    }
+    return edits;
+}
+
+void applyMapChronoSelector(MapTileData& tile, const MapChronoSelector& selector,
+                            const std::filesystem::path& path) {
+    if (selector.keyword != "selobject" && selector.keyword != "selspline") {
+        const std::string message = "Chrono selector operations are not implemented";
+        openbus::config::logUnhandledConfigurationTag("Chrono map tile", path,
+                                                       selector.sectionLine, selector.keyword,
+                                                       message);
+        tile.diagnostics.warning(selector.sectionLine, selector.keyword, message);
+        return;
+    }
+    if (!selector.id.has_value()) {
+        return;
+    }
+
+    const MapChronoSelectorEdits edits =
+        parseMapChronoSelectorEdits(selector, path, tile.diagnostics);
+    const int id = *selector.id;
+    if (selector.keyword == "selspline") {
+        const auto matches = [id](const MapSplinePlacement& spline) {
+            return spline.splineId == id;
+        };
+        const auto match = std::find_if(tile.splines.begin(), tile.splines.end(), matches);
+        const std::size_t matchCount =
+            static_cast<std::size_t>(std::count_if(tile.splines.begin(), tile.splines.end(),
+                                                   matches));
+        if (matchCount != 1) {
+            tile.diagnostics.warning(
+                selector.sectionLine, selector.keyword,
+                matchCount == 0 ? "selector ID did not match a tile spline"
+                                : "selector ID matched multiple tile splines");
+            return;
+        }
+        if (edits.deleteTarget) {
+            const std::size_t splineIndex =
+                static_cast<std::size_t>(std::distance(tile.splines.begin(), match));
+            const bool hasLinkReferences =
+                match->previousSplineId != 0 || match->nextSplineId != 0 ||
+                std::any_of(tile.splines.begin(), tile.splines.end(),
+                            [id](const MapSplinePlacement& spline) {
+                                return spline.splineId != id &&
+                                       (spline.previousSplineId == id ||
+                                        spline.nextSplineId == id);
+                            });
+            const bool hasAttachments =
+                std::any_of(tile.splineAttachments.begin(), tile.splineAttachments.end(),
+                            [splineIndex](const MapSplineAttachment& attachment) {
+                                return attachment.splineIndex >= 0 &&
+                                       static_cast<std::size_t>(attachment.splineIndex) ==
+                                           splineIndex;
+                            });
+            if (hasLinkReferences || hasAttachments) {
+                const std::size_t line = edits.deleteLine.value_or(selector.sectionLine);
+                const std::string message =
+                    "Chrono spline deletion is not applied because the spline has link "
+                    "references or attached placements";
+                openbus::config::logUnhandledConfigurationTag("Chrono map tile", path, line,
+                                                               "delete", message);
+                tile.diagnostics.warning(line, "delete", message);
+            } else {
+                tile.splines.erase(match);
+                for (MapSplineAttachment& attachment : tile.splineAttachments) {
+                    if (attachment.splineIndex >= 0 &&
+                        static_cast<std::size_t>(attachment.splineIndex) > splineIndex) {
+                        --attachment.splineIndex;
+                    }
+                }
+                return;
+            }
+        }
+        if (edits.labels.has_value()) {
+            tile.diagnostics.warning(selector.sectionLine, "relabel",
+                                     "Chrono spline relabeling is not implemented");
+        }
+        if (!edits.assetPath.has_value() && edits.rules.empty()) {
+            if (!edits.deleteTarget && !edits.labels.has_value()) {
+                tile.diagnostics.warning(selector.sectionLine, selector.keyword,
+                                         "selector has no supported spline override");
+            }
+            return;
+        }
+        if (edits.assetPath.has_value()) {
+            match->assetPath = *edits.assetPath;
+        }
+        match->rules.insert(match->rules.end(), edits.rules.begin(), edits.rules.end());
+        return;
+    }
+
+    const auto matches = [id](const auto& placement) { return placement.id == id; };
+    const std::size_t matchCount =
+        static_cast<std::size_t>(std::count_if(tile.sceneryObjects.begin(),
+                                               tile.sceneryObjects.end(), matches)) +
+        static_cast<std::size_t>(std::count_if(tile.attachedObjects.begin(),
+                                               tile.attachedObjects.end(), matches)) +
+        static_cast<std::size_t>(std::count_if(tile.splineAttachments.begin(),
+                                               tile.splineAttachments.end(), matches));
+    if (matchCount != 1) {
+        tile.diagnostics.warning(
+            selector.sectionLine, selector.keyword,
+            matchCount == 0 ? "selector ID did not match a base tile object"
+                            : "selector ID matched multiple base tile objects");
+        return;
+    }
+    if (!edits.deleteTarget && !edits.assetPath.has_value() && !edits.labels.has_value() &&
+        edits.rules.empty()) {
+        tile.diagnostics.warning(selector.sectionLine, selector.keyword,
+                                 "selector has no supported object override");
+        return;
+    }
+    if (edits.deleteTarget) {
+        std::erase_if(tile.sceneryObjects, matches);
+        std::erase_if(tile.attachedObjects, matches);
+        std::erase_if(tile.splineAttachments, matches);
+        return;
+    }
+    for (MapSceneryPlacement& object : tile.sceneryObjects) {
+        if (!matches(object)) {
+            continue;
+        }
+        if (edits.assetPath.has_value()) {
+            object.assetPath = *edits.assetPath;
+        }
+        if (edits.labels.has_value()) {
+            object.labels = *edits.labels;
+            object.trailingField = std::to_string(object.labels.size());
+        }
+        object.rules.insert(object.rules.end(), edits.rules.begin(), edits.rules.end());
+    }
+    for (MapAttachedObject& object : tile.attachedObjects) {
+        if (!matches(object)) {
+            continue;
+        }
+        if (edits.assetPath.has_value()) {
+            object.assetPath = *edits.assetPath;
+        }
+        if (edits.labels.has_value()) {
+            object.labels = *edits.labels;
+            object.labelCount = std::to_string(object.labels.size());
+        }
+        object.rules.insert(object.rules.end(), edits.rules.begin(), edits.rules.end());
+    }
+    for (MapSplineAttachment& attachment : tile.splineAttachments) {
+        if (!matches(attachment)) {
+            continue;
+        }
+        if (edits.assetPath.has_value()) {
+            attachment.assetPath = *edits.assetPath;
+        }
+        if (edits.labels.has_value()) {
+            attachment.labels = *edits.labels;
+        }
+        attachment.rules.insert(attachment.rules.end(), edits.rules.begin(), edits.rules.end());
+    }
+}
+
 } // namespace
 
 std::size_t applyMapChronoTimetables(MapDefinition& map, int dateYyyyMmDd) {
@@ -1703,6 +1963,22 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
     const std::filesystem::path chronoRoot = map.rootPath / "Chrono";
     const auto configPaths = mapChronoConfigPaths(chronoRoot);
 
+    for (MapTileReference& tile : map.tiles) {
+        if (!tile.chronoBaseAssets.has_value()) {
+            continue;
+        }
+        const MapChronoBaseAssets& base = *tile.chronoBaseAssets;
+        tile.textPath = base.textPath;
+        tile.terrainPath = base.terrainPath;
+        tile.hasTerrainFile = base.hasTerrainFile;
+        tile.waterPath = base.waterPath;
+        tile.hasWaterFile = base.hasWaterFile;
+        tile.lightmapPath = base.lightmapPath;
+        tile.hasLightmapFile = base.hasLightmapFile;
+        tile.groundTextureSidecars = base.groundTextureSidecars;
+        tile.chronoOverlayPaths.clear();
+    }
+
     std::unordered_map<std::string, std::size_t> tileIndexByFilename;
     for (std::size_t index = 0; index < map.tiles.size(); ++index) {
         tileIndexByFilename.emplace(lowerAscii(pathToUtf8(map.tiles[index].textPath.filename())),
@@ -1733,6 +2009,13 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
                 continue;
             }
             MapTileReference& tile = map.tiles[tileIndex->second];
+            if (!tile.chronoBaseAssets.has_value()) {
+                tile.chronoBaseAssets = MapChronoBaseAssets{
+                    tile.textPath,          tile.terrainPath, tile.hasTerrainFile,
+                    tile.waterPath,         tile.hasWaterFile, tile.lightmapPath,
+                    tile.hasLightmapFile,   tile.groundTextureSidecars};
+            }
+            tile.chronoOverlayPaths.push_back(tileIterator->path());
             tile.textPath = tileIterator->path();
             applyChronoTileSidecars(tile, tile.textPath, scenarioSidecars);
             ++appliedTileCount;
@@ -3033,26 +3316,6 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
     std::size_t modifierTargetIndex = 0;
     for (std::size_t cursor = 0; cursor < lines.size(); ++cursor) {
         const std::string section = trim(lines[cursor]);
-        if (chronoData != nullptr && section == "[object]") {
-            // Chrono object payloads can contain selector-looking text; preserve the complete
-            // source in rawLines, but do not reinterpret that tail as the selector inventory.
-            openbus::config::logUnhandledConfigurationTag(
-                "Chrono map tile", tile.textPath, cursor + 1, "object",
-                "object inventory is retained as raw data and not interpreted");
-            break;
-        }
-        if (chronoData != nullptr && section != "[version]" && section != "[selobject]" &&
-            section != "[selspline]") {
-            // Chrono tile data is retained verbatim. Only its selector records are typed here;
-            // normal tile records and selector override keywords have separate semantics.
-            if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
-                openbus::config::logUnhandledConfigurationTag(
-                    "Chrono map tile", tile.textPath, cursor + 1,
-                    section.substr(1, section.size() - 2),
-                    "section retained as raw Chrono data; runtime behavior is not implemented");
-            }
-            continue;
-        }
         const bool isModifier = section == "[varparent]" || section == "[spline_terrain_align]" ||
                                 section == "[spline_terrain_align_2]" || section == "[rule]" ||
                                 section == "[kill_rule]";
@@ -3536,7 +3799,104 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
 }
 
 MapTileData loadMapTile(const MapTileReference& tile) {
-    return loadMapTileInternal(tile, nullptr);
+    if (!tile.chronoBaseAssets.has_value()) {
+        return loadMapTileInternal(tile, nullptr);
+    }
+
+    std::vector<std::filesystem::path> overlayPaths = tile.chronoOverlayPaths;
+    if (overlayPaths.empty() && tile.textPath != tile.chronoBaseAssets->textPath) {
+        overlayPaths.push_back(tile.textPath);
+    }
+    if (overlayPaths.empty()) {
+        return loadMapTileInternal(tile, nullptr);
+    }
+
+    MapTileReference baseReference = tile;
+    baseReference.textPath = tile.chronoBaseAssets->textPath;
+    baseReference.chronoBaseAssets.reset();
+    baseReference.chronoOverlayPaths.clear();
+    MapTileData baseData = loadMapTileInternal(baseReference, nullptr);
+
+    for (const std::filesystem::path& overlayPath : overlayPaths) {
+        MapTileReference overlayReference = tile;
+        overlayReference.textPath = overlayPath;
+        overlayReference.chronoBaseAssets.reset();
+        overlayReference.chronoOverlayPaths.clear();
+        MapChronoTileData chronoData;
+        MapTileData overlayData = loadMapTileInternal(overlayReference, &chronoData);
+        for (const MapSplinePlacement& spline : overlayData.splines) {
+            const auto existing = std::find_if(
+                baseData.splines.begin(), baseData.splines.end(),
+                [&](const MapSplinePlacement& candidate) {
+                    return candidate.splineId == spline.splineId;
+                });
+            if (existing == baseData.splines.end()) {
+                baseData.splines.push_back(spline);
+            } else {
+                *existing = spline;
+            }
+        }
+        for (const MapSceneryPlacement& object : overlayData.sceneryObjects) {
+            const auto matches = [&](const auto& candidate) { return candidate.id == object.id; };
+            std::erase_if(baseData.attachedObjects, matches);
+            std::erase_if(baseData.splineAttachments, matches);
+            const auto existing = std::find_if(baseData.sceneryObjects.begin(),
+                                                baseData.sceneryObjects.end(), matches);
+            if (existing == baseData.sceneryObjects.end()) {
+                baseData.sceneryObjects.push_back(object);
+            } else {
+                *existing = object;
+            }
+        }
+        for (const MapAttachedObject& object : overlayData.attachedObjects) {
+            const auto matches = [&](const auto& candidate) { return candidate.id == object.id; };
+            std::erase_if(baseData.sceneryObjects, matches);
+            std::erase_if(baseData.splineAttachments, matches);
+            const auto existing = std::find_if(baseData.attachedObjects.begin(),
+                                                baseData.attachedObjects.end(), matches);
+            if (existing == baseData.attachedObjects.end()) {
+                baseData.attachedObjects.push_back(object);
+            } else {
+                *existing = object;
+            }
+        }
+        for (const MapSplineAttachment& attachment : overlayData.splineAttachments) {
+            const auto matches = [&](const auto& candidate) {
+                return candidate.id == attachment.id;
+            };
+            std::erase_if(baseData.sceneryObjects, matches);
+            std::erase_if(baseData.attachedObjects, matches);
+            const auto existing = std::find_if(baseData.splineAttachments.begin(),
+                                                baseData.splineAttachments.end(), matches);
+            if (existing == baseData.splineAttachments.end()) {
+                baseData.splineAttachments.push_back(attachment);
+            } else {
+                *existing = attachment;
+            }
+        }
+        for (const MapChronoSelector& selector : chronoData.selectors) {
+            applyMapChronoSelector(baseData, selector, overlayPath);
+        }
+
+        baseData.unsupportedSections.insert(baseData.unsupportedSections.end(),
+                                            overlayData.unsupportedSections.begin(),
+                                            overlayData.unsupportedSections.end());
+        baseData.diagnostics.entries.insert(baseData.diagnostics.entries.end(),
+                                            overlayData.diagnostics.entries.begin(),
+                                            overlayData.diagnostics.entries.end());
+    }
+    baseData.splineCount = static_cast<std::size_t>(std::count_if(
+        baseData.splines.begin(), baseData.splines.end(),
+        [](const MapSplinePlacement& spline) { return !spline.elevated; }));
+    baseData.elevatedSplineCount = baseData.splines.size() - baseData.splineCount;
+    baseData.objectCount = baseData.sceneryObjects.size();
+    baseData.splineAttachmentCount = static_cast<std::size_t>(std::count_if(
+        baseData.splineAttachments.begin(), baseData.splineAttachments.end(),
+        [](const MapSplineAttachment& attachment) { return !attachment.repeater; }));
+    baseData.splineRepeaterCount =
+        baseData.splineAttachments.size() - baseData.splineAttachmentCount;
+    baseData.reference = tile;
+    return baseData;
 }
 
 MapChronoTileData loadChronoTile(const std::filesystem::path& chronoTilePath) {

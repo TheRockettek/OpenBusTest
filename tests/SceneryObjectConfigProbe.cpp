@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path editorStopPath = directory / "editor-stop.sco";
     const std::filesystem::path editorPassengersPath = directory / "editor-passengers.sco";
     const std::filesystem::path carParkPath = directory / "car-park.sco";
+    const std::filesystem::path entryPointPath = directory / "entry-point.sco";
     const std::filesystem::path missingPassengersPath = directory / "missing-passengers.sco";
     const std::filesystem::path textureAddressPath = directory / "texture-address.sco";
     const std::filesystem::path detailPath = directory / "detail.sco";
@@ -212,6 +213,10 @@ int main(int argc, char** argv) {
         output << "[onlyeditor]\n[mesh]\nmarker.x\n[carpark_p]\n";
     }
     {
+        std::ofstream output(entryPointPath);
+        output << "[onlyeditor]\n[mesh]\nmarker.x\n[entrypoint]\n";
+    }
+    {
         std::ofstream output(missingPassengersPath);
         output << "[onlyeditor]\n[mesh]\npeople.x\n[passengercabin]\nmissing.cfg\n";
     }
@@ -257,6 +262,7 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig editorStop = loadSceneryObjectFile(editorStopPath);
     const SceneryObjectConfig editorPassengers = loadSceneryObjectFile(editorPassengersPath);
     const SceneryObjectConfig carPark = loadSceneryObjectFile(carParkPath);
+    const SceneryObjectConfig entryPoint = loadSceneryObjectFile(entryPointPath);
     const SceneryObjectConfig missingPassengers = loadSceneryObjectFile(missingPassengersPath);
     const SceneryObjectConfig textureAddressObject = loadSceneryObjectFile(textureAddressPath);
     const SceneryObjectConfig detail = loadSceneryObjectFile(detailPath);
@@ -348,6 +354,9 @@ int main(int argc, char** argv) {
                      "editor bus stop and its bounding box are parsed");
     valid &= require(carPark.onlyEditor && carPark.carPark && !carPark.diagnostics.hasErrors(),
                      "editor car-park marker is parsed");
+    valid &= require(entryPoint.onlyEditor && entryPoint.entryPoint &&
+                         !entryPoint.diagnostics.hasErrors(),
+                     "editor entrypoint marker is parsed");
     valid &= require(editorPassengers.onlyEditor && editorPassengers.hasPassengerCabin &&
                          editorPassengers.passengerPositions.size() == 2 &&
                          editorPassengers.passengerPositions[0].position[0] == -0.2 &&

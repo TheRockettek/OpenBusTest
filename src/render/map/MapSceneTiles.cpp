@@ -41,6 +41,7 @@ void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
             segment.spline.tileY = tileY;
             segment.spline.coordinates = map.coordinates;
             segment.spline.placement.splineId = objectId;
+            segment.sceneryPathIndex = path.pathIndex;
             segment.pathRules = openbus::map::mapTrafficRulesForPath(rules, path.pathIndex);
             if (path.trafficSignal) {
                 segment.trafficSignal = path.trafficSignal;
@@ -52,7 +53,6 @@ void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
                 }
             }
             if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
-                segment.sceneryPathIndex = path.pathIndex;
                 const auto water =
                     indexedTrafficWaterByTile.find(tileKey(tileX, tileY));
                 if (water != indexedTrafficWaterByTile.end() &&
@@ -598,9 +598,20 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
                     openbus::map::MapTrafficRouteSegment lane;
                     lane.points = segment.points;
+                    lane.spline.tileX = tileX;
+                    lane.spline.tileY = tileY;
+                    lane.spline.coordinates = map.coordinates;
+                    if (mapObjectId.has_value()) {
+                        lane.spline.placement.splineId = *mapObjectId;
+                        lane.sceneryPathIndex = path.pathIndex;
+                    }
                     lane.pathWidthMeters =
                         std::isfinite(path.widthMeters) ? std::max(1.0, path.widthMeters) : 1.0;
                     lane.trafficSignal = pathSignal;
+                    if (placementRules != nullptr) {
+                        lane.pathRules =
+                            openbus::map::mapTrafficRulesForPath(*placementRules, path.pathIndex);
+                    }
                     const auto indexedPaths =
                         mapObjectId ? mapWideHumanSceneryPathIndexes.find(*mapObjectId)
                                     : mapWideHumanSceneryPathIndexes.end();

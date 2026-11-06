@@ -3881,11 +3881,16 @@ void RenderLoop::captureViews(const BusSimulation& simulation, const World& worl
     };
     const int driverCameraView =
         reflectionReferenceCamera_ >= 0 ? reflectionReferenceCamera_ + 1 : 1;
-    const std::array<CaptureView, 5> views = {{{"dashboard", driverCameraView, 0.0, 0.0, 0.0},
-                                               {"three-quarter", 0, 0.55, 0.45, 11.0},
-                                               {"front", 0, 0.0, 0.45, 10.5},
-                                               {"left", 0, 1.5707963267948966, 0.45, 10.5},
-                                               {"right", 0, -1.5707963267948966, 0.45, 10.5}}};
+    std::vector<CaptureView> views = {{"dashboard", driverCameraView, 0.0, 0.0, 0.0},
+                                      {"three-quarter", 0, 0.55, 0.45, 11.0},
+                                      {"front", 0, 0.0, 0.45, 10.5},
+                                      {"left", 0, 1.5707963267948966, 0.45, 10.5},
+                                      {"right", 0, -1.5707963267948966, 0.45, 10.5}};
+    if (const auto panelZoomCamera =
+            vehicleCameraArrayIndexForDriverView(vehicleCameras_, 7)) {
+        views.push_back({"driver-view-7", static_cast<int>(*panelZoomCamera) + 1, 0.0, 0.0,
+                         0.0});
+    }
     for (const CaptureView& view : views) {
         TraceScope viewTrace("capture", "RenderLoop::captureViews.view");
         cameraView_ = view.cameraView;

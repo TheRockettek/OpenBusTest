@@ -376,6 +376,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.carPark = true;
             continue;
         }
+        if (keyword == "entrypoint") {
+            result.entryPoint = true;
+            continue;
+        }
         if (keyword == "absheight") {
             result.absoluteHeight = true;
             continue;

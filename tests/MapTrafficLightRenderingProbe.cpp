@@ -1,6 +1,8 @@
 #include "ProbeTempDirectory.h"
+#include "assets/ScreenshotWriter.h"
 #include "core/Logger.h"
 #include "core/Variables.h"
+#include "map/MapSplineGeometry.h"
 #include "map/MapTrafficRuntime.h"
 #include "map/MapTileWindow.h"
 #include "render/AssetRequestManager.h"
@@ -12,6 +14,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <charconv>
@@ -21,7 +24,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <numbers>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -161,6 +167,66 @@ std::string splineTileText(int splineId) {
            "\n0\n0\n10\n0\n20\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n";
 }
 
+std::string screenshotSplineRecord(int splineId, int previousSplineId, int nextSplineId,
+                                   double localX, double localY, double headingDegrees,
+                                   double length, double radius, double chainOffset) {
+    std::ostringstream record;
+    record << std::setprecision(17) << "[spline]\n0\nSplines/Test.sli\n" << splineId << '\n'
+           << previousSplineId << '\n' << nextSplineId << '\n' << localX << "\n1\n" << localY
+           << '\n' << headingDegrees << '\n' << length << '\n' << radius
+           << "\n0\n0\n0\n0\n0\n0\n" << chainOffset << '\n';
+    return record.str();
+}
+
+void writeRoadScreenshotTexture(const std::filesystem::path& path) {
+    constexpr std::size_t width = 64;
+    constexpr std::size_t height = 64;
+    std::vector<std::uint8_t> image(18 + width * height * 3);
+    image[2] = 2;
+    image[12] = static_cast<std::uint8_t>(width);
+    image[14] = static_cast<std::uint8_t>(height);
+    image[16] = 24;
+    for (std::size_t y = 0; y < height; ++y) {
+        for (std::size_t x = 0; x < width; ++x) {
+            std::array<std::uint8_t, 3> color = {42, 44, 47};
+            if (x < 12 || x >= 52) {
+                const std::uint8_t stone = static_cast<std::uint8_t>(112 + (x + y) % 12);
+                color = {stone, stone, stone};
+            } else if (x < 15 || x >= 49) {
+                color = {82, 88, 92};
+            }
+            const bool dash = y % 64 < 34;
+            if (dash && x >= 31 && x <= 33) {
+                color = {232, 232, 220};
+            } else if (dash && x >= 41 && x <= 42) {
+                color = {232, 184, 32};
+            }
+            const std::size_t offset = 18 + (y * width + x) * 3;
+            image[offset] = color[2];
+            image[offset + 1] = color[1];
+            image[offset + 2] = color[0];
+        }
+    }
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(image.data()),
+                 static_cast<std::streamsize>(image.size()));
+    check(static_cast<bool>(output), "Could not write road screenshot texture");
+}
+
+void writeRoadScreenshotGround(const std::filesystem::path& path) {
+    std::array<std::uint8_t, 21> image = {};
+    image[2] = 2;
+    image[12] = image[14] = 1;
+    image[16] = 24;
+    image[18] = 58;
+    image[19] = 100;
+    image[20] = 58;
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(image.data()),
+                 static_cast<std::streamsize>(image.size()));
+    check(static_cast<bool>(output), "Could not write road screenshot ground texture");
+}
+
 void writeLamp(const std::filesystem::path& path, const std::string& color) {
     writeText(path, "xof 0303txt 0032\n"
                     "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
@@ -168,7 +234,7 @@ void writeLamp(const std::filesystem::path& path, const std::string& color) {
                         color + ";1;; 0; 0;0;0;; 1;1;1;; } } }\n");
 }
 
-void runProbe(const std::filesystem::path& root, bool conditional) {
+void runProbe(const std::filesystem::path& root, bool conditional, bool attachmentPathOnly) {
     std::filesystem::create_directories(root / "model");
     std::filesystem::create_directories(root / "Splines");
     std::filesystem::create_directories(root / "Texture");
@@ -201,6 +267,10 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               "[visible]\nmain_green\n1\n");
     writeText(root / "support.sco",
               "[new_attachment]\nhead_mount\nattach_trans\n0\n0\n0\n");
+    writeText(root / "route_attachment.sco",
+              "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n0\n3\n0\n0\n");
+    writeText(root / "human_path_attachment.sco",
+              "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n1\n3\n0\n0\n");
     writeText(root / "Script" / "traf_car_varlist.txt",
               "main_Red\nmain_Yellow\nmain_Green\nsupp_Green\nTime_last\n");
     writeText(root / "Script" / "traf_car.osc",
@@ -263,6 +333,12 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
                   splineTileText(tileX + 2) +
                       (tileX == 4 ? "[splineAttachement]\n0\nshared.sco\n204\n0\n0\n0\n0\n0\n0\n"
                                     "0\n0\n0\n0\n0\n"
+                                    "[splineAttachement]\n0\nroute_attachment.sco\n206\n"
+                                    "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[splineAttachement]\n0\nhuman_path_attachment.sco\n207\n"
+                                    "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[object]\n0\nhuman_path_attachment.sco\n209\n"
+                                    "0\n0\n10\n0\n0\n0\n0\n0\n0\n"
                                   : "[object]\n0\nshared.sco\n" + std::to_string(200 + tileX) +
                                         "\n0\n0\n0\n0\n0\n0\n0\n[object]\n0\nretry.sco\n250\n"
                                         "0\n0\n0\n0\n0\n0\n0\n") +
@@ -308,16 +384,47 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
             renderer.renderStats().totalTextures == 4,
         "Initial road, water, and asynchronously decoded ground-layer textures must be published");
     const auto& paths = renderer.sceneryTrafficPathSegments();
-    check(    paths.size() == 2 && paths.front().trafficSignal.has_value() &&
-              paths.front().pathIndex == 0 && paths.front().widthMeters == 3.0 &&
-              paths.front().trafficSignal->lightIndex == 0 &&
-              paths.front().trafficSignal->program != nullptr &&
-              paths.front().trafficSignal->program->controlPoints.size() ==
+    const std::pair<int, int> distantAttachmentTile{4, 0};
+    const auto& activeTiles = renderer.activeTileCoordinates();
+    check(std::find(activeTiles.begin(), activeTiles.end(), distantAttachmentTile) ==
+              activeTiles.end(),
+          "The attachment path fixture tile must not be in the initial active window");
+    const auto unreferencedAttachmentRoute = renderer.buildDrivingRoute(206);
+    check(unreferencedAttachmentRoute.has_value() &&
+              !unreferencedAttachmentRoute->segments.empty() &&
+              unreferencedAttachmentRoute->segments.front().spline.placement.splineId == 206 &&
+              unreferencedAttachmentRoute->segments.front().sceneryPathIndex == 0,
+          "Map-wide indexing must add an unreferenced attachment's road lane");
+    const auto unreferencedHumanJourney =
+        renderer.passengerPedestrianJourneyNear({1200.0, 0.0, 20.0}, 0);
+    check(unreferencedHumanJourney.has_value() &&
+              !unreferencedHumanJourney->route->segments.empty() &&
+              unreferencedHumanJourney->route->segments.front().spline.placement.splineId == 209 &&
+              unreferencedHumanJourney->route->segments.front().spline.tileX == 4 &&
+              unreferencedHumanJourney->route->segments.front().spline.tileY == 0 &&
+              unreferencedHumanJourney->route->segments.front().sceneryPathIndex == 0,
+          "Map-wide SCO-only human paths must be eligible journey starts and retain their source identity");
+    if (attachmentPathOnly) {
+        return;
+    }
+    const auto controllerPath = std::find_if(paths.begin(), paths.end(), [](const auto& path) {
+        return path.mapObjectId == 15340 && path.pathIndex == 0;
+    });
+    const auto otherControllerPath =
+        std::find_if(paths.begin(), paths.end(), [](const auto& path) {
+            return path.mapObjectId == 15340 && path.pathIndex == 1;
+        });
+    check(controllerPath != paths.end() && otherControllerPath != paths.end() &&
+              controllerPath->trafficSignal.has_value() &&
+              controllerPath->pathIndex == 0 && controllerPath->widthMeters == 3.0 &&
+              controllerPath->trafficSignal->lightIndex == 0 &&
+              controllerPath->trafficSignal->program != nullptr &&
+              controllerPath->trafficSignal->program->controlPoints.size() ==
                   (conditional ? 3U : 1U) &&
-              paths.front().pathRules.groups.size() == 1 &&
-              paths.front().pathRules.groups.front().priority == 192.0 &&
-              paths.back().trafficSignal.has_value() &&
-              paths.back().trafficSignal->lightIndex == 1,
+              controllerPath->pathRules.groups.size() == 1 &&
+              controllerPath->pathRules.groups.front().priority == 192.0 &&
+              otherControllerPath->trafficSignal.has_value() &&
+              otherControllerPath->trafficSignal->lightIndex == 1,
           "SCO F2 path must retain its map traffic rule and controller/stopline data");
     const auto aiRoute = renderer.buildDrivingRoute(15340);
     check(aiRoute.has_value() && !aiRoute->segments.empty() &&
@@ -672,11 +779,131 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
           "Human lane graph finalization must be dispatched to a worker thread");
 }
 
+void runMapRoadScreenshot(const std::filesystem::path& root,
+                          const std::filesystem::path& outputPath, int width, int height) {
+    std::filesystem::create_directories(root / "Splines");
+    std::filesystem::create_directories(root / "Texture");
+    writeRoadScreenshotTexture(root / "Texture" / "road.tga");
+    writeRoadScreenshotGround(root / "ground.tga");
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nroad.tga\n[profile]\n0\n"
+              "[profilepnt]\n-4\n0.16\n0\n0.2\n"
+              "[profilepnt]\n-2.75\n0.16\n0.16\n0.2\n"
+              "[profilepnt]\n-2.5\n0\n0.2\n0.2\n"
+              "[profilepnt]\n2.5\n0\n0.8\n0.2\n"
+              "[profilepnt]\n2.75\n0.16\n0.84\n0.2\n"
+              "[profilepnt]\n4\n0.16\n1\n0.2\n");
+
+    constexpr double splineLength = 24.0;
+    constexpr double splineRadius = 40.0;
+    const auto originSamples =
+        openbus::map::tessellateMapSpline(0.0, 0.0, 0.0, splineLength, splineRadius);
+    check(originSamples.size() >= 2, "Screenshot curve fixture must tessellate");
+    const auto& originEnd = originSamples.back();
+    const double firstStartX = -originEnd.x;
+    const double firstStartY = 300.0 - originEnd.y;
+    const auto firstSamples = openbus::map::tessellateMapSpline(
+        firstStartX, firstStartY, 0.0, splineLength, splineRadius);
+    const auto& firstEnd = firstSamples.back();
+    const double secondHeading = firstEnd.headingRadians * 180.0 / std::numbers::pi;
+
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"ground.tga", "", {}});
+    openbus::map::MapTileReference southTile;
+    southTile.textPath = root / "tile_0_0.map";
+    southTile.terrainPath = root / "tile_0_0.terrain";
+    southTile.hasTerrainFile = true;
+    writeTinyTerrain(southTile.terrainPath);
+    writeText(southTile.textPath,
+              "[version]\n14\n[terrain]\n" +
+                  screenshotSplineRecord(1, 0, 2, firstStartX, firstStartY, 0.0,
+                                         splineLength, splineRadius, 0.0));
+    map.tiles.push_back(southTile);
+    openbus::map::MapTileReference northTile;
+    northTile.y = 1;
+    northTile.textPath = root / "tile_0_1.map";
+    northTile.terrainPath = root / "tile_0_1.terrain";
+    northTile.hasTerrainFile = true;
+    writeTinyTerrain(northTile.terrainPath);
+    writeText(northTile.textPath,
+              "[version]\n14\n[terrain]\n" +
+                  screenshotSplineRecord(2, 1, 0, 0.0, 0.0, secondHeading,
+                                         splineLength, splineRadius, splineLength));
+    map.tiles.push_back(northTile);
+
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.initialWindowReady() && renderer.renderStats().totalRoadBatches >= 2,
+          "Screenshot fixture must publish both linked road segments");
+    const auto& activeTiles = renderer.activeTileCoordinates();
+    check(std::find(activeTiles.begin(), activeTiles.end(), std::pair{0, 1}) != activeTiles.end(),
+          "Screenshot fixture must include the linked segment across the tile boundary");
+
+    const auto secondSamples = openbus::map::tessellateMapSpline(
+        0.0, 300.0, secondHeading, splineLength, splineRadius);
+    double minX = firstSamples.front().x;
+    double maxX = minX;
+    double minY = firstSamples.front().y;
+    double maxY = minY;
+    const auto includeSamples = [&](const auto& samples) {
+        for (const auto& sample : samples) {
+            minX = std::min(minX, sample.x);
+            maxX = std::max(maxX, sample.x);
+            minY = std::min(minY, sample.y);
+            maxY = std::max(maxY, sample.y);
+        }
+    };
+    includeSamples(firstSamples);
+    includeSamples(secondSamples);
+    const double targetX = (minX + maxX) * 0.5;
+    const double targetY = (minY + maxY) * 0.5;
+    glViewport(0, 0, width, height);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClearColor(0.22F, 0.38F, 0.22F, 1.0F);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    setPerspective(width, height, 48.0);
+    lookAt(targetX + 25.0, targetY - 38.0, 58.0, targetX, targetY, 0.0);
+    renderer.draw();
+    glFinish();
+
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) *
+                                     static_cast<std::size_t>(height) * 4);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    std::size_t visibleRoadPixels = 0;
+    for (std::size_t offset = 0; offset < pixels.size(); offset += 4) {
+        const int colorDistance =
+            std::abs(static_cast<int>(pixels[offset]) - 56) +
+            std::abs(static_cast<int>(pixels[offset + 1]) - 97) +
+            std::abs(static_cast<int>(pixels[offset + 2]) - 56);
+        if (colorDistance > 30) {
+            ++visibleRoadPixels;
+        }
+    }
+    check(visibleRoadPixels > static_cast<std::size_t>(width * height / 100),
+          "Road screenshot must contain visible road/profile texture pixels");
+    if (!outputPath.parent_path().empty()) {
+        std::filesystem::create_directories(outputPath.parent_path());
+    }
+    check(openbus::rendering::saveFramebufferPng(outputPath, width, height),
+          "Could not save linked-road screenshot");
+    std::cout << "MAP_ROAD_SCREENSHOT=" << outputPath.string() << '\n'
+              << "VISIBLE_ROAD_PIXELS=" << visibleRoadPixels << '\n';
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc > 2 || (argc == 2 && std::string(argv[1]) != "--conditional")) {
-        std::cerr << "Expected no arguments or --conditional\n";
+    const bool conditional = argc == 2 && std::string(argv[1]) == "--conditional";
+    const bool attachmentPathOnly =
+        argc == 2 && std::string(argv[1]) == "--attachment-path";
+    const bool mapRoadScreenshot =
+        argc == 3 && std::string(argv[1]) == "--map-road-screenshot";
+    if (argc > 3 || (argc > 1 && !conditional && !attachmentPathOnly && !mapRoadScreenshot)) {
+        std::cerr << "Expected no arguments, --conditional, --attachment-path, or "
+                     "--map-road-screenshot <output.png>\n";
         return 1;
     }
     if (!glfwInit()) {
@@ -692,7 +919,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, indirect ? 4 : 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(32, 32, "Traffic-light probe", nullptr, nullptr);
+    const int width = mapRoadScreenshot ? 1024 : 32;
+    const int height = mapRoadScreenshot ? 768 : 32;
+    GLFWwindow* window = glfwCreateWindow(width, height, "Map rendering probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
         return 77;
@@ -715,9 +944,13 @@ int main(int argc, char** argv) {
     }
     if (passed && !unavailable) {
         try {
-            runProbe(root, argc == 2);
-            check(!queriesRequested || occlusionQueryCount > 0,
-                  "Traffic-light fixture did not exercise occlusion queries");
+            if (mapRoadScreenshot) {
+                runMapRoadScreenshot(root, argv[2], width, height);
+            } else {
+                runProbe(root, conditional, attachmentPathOnly);
+                check(!queriesRequested || occlusionQueryCount > 0,
+                      "Traffic-light fixture did not exercise occlusion queries");
+            }
         } catch (const std::exception& error) {
             std::cerr << error.what() << '\n';
             passed = false;

@@ -3284,6 +3284,8 @@ MapTrafficRouteNetwork::endpointStatus(int splineId) const {
 }
 
 void MapTrafficLaneNetwork::addSegment(MapTrafficRouteSegment segment) {
+    const std::pair tile{segment.spline.tileX, segment.spline.tileY};
+    const int splineId = segment.spline.placement.splineId;
     double length = segment.spline.placement.length;
     if (segment.points.empty() && !segment.spline.placement.geometryValid) {
         throw std::invalid_argument(trafficInputError(
@@ -3315,7 +3317,25 @@ void MapTrafficLaneNetwork::addSegment(MapTrafficRouteSegment segment) {
     }
     lengths_.push_back(length);
     segments_.push_back(std::move(segment));
+    splineIdsByTile_[tile].insert(splineId);
     finalized_ = false;
+}
+
+std::vector<int> MapTrafficLaneNetwork::splineIdsInTiles(
+    const std::vector<std::pair<int, int>>& tiles) const {
+    if (!finalized_) {
+        throw std::logic_error(
+            trafficInputError("Traffic lane network must be finalized before listing splines",
+                              "finalized=", finalized_));
+    }
+    std::set<int> ids;
+    for (const auto& tile : tiles) {
+        const auto found = splineIdsByTile_.find(tile);
+        if (found != splineIdsByTile_.end()) {
+            ids.insert(found->second.begin(), found->second.end());
+        }
+    }
+    return {ids.begin(), ids.end()};
 }
 
 void MapTrafficLaneNetwork::finalize() {

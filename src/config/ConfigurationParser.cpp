@@ -17,6 +17,8 @@ constexpr std::size_t MAX_CONFIG_RECORDS = 1'000'000;
 Logger configurationLog("Configuration");
 std::mutex unhandledTagMutex;
 std::unordered_set<std::string> loggedUnhandledTags;
+std::mutex tagStatusMutex;
+std::unordered_set<std::string> loggedTagStatuses;
 } // namespace
 
 std::string trim(const std::string& value) {
@@ -130,6 +132,48 @@ void logUnhandledConfigurationTag(const std::string& format,
     }
     configurationLog.Warning("Unhandled configuration tag [" + tag + "]: " + disposition + " in " +
                              format + " file=" + location + " line=" + std::to_string(line));
+}
+
+void logConfigurationTagStatus(const std::string& format,
+                                const std::filesystem::path& sourcePath, std::size_t line,
+                                const std::string& tag, ConfigurationTagStatus status,
+                                const std::string& detail) {
+    std::error_code error;
+    std::filesystem::path normalizedPath = std::filesystem::weakly_canonical(sourcePath, error);
+    if (error) {
+        normalizedPath = std::filesystem::absolute(sourcePath, error).lexically_normal();
+        if (error) {
+            normalizedPath = sourcePath.lexically_normal();
+        }
+    }
+    const std::string location = openbus::pathToUtf8(normalizedPath);
+
+    const char* statusText = "unknown";
+    LogLevel level = LogLevel::Warning;
+    switch (status) {
+    case ConfigurationTagStatus::Active:
+        statusText = "recognized and active";
+        level = LogLevel::Info;
+        break;
+    case ConfigurationTagStatus::Ignored:
+        statusText = "recognized but ignored";
+        break;
+    case ConfigurationTagStatus::Unknown:
+        statusText = "unknown";
+        break;
+    }
+
+    const std::string key = format + "\n" + location + "\n" + tag + "\n" + statusText + "\n" +
+                            detail;
+    {
+        std::lock_guard<std::mutex> lock(tagStatusMutex);
+        if (!loggedTagStatuses.insert(key).second) {
+            return;
+        }
+    }
+    configurationLog.Log(level, "Configuration tag [" + tag + "] " + statusText + ": " + detail +
+                                     " in " + format + " file=" + location +
+                                     " line=" + std::to_string(line));
 }
 
 bool Line::isKeyword() const {

@@ -131,6 +131,41 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
     return true;
 }
 
+const char* ignoredKeywordReason(const std::string& keyword) {
+    if (keyword == "helparrow") {
+        return "scenery help-arrow metadata has no runtime behavior";
+    }
+    if (keyword == "friendlyname" || keyword == "groups") {
+        return "scenery metadata is not consumed by the model loader";
+    }
+    if (keyword == "smoothskin") {
+        return "generic model skeletal skinning is not implemented";
+    }
+    if (keyword == "spotlight") {
+        return "spotlight rendering is not implemented";
+    }
+    if (keyword == "smoke") {
+        return "smoke rendering is not implemented";
+    }
+    if (keyword == "shadow") {
+        return "per-mesh cast-shadow behavior is not implemented";
+    }
+    if (keyword == "vfdmaxmin") {
+        return "VFD display-region behavior is not implemented";
+    }
+    if (keyword == "tex_detail_factor") {
+        return "texture-detail rendering is not implemented";
+    }
+    if (keyword == "terrainmapping") {
+        return "terrain-mapping rendering is not implemented";
+    }
+    if (keyword == "texchanges" || keyword == "newtexchangemaster" ||
+        keyword == "entries") {
+        return "texture-change replacement is not implemented";
+    }
+    return nullptr;
+}
+
 bool isSeparatorLine(const std::string& text) {
     if (text.empty()) {
         return false;
@@ -484,6 +519,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             result.diagnostics.warning(line.number, line.keyword(), "unknown keyword");
             continue;
         }
+        const char* ignoredReason = ignoredKeywordReason(keyword);
+        openbus::config::logConfigurationTagStatus(
+            "model.cfg", configPath, line.number, line.keyword(),
+            ignoredReason == nullptr ? openbus::config::ConfigurationTagStatus::Active
+                                     : openbus::config::ConfigurationTagStatus::Ignored,
+            ignoredReason == nullptr ? "model CFG record has runtime handling" : ignoredReason);
         if (!validForKind(keyword, kind)) {
             result.diagnostics.error(line.number, line.keyword(),
                                      "keyword is not valid in a " + kindName(kind) + " model");
@@ -630,9 +671,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "smoothskin") {
             if (ModelPart* current = requirePart()) {
                 current->smoothSkin = true;
-                openbus::config::logUnhandledConfigurationTag(
-                    "model.cfg", configPath, line.number, line.keyword(),
-                    "recognized but generic model skeletal skinning is not implemented");
             }
             continue;
         }
@@ -876,9 +914,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
                 if (valid) {
                     result.spotlights.push_back(std::move(spotlight));
-                    openbus::config::logUnhandledConfigurationTag(
-                        "model.cfg", configPath, line.number, line.keyword(),
-                        "payload is retained; spotlight rendering is not implemented");
                     result.diagnostics.warning(
                         line.number, keyword,
                         "payload retained; spotlight rendering is not implemented because field "
@@ -900,9 +935,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     result.smokes.push_back(std::move(smoke));
                 }
             }
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(),
-                "fields are retained but smoke rendering is not implemented");
             continue;
         }
         // [newanim]: a variable-length block containing origin fields and anim_rot/
@@ -1283,9 +1315,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             // OMSI's per-mesh cast-shadow marker has no equivalent in the current renderer.
             // Recognize it to avoid warning for otherwise valid vehicle meshes.
             requirePart();
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(),
-                "recognized but per-mesh cast-shadow behavior is not implemented");
             continue;
         }
         // [fixed]/[absheight]: marker records with no payload consumed here.
@@ -1427,9 +1456,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 mapping.payload.push_back(value.raw);
             }
             result.terrainMappings.push_back(std::move(mapping));
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(),
-                "payload is retained but terrain-mapping rendering is not implemented");
             result.diagnostics.warning(
                 line.number, keyword,
                 "payload retained; terrain-mapping rendering is not implemented");
@@ -1448,9 +1474,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 record.payload.push_back(value.raw);
             }
             result.textureChangeRecords.push_back(std::move(record));
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(),
-                "payload is retained but texture-change replacement is not implemented");
             result.diagnostics.warning(
                 line.number, keyword,
                 "payload retained; texture-change count validation and replacement are not "

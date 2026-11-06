@@ -287,8 +287,17 @@ foreach(backend IN ITEMS cpu compute-indirect)
 endforeach()
 add_test(NAME OpenBusMapTrafficLightRenderingProbe.conditional
     COMMAND OpenBusMapTrafficLightRenderingProbe --conditional)
+add_test(NAME OpenBusMapUnreferencedAttachmentTrafficPathProbe
+    COMMAND OpenBusMapTrafficLightRenderingProbe --attachment-path)
+add_test(NAME OpenBusMapRoadRenderingScreenshotProbe
+    COMMAND OpenBusMapTrafficLightRenderingProbe --map-road-screenshot
+        "${CMAKE_CURRENT_BINARY_DIR}/MapRoadLinkedBoundary.png")
 set_tests_properties(OpenBusMapTrafficLightRenderingProbe
     OpenBusMapTrafficLightRenderingProbe.conditional PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=cpu;OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
+set_tests_properties(OpenBusMapUnreferencedAttachmentTrafficPathProbe
+    OpenBusMapRoadRenderingScreenshotProbe PROPERTIES
     SKIP_RETURN_CODE 77
     ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=cpu;OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
 foreach(backend IN ITEMS cpu compute-indirect)

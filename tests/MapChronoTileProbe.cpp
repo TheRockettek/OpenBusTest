@@ -1,6 +1,8 @@
 #include "map/MapConfigLoader.h"
+#include "map/MapTrafficRuntime.h"
 #include "ProbeTempDirectory.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -38,7 +40,7 @@ void runProbe() {
             "Chrono fixture comment\n[version]\n14\n"
             "[selobject]\n30273\n[typ]\n1\nScenery\\selected.sco\n"
             "[selspline]\n-44\n[typ]\nprofile override\n"
-            "[object]\n[selobject]\n77\nScenery\\dummy.sco\n5\n"
+            "[object]\n0\nScenery\\[selobject].sco\n77\n"
             "1\n2\n3\n0\n0\n0\n0\n";
         const std::filesystem::path chronoPath = root / "chrono_tile.map";
         writeUtf16Le(chronoPath, chronoText);
@@ -60,8 +62,9 @@ void runProbe() {
                     chrono.selectors[1].followingLines ==
                         std::vector<std::string>{"[typ]", "profile override"},
                 "spline selector ID and raw override lines are retained");
-        require(chrono.rawLines.size() == 25 && chrono.rawLines[12] == "[object]" &&
-                    chrono.rawLines[13] == "[selobject]" && chrono.rawLines[14] == "77" &&
+        require(chrono.rawLines.size() == 24 && chrono.rawLines[12] == "[object]" &&
+                    chrono.rawLines[13] == "0" &&
+                    chrono.rawLines[14] == "Scenery\\[selobject].sco" &&
                     chrono.rawLines.back().empty(),
                 "all Chrono tile lines, including trailing blank and object payload, are preserved");
         require(chrono.diagnostics.entries.empty(),
@@ -102,6 +105,29 @@ void runProbe() {
         baseTile.textPath = root / "tile_1_2.map";
         baseTile.terrainPath = root / "tile_1_2.map.terrain";
         baseTile.hasTerrainFile = true;
+        writeUtf16Le(
+            baseTile.textPath,
+            "[version]\n14\n[terrain]\n\nObject Nr. 1\n[object]\n0\n"
+            "Scenery\\old.sco\n101\n1\n2\n3\n0\n0\n0\n0\n0\n\n"
+            "Object Nr. 2\n[object]\n0\nScenery\\old-sign.sco\n102\n"
+            "4\n5\n6\n0\n0\n0\n0\n1\nOld\n\n"
+            "Object Nr. 4\n[attachObj]\n0\nScenery\\attached.sco\n104\n"
+            "0\n0\n0\n0\n0\n0\n1\nOld\n"
+            "[spline]\n0\nSplines\\old.sli\n200\n0\n0\n0\n0\n0\n0\n"
+            "100\n0\n0\n0\n0\n0\n0\n0\n0\n"
+            "[rule]\n0\nspeedlimit\n30\n0\n"
+            "[spline]\n0\nSplines\\deleted.sli\n201\n0\n0\n0\n0\n0\n0\n"
+            "100\n0\n0\n0\n0\n0\n0\n0\n0\n"
+            "[spline]\n0\nSplines\\linked.sli\n202\n0\n203\n0\n0\n0\n0\n0\n"
+            "100\n0\n0\n0\n0\n0\n0\n0\n0\n"
+            "[spline]\n0\nSplines\\linked.sli\n203\n202\n0\n0\n0\n0\n0\n0\n"
+            "100\n0\n0\n0\n0\n0\n0\n0\n0\n"
+            "[spline]\n0\nSplines\\attached.sli\n204\n0\n0\n0\n0\n0\n0\n0\n"
+            "100\n0\n0\n0\n0\n0\n0\n0\n0\n"
+            "[splineAttachement]\n0\nScenery\\on-spline.sco\n301\n2\n"
+            "0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+            "[splineAttachement]\n0\nScenery\\also-on-spline.sco\n302\n4\n"
+            "0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n");
         map.tiles.push_back(baseTile);
         const std::filesystem::path firstScenario = root / "Chrono" / "01_Construction";
         const std::filesystem::path laterScenario = root / "Chrono" / "02_Detour";
@@ -111,10 +137,29 @@ void runProbe() {
         std::filesystem::create_directories(indefiniteScenario);
         writeUtf16Le(firstScenario / "Chrono.cfg",
                      "[startdate]\n20200101\n[enddate]\n20201231\n");
-        writeUtf16Le(firstScenario / "tile_1_2.map", "[version]\n14\n[object]\n");
+        writeUtf16Le(
+            firstScenario / "tile_1_2.map",
+            "[version]\n14\n[selobject]\n101\n[delete]\n\n"
+            "[selobject]\n102\n[typ]\nScenery\\replacement.sco\n"
+            "[relabel]\n1\nNew label\n\nObject Nr. 2\n[object]\n0\n"
+            "Scenery\\variant-source.sco\n102\n4\n5\n6\n0\n0\n0\n1\nVariant\n\n"
+            "Object Nr. 3\n[object]\n0\n"
+            "Scenery\\added.sco\n103\n10\n20\n30\n0\n0\n0\n0\n0\n"
+            "[selobject]\n104\n[typ]\nScenery\\new-attachment.sco\n"
+            "[relabel]\n1\n13N\n\n"
+            "[selspline]\n200\n[typ]\nSplines\\replacement.sli\n"
+            "[rule]\n0\ntrafficdensity\n0.75\n0\n"
+            "[kill_rule]\n0\nspeedlimit\n0\n0\n"
+            "[selspline]\n201\n[delete]\n"
+            "[selspline]\n203\n[delete]\n"
+            "[selspline]\n204\n[delete]\n"
+            "[spline]\n0\nSplines\\event-added.sli\n500\n0\n0\n0\n0\n0\n0\n"
+            "100\n0\n0\n0\n0\n0\n0\n0\n0\n");
         writeUtf16Le(laterScenario / "Chrono.cfg",
                      "[startdate]\n20200601\n[enddate]\n20200630\n");
-        writeUtf16Le(laterScenario / "tile_1_2.map", "[version]\n14\n[object]\n");
+        writeUtf16Le(laterScenario / "tile_1_2.map",
+                     "[version]\n14\n[selobject]\n103\n[delete]\n"
+                     "[selspline]\n500\n[delete]\n");
         std::ofstream(laterScenario / "tile_1_2.map.terrain").put('\0');
         writeUtf16Le(indefiniteScenario / "Chrono.cfg", "[startdate]\n20220101\n");
         writeUtf16Le(indefiniteScenario / "tile_1_2.map", "[version]\n14\n[object]\n");
@@ -129,6 +174,67 @@ void runProbe() {
                     firstScenarioActive.tiles[0].hasTerrainFile &&
                     firstScenarioActive.tiles[0].terrainPath == baseTile.terrainPath,
                 "Chrono start dates are inclusive and variant files retain absent base sidecars");
+        const openbus::map::MapTileData mergedTile =
+            openbus::map::loadMapTile(firstScenarioActive.tiles[0]);
+        require(mergedTile.splines.size() == 5 && mergedTile.splines[0].splineId == 200 &&
+                    mergedTile.splines[1].splineId == 202 &&
+                    mergedTile.splines[2].splineId == 203 &&
+                    mergedTile.splines[3].splineId == 204 &&
+                    mergedTile.splineAttachments.size() == 2 &&
+                    mergedTile.splineAttachments[0].id == 301 &&
+                    mergedTile.splineAttachments[0].splineIndex == 1,
+                "isolated spline deletion preserves linked splines and shifts attachment indexes");
+        require(mergedTile.splineAttachments[1].id == 302 &&
+                    mergedTile.splineAttachments[1].splineIndex == 3,
+                "deleting an attached spline is refused without invalidating its placement");
+        require(mergedTile.splines.back().splineId == 500,
+                "Chrono scenario appends newly introduced spline records");
+        const openbus::map::MapTrafficPathRules mergedSplineRules =
+            openbus::map::mapTrafficRulesForPath(mergedTile.splines[0].rules, 0);
+        require(mergedTile.sceneryObjects.size() == 2 && mergedTile.objectCount == 2 &&
+                    mergedTile.sceneryObjects[0].id == 102 &&
+                    mergedTile.sceneryObjects[0].assetPath == "Scenery\\replacement.sco" &&
+                    mergedTile.sceneryObjects[0].labels ==
+                        std::vector<std::string>{"New label"} &&
+                    mergedTile.sceneryObjects[1].id == 103 &&
+                    mergedTile.sceneryObjects[1].assetPath == "Scenery\\added.sco" &&
+                    mergedTile.attachedObjects.size() == 1 &&
+                    mergedTile.attachedObjects[0].id == 104 &&
+                    mergedTile.attachedObjects[0].assetPath ==
+                        "Scenery\\new-attachment.sco" &&
+                    mergedTile.attachedObjects[0].labels == std::vector<std::string>{"13N"} &&
+                        mergedTile.reference.textPath == firstScenario / "tile_1_2.map",
+                "Chrono selectors delete, replace, and relabel objects before adding records");
+        require(mergedTile.splines[0].splineId == 200 &&
+                        mergedTile.splines[0].assetPath == "Splines\\replacement.sli",
+                "Chrono spline selector changes the matching spline asset");
+        require(mergedTile.splines[0].rules.size() == 3 &&
+                        mergedTile.splines[0].rules[0].fields ==
+                            std::array<std::string, 4>{"0", "speedlimit", "30", "0"} &&
+                        !mergedTile.splines[0].rules[0].kill &&
+                        mergedTile.splines[0].rules[1].fields ==
+                            std::array<std::string, 4>{"0", "trafficdensity", "0.75", "0"} &&
+                        !mergedTile.splines[0].rules[1].kill &&
+                        mergedTile.splines[0].rules[2].fields ==
+                            std::array<std::string, 4>{"0", "speedlimit", "0", "0"} &&
+                        mergedTile.splines[0].rules[2].kill,
+                "Chrono spline rules append after the base rule in selector order");
+        require(std::any_of(mergedTile.diagnostics.entries.begin(),
+                            mergedTile.diagnostics.entries.end(),
+                            [](const auto& diagnostic) {
+                                return diagnostic.keyword == "delete" &&
+                                       diagnostic.message.find("link references") !=
+                                           std::string::npos;
+                            }),
+                "linked spline deletion is retained and reported");
+        openbus::map::MapTrafficVehicleFilter splineTrafficGroup;
+        splineTrafficGroup.trafficRuleGroupIndex = 0;
+        require(openbus::map::mapTrafficPathDensityForVehicle(mergedSplineRules,
+                                                                  splineTrafficGroup) == 0.75 &&
+                        !openbus::map::mapTrafficPathSpeedLimitForVehicle(
+                             mergedSplineRules, splineTrafficGroup)
+                             .has_value(),
+                "Chrono spline rule edits flow through runtime traffic rule resolution");
         openbus::map::MapDefinition overlappingScenarios = map;
         require(openbus::map::applyMapChronoTiles(overlappingScenarios, 20200601) == 2 &&
                     overlappingScenarios.tiles[0].textPath ==
@@ -136,6 +242,15 @@ void runProbe() {
                     overlappingScenarios.tiles[0].terrainPath ==
                         laterScenario / "tile_1_2.map.terrain",
                 "Chrono start dates are inclusive and later active scenarios override available tiles");
+        const openbus::map::MapTileData stackedTile =
+            openbus::map::loadMapTile(overlappingScenarios.tiles[0]);
+        require(stackedTile.sceneryObjects.size() == 1 &&
+                    stackedTile.sceneryObjects[0].id == 102 &&
+                    std::none_of(stackedTile.splines.begin(), stackedTile.splines.end(),
+                                 [](const openbus::map::MapSplinePlacement& spline) {
+                                     return spline.splineId == 500;
+                                 }),
+                "later Chrono selectors delete records added by earlier active scenarios");
         openbus::map::MapDefinition overlappingEndDate = map;
         require(openbus::map::applyMapChronoTiles(overlappingEndDate, 20200630) == 2 &&
                     overlappingEndDate.tiles[0].textPath == laterScenario / "tile_1_2.map",
@@ -153,6 +268,12 @@ void runProbe() {
                     openEndedScenario.tiles[0].textPath ==
                         indefiniteScenario / "tile_1_2.map",
                 "Chrono scenarios without an end date remain active after their start date");
+        openbus::map::MapDefinition reselectedScenario = map;
+        require(openbus::map::applyMapChronoTiles(reselectedScenario, 20200601) == 2 &&
+                    openbus::map::applyMapChronoTiles(reselectedScenario, 20191231) == 0 &&
+                    reselectedScenario.tiles[0].textPath == baseTile.textPath &&
+                    reselectedScenario.tiles[0].terrainPath == baseTile.terrainPath,
+                "reselecting a date restores the base tile and sidecars before applying variants");
         bool invalidDateRejected = false;
         try {
             static_cast<void>(openbus::map::applyMapChronoTiles(map, 20200230));

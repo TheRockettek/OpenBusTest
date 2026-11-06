@@ -34,6 +34,18 @@ each rendering mode to keep default and ODE captures separate. The default
 remains `screenshots`.
 Set `OPENBUS_VEHICLE=e400` before launching to exercise the
 SP E400 MMC configuration and its larger `[newanim]`/`[animparent]` set.
+Capture mode also writes `dashboard.png` from the standard driver camera. If
+the bus has a driver camera view 7, it writes `driver-view-7.png`; the installed
+E400 3800_2018 configuration labels that view `Panel-Zoom`. Use that dedicated
+view when comparing the E400 cockpit rather than relying on whichever camera
+was active before capture.
+
+The E400 OMSI/OpenBus cockpit comparison is not yet complete. Capture the OMSI
+reference from the same E400 variant and `Panel-Zoom` view, keeping display,
+warning-lamp, and illumination conditions consistent with OpenBus. Compare the
+LCD, odometer, warning lamps, illuminated surfaces, and text rendering
+individually; do not treat the automated OpenBus capture alone as OMSI parity
+evidence.
 
 The automated capture is a smoke check for model orientation, mirrored-mesh
 winding, materials, wheel binding, and loading completeness. It does not
@@ -252,6 +264,29 @@ values require a separate runtime or automated physics test.
 
 Texture logs should be retained with the screenshots to prove which source
 files were decoded and uploaded.
+
+### 9. Map road cross-sections and linked tile seams
+
+The hidden-GL map screenshot probe renders two reciprocally linked curved road
+splines across a tile boundary. Its generated cross-section includes raised
+sidewalk edges, a curb transition, and dashed lane markings baked into the
+road texture. The second spline's chain offset continues the first spline's
+texture phase.
+
+Regenerate the capture with:
+
+```powershell
+cmake --build build-ninja --target OpenBusMapTrafficLightRenderingProbe
+ctest --test-dir build-ninja -R OpenBusMapRoadRenderingScreenshotProbe --output-on-failure
+```
+
+The repeatable controlled-scene evidence is
+[`MapRoadLinkedBoundary.png`](MapRenderingEvidence/MapRoadLinkedBoundary.png).
+The same probe writes `build-ninja\tests\MapRoadLinkedBoundary.png` during
+CTest. Review the curved cross-section, raised edges, visible dashes, and
+continuous texture through the two-tile join. This is OpenBus renderer evidence
+for a generated fixture; it does not establish parity with an installed OMSI
+map or native road-profile semantics.
 
 ## Incomplete-feature visual checks
 

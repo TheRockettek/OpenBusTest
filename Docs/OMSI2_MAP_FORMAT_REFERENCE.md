@@ -470,12 +470,31 @@ editor object numbers, not authored placement IDs.
 Chrono tile overrides use the same general tile assets/records but start with a
 comment and `[version]`, followed by an ordered mixture of selectors and
 object/spline records. The merger models `[selspline]` and `[selobject]` as a
-selector type plus an integer ID and variable following lines. Grande Porto
-examples place `[typ]` and an asset path after `[selobject]`; retain such lines
-as raw override data rather than assuming that this is the only legal payload.
+selector type plus an integer ID and variable following lines. Installed
+Berlin-Spandau examples show `[selobject]` followed by `[delete]`, or by
+`[typ]` with an asset path and `[relabel]` with a count and label values. OpenBus
+applies those three operations to matching tile objects; ordinary variant
+records replace same-ID records and append new IDs. `[selspline]` supports
+`[typ]` asset replacement and appends `[rule]`/`[kill_rule]` records to the
+matching spline. OpenBus deletes a spline only when it has no links, local
+inbound link references, or attached placements, and shifts remaining local
+attachment indexes. Linked or attached deletions are reported and skipped;
+cross-tile incoming references are not checked. All active scenario tile
+files are merged sequentially in sorted config-path order, so a later
+selector can delete a record introduced by an earlier scenario. Native
+overlap precedence is still unverified. Although Ghidra confirms OMSI's parser
+recognizes these selector tags, exact native merge and deletion behavior has
+not been established. These payloads were also observed in installed map
+data, not an official format specification.
 
 Selectors and overridden tile objects are ID-sensitive. The merger shifts
 selector IDs and the associated object/spline IDs and links when merging maps.
+OpenBus selects date-ranged variants with inclusive boundaries and merges all
+active tile variants sequentially in sorted config-path order; OMSI's overlap
+precedence remains unverified. Ghidra analysis of `Omsi.exe` shows the base tile parsed
+first and active Chrono tiles parsed into the existing tile state, supporting
+overlay loading. Native duplicate-ID replacement and the runtime effects of
+each selector have not been independently verified.
 See [`chrono_tile_grammar.pg`](https://github.com/barteg77/omsi_map_merger/blob/00c2ceb189ab00ef11a59f7f3279dcfd7e7fd79a/chrono_tile_grammar.pg),
 [`chrono_tile_parser.py`](https://github.com/barteg77/omsi_map_merger/blob/00c2ceb189ab00ef11a59f7f3279dcfd7e7fd79a/chrono_tile_parser.py),
 and [`chrono_tile.py`](https://github.com/barteg77/omsi_map_merger/blob/00c2ceb189ab00ef11a59f7f3279dcfd7e7fd79a/chrono_tile.py).
@@ -534,9 +553,10 @@ language descriptors are registered for copying, not parsed into typed fields.
 The merger discovers `Chrono/*/` directories, reads tile overrides matching
 tiles in `global.cfg`, and scans event `TTData/` similarly to standard
 `TTData/`. Its README specifically excludes `chrono_#upd.cfg` from support.
-The date boundary inclusivity, precedence among overlapping events, and all
-possible Chrono descriptor fields were not established by the consulted parser
-source; confirm them with OMSI before implementing runtime selection.
+The date boundary inclusivity and precedence among overlapping events were not
+established by the consulted merger source; OpenBus currently uses inclusive
+dates and deterministic path-order precedence, which should be confirmed
+against OMSI. All possible Chrono descriptor fields remain unknown.
 
 ## 8. Timetable package (`TTData`)
 

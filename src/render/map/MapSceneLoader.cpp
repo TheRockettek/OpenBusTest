@@ -1995,7 +1995,8 @@ void MapSceneLoader::indexMapContent() {
         gameLog.Log("Mirrored road directions use authored values "
                     "(OPENBUS_MIRRORED_ROAD_DIRECTIONS=authored).");
     }
-    std::unordered_set<int> referencedSplineAttachmentIds;
+    std::unordered_set<int> requiredSplineAttachmentIds;
+    std::unordered_map<std::string, bool> splineAttachmentTrafficPathsByAsset;
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
                                       const std::string& tileName, int tileX, int tileY) {
         mapObjectTileKeysById.try_emplace(objectId, tileKey(tileX, tileY));
@@ -2125,6 +2126,7 @@ void MapSceneLoader::indexMapContent() {
             mapObjectAssetPathsById.try_emplace(object.id, object.assetPath);
             if (object.variableParentId.has_value()) {
                 mapObjectVariableParentsById.try_emplace(object.id, *object.variableParentId);
+                requiredSplineAttachmentIds.insert(*object.variableParentId);
             }
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
@@ -2144,12 +2146,13 @@ void MapSceneLoader::indexMapContent() {
             }
         }
         for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
-            referencedSplineAttachmentIds.insert(object.attachedToObjectId);
+            requiredSplineAttachmentIds.insert(object.attachedToObjectId);
             registerObjectId(object.id, MapObjectRecordKind::Attached, tileName, tileReference.x,
                              tileReference.y);
             mapObjectAssetPathsById.try_emplace(object.id, object.assetPath);
             if (object.variableParentId.has_value()) {
                 mapObjectVariableParentsById.try_emplace(object.id, *object.variableParentId);
+                requiredSplineAttachmentIds.insert(*object.variableParentId);
             }
             IndexedAttachedObject indexed;
             indexed.assetPath = object.assetPath;
@@ -2174,6 +2177,17 @@ void MapSceneLoader::indexMapContent() {
             if (attachment.variableParentId.has_value()) {
                 mapObjectVariableParentsById.try_emplace(attachment.id,
                                                          *attachment.variableParentId);
+                requiredSplineAttachmentIds.insert(*attachment.variableParentId);
+            }
+            const auto [trafficPaths, inserted] =
+                splineAttachmentTrafficPathsByAsset.try_emplace(attachment.assetPath, false);
+            if (inserted) {
+                const SceneryObjectConfig* metadata =
+                    loadSceneryObjectMetadata(attachment.assetPath);
+                trafficPaths->second = metadata != nullptr && !metadata->trafficPaths.empty();
+            }
+            if (trafficPaths->second) {
+                requiredSplineAttachmentIds.insert(attachment.id);
             }
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
                 recordSkipped(skipped, "map placements with duplicate object IDs",
@@ -2192,9 +2206,9 @@ void MapSceneLoader::indexMapContent() {
     for (auto tile = splineAttachmentParentTiles.begin();
          tile != splineAttachmentParentTiles.end();) {
         auto& attachments = tile->second.splineAttachments;
-        std::erase_if(attachments, [&referencedSplineAttachmentIds](
+        std::erase_if(attachments, [&requiredSplineAttachmentIds](
                                        const openbus::map::MapSplineAttachment& attachment) {
-            return !referencedSplineAttachmentIds.contains(attachment.id);
+            return !requiredSplineAttachmentIds.contains(attachment.id);
         });
         if (attachments.empty()) {
             tile = splineAttachmentParentTiles.erase(tile);

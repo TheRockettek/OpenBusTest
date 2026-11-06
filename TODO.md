@@ -180,9 +180,10 @@ change from their controlling variables without manual texture replacement.
 - [~] Validate registration selection against installed vehicle files, complete
   full OMSI selection UI parity, and verify odometer behavior against the
   reference capture. Selection and odometer state persist.
-- [ ] Add a repeatable OMSI/OpenBus E400 cockpit screenshot comparison covering
-  the dashboard LCD, odometer, warning lamps, illumination, and text surfaces
-  independently of camera framing.
+- [~] OpenBus capture mode now saves E400 driver view 7 (`Panel-Zoom`) as
+  `driver-view-7.png`; the OMSI reference capture and side-by-side comparison
+  covering the LCD, odometer, warning lamps, illumination, and text surfaces
+  are still outstanding.
 
 The keyword audit for the active E400 CFG found no completely unknown keywords
 for the parser at the time. The remaining visual differences primarily involve
@@ -403,8 +404,11 @@ recognized but incomplete semantics.
   verifies the unknown-event no-op. The listed Cotterell names and counts are
   absent from this checkout and its retained captures, so mapping them to
   configured events remains blocked on the source sound CFGs or an event trace.
-- [ ] Add diagnostics that distinguish "recognized and active" from
-  "recognized but ignored" for every parsed configuration record.
+- [~] Model CFG diagnostics emit a per-source-file, per-keyword active/ignored
+  status, with reasons for retained-only behavior such as `[spotlight]`,
+  `[smoke]`, `[terrainmapping]`, and texture-change records. This is a keyword
+  summary rather than a per-occurrence audit; equivalent status coverage is
+  still needed for other parsed configuration formats.
 
 ### Bus features requiring further work
 
@@ -633,8 +637,7 @@ for alignment is not mistaken for supporting it.
   defaults. `[game]`, `[ctrl]`, `[axis]`, other input contexts, and complete
   native input behavior remain unsupported or unverified.
 - [ ] Implement observed configuration records that remain unhandled in their
-  current contexts: SCO `[carpark_p]`, `[crossingproblem]`,
-  `[entrypoint]`, `[joinable]`, `[mass]`,
+  current contexts: SCO `[crossingproblem]`, `[joinable]`, `[mass]`,
   `[momentofintertia]`, `[newanim]`,
   `[nomaplighting]`, `[shadow]` per-mesh cast-shadow behavior,
   `[splinehelper]`, and `[terrainhole]`; model-config
@@ -779,10 +782,19 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   seasonal changes remain unsupported.
 - `[version]`, `[terrain]`, `[object]`, `[spline]`, `[spline_h]`,
   `[splineAttachement]`, and `[splineAttachement_repeater]` have typed parser
-  paths. Ordinary objects, road strips, and same-tile spline attachments have
-  runtime paths. SCOs marked `[onlyeditor]` are omitted from map rendering;
+  paths. Ordinary objects, road strips, and spline attachments have runtime
+  paths. SCO traffic paths on unreferenced spline attachments are indexed
+  map-wide before their source tiles stream in. SCOs marked `[onlyeditor]` are
+  omitted from map rendering;
   object labels, spline skew behavior, cross-tile attachment chains,
   and repeater-master resolution remain incomplete.
+- `[carpark_p]` markers select a static SCO from the map's `parklist_p.txt` at
+  their map transform. Duplicate entries retain their selection weight, and
+  `OPENBUS_CARPARK_CHANCE_PERCENT` controls deterministic occupancy (default
+  50%). Numbered labels select `parklist_p_<index>.txt`; missing entries are
+  reported. `[entrypoint]` SCO markers are retained as editor metadata, while
+  playable spawn positions continue to come from the already-supported global
+  `[entrypoints]` records.
 - `[attachObj]` fixed fields and version-dependent IDs are parsed and retained,
   including non-destructive typed attach-point/rotation values while preserving
   raw fields and opaque label counts. Static rendering resolves parent IDs,
@@ -803,12 +815,17 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   sampled terrain normal without
   changing placement height; OMSI parity is not yet verified.
   `[spline_terrain_align_2]` spline data remains preserved but unsupported.
-- Chrono tile parsing retains the complete source lines and comment/version,
-  types `[selobject]` and `[selspline]` integer IDs before the opaque object
-  payload, and preserves selector override lines as opaque data. Date-ranged
-  scenario tile files are now selected at startup by inclusive
-  `[startdate]`/`[enddate]`; selector edits, `[delete]`, `[typ]`, and
-  `[relabel]` still have no independent runtime semantics.
+- Chrono tile parsing retains the complete source lines and comment/version
+  and types `[selobject]`/`[selspline]` IDs. Date-ranged tile variants are
+  selected using inclusive `[startdate]`/`[enddate]`; variant records are
+  merged with the base tile by ID (matching records replace, new records
+  append), and all active scenario tiles are merged sequentially in sorted
+  config-path order. `[selobject]` supports `[delete]`, `[typ]`, and `[relabel]`
+  for scenery, attached objects, and spline attachments.
+  `[selspline]` supports `[typ]`, selector `[rule]`/`[kill_rule]`, and deletion
+  of isolated splines with no local link references or attached placements;
+  other deletes are reported and skipped. Cross-tile references, overlapping-
+  event precedence, and native visual/runtime parity remain unverified.
   Global identity/description, version, background/map-camera data, marker
   flags, seasons, and traffic-density records are retained as metadata, but
   fields such as `[worldcoordinates]` have no runtime effect. Timetable/HOF and
@@ -962,11 +979,14 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   as complete.
   A live HK West Kowloon 8P diagnostic matches only 5 of 53 represented
   checkpoints and reports a 68.3 m horizontal gap from spline 1596658 to
-  1583971. Map-wide indexing currently adds map-spline lanes, but scenery
-  object `[path]` lanes are added only while their tiles are active; scheduled
-  routes can therefore lack off-window checkpoints. Index scenery traffic
-  paths map-wide before evaluating this route further, then retain the
-  disconnected-transition diagnostic rather than relaxing exact matching.
+  1583971. Map-wide indexing now includes scenery-object `[path]` lanes,
+  including unreferenced attachments, and human journey candidates come from
+  the indexed lane network rather than only map splines. A focused fixture
+  verifies an off-window SCO-only attachment can seed a pedestrian journey
+  while retaining its object, source-tile, and path identity. Recheck the
+  disconnected timetable transition with these lanes available; retain the
+  exact-match diagnostic rather than relaxing route matching. Off-window
+  terrain-height and terrain-alignment parity still need validation.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
   passenger-density settings. Configured `.hum` model first-LOD meshes now
   render at actor poses, uniformly scaled to the declared human height while
@@ -1162,16 +1182,32 @@ the outstanding implementation and validation tasks:
   Decode/render `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where
   applicable. The Cotterell run skipped 27 variable-terrain tiles, 27
   variable-terrain-lightmap tiles, 2,212 `[rule]` records, and 1 `[kill_rule]`.
-- [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
-  `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
-  or have no independent runtime effect.
-- [ ] Investigate the 7 spline attachments with no local placement in the
-  Cotterell run (examples reference `splineIndex=154`, `102`, and `5`);
-  determine whether they are unresolved repeater-master references, invalid local spline
-  records, ambiguous IDs, or bad source placements. Unique reciprocal spline
-  chains now resolve across tile boundaries for ordinary attachment rows.
-  Cotterell is not present in the current Linux installation's map directory,
-  so the retained report cannot be reproduced here.
+- [~] Resolve Chrono map variants: date-selected tile overlays merge with the
+  base tile in deterministic config-path order, allowing later active events
+  to update/delete earlier additions. `[selobject]` delete/type/relabel
+  operations apply to scenery, attachments, and spline attachments.
+  `[selspline]` can change a spline type and append `[rule]`/`[kill_rule]`
+  overrides. Isolated spline deletion is supported and shifts remaining
+  attachment indexes; linked or attached splines are preserved with a
+  diagnostic. Cross-tile references and native event precedence still need
+  validation against OMSI.
+- [~] A repeatable audit reproduced the 7 Cotterell attachments with no local
+  placement. All are regular attachments with valid transforms, in-range local
+  spline indexes, and valid owner geometry; none is blocked by a repeater
+  master or ambiguous owner ID. Six request distances beyond their owner's
+  segment without a forward link, while one falls before its owner's stored
+  chain offset without a previous link. This points to a source placement/link
+  mismatch under OpenBus's current chain-distance interpretation. One owner
+  (`11651`) has a uniquely aligned continuation (`15408`): endpoint geometry
+  and chain offsets match within micrometres, and all three missing distances
+  fall on that continuation, but both reciprocal link IDs are zero. Ghidra
+  confirms the attachment parser and separate spline/object refresh paths, but
+  does not establish whether OMSI infers this continuation when links are
+  absent. The other four rows have no verified compatible continuation. Do
+  not add a runtime fallback until native placement behavior is established.
+  Run `OpenBusMapConfigProbe --audit-spline-attachments <map-directory>` to
+  repeat the audit. Unique reciprocal spline chains now resolve across tile
+  boundaries for ordinary attachment rows.
 - [~] Nonzero-LOD scenery parts now render using the vehicle renderer's existing
   threshold-to-distance mapping. Validate distance transitions and visual
   parity with representative installed scenery; 9 parts were skipped in the
@@ -1181,9 +1217,11 @@ the outstanding implementation and validation tasks:
   failures include the source mesh path. The parked Opel Manta DDS remains
   unverified because its model asset is not present in this checkout.
 
-- [ ] Add targeted, repeatable in-context screenshot evidence for curved-road
-  geometry, sidewalks, markings, texture phase, and seams at linked spline
-  boundaries.
+- [x] Add targeted, repeatable in-context screenshot evidence for curved-road
+  geometry, raised sidewalks, curb transitions, lane markings, texture phase,
+  and a linked two-tile seam. `OpenBusMapRoadRenderingScreenshotProbe`
+  regenerates `Docs/MapRenderingEvidence/MapRoadLinkedBoundary.png`; the
+  screenshot plan records the command and limits of this controlled fixture.
 - [~] Load static text, binary, and MSZIP-compressed scenery `.x` meshes with
   frame transforms, triangulation, normals, UVs, and inline materials.
   Skinning/animation and named external materials remain unsupported. Tree SCO
@@ -1261,8 +1299,9 @@ the outstanding implementation and validation tasks:
 - [~] Decode `.map.water` sidecars into per-surface four-height records;
   determine corner/quadrant ordering and validate provisional water rendering.
   Remaining per-tile texture semantics, seasonal ground textures, map lightmaps,
-  and Chrono variant resolution need work. Chrono selector IDs and opaque
-  override payload lines are parser-only.
+  and Chrono spline-selector/rule semantics need work. Chrono object selector
+  delete/type/relabel operations and additive tile records are active; native
+  precedence and visual parity remain unverified.
 - [~] Map loading is being moved to background preparation with main-thread
   publication. Map-wide tile/traffic indexing now runs on the asset worker pool;
   map startup waits for that phase and for the initial active window. Newly

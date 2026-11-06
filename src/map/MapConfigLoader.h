@@ -328,6 +328,17 @@ struct MapOpaqueSection {
     std::vector<std::string> payloadLines;
 };
 
+struct MapChronoBaseAssets {
+    std::filesystem::path textPath;
+    std::filesystem::path terrainPath;
+    bool hasTerrainFile = false;
+    std::filesystem::path waterPath;
+    bool hasWaterFile = false;
+    std::filesystem::path lightmapPath;
+    bool hasLightmapFile = false;
+    std::vector<MapGroundTextureSidecar> groundTextureSidecars;
+};
+
 struct MapTileReference {
     int x = 0;
     int y = 0;
@@ -341,6 +352,8 @@ struct MapTileReference {
     std::filesystem::path terrainReadinessPath;
     bool hasTerrainReadinessFile = false;
     std::vector<MapGroundTextureSidecar> groundTextureSidecars;
+    std::optional<MapChronoBaseAssets> chronoBaseAssets;
+    std::vector<std::filesystem::path> chronoOverlayPaths;
 };
 
 struct MapEntryPoint {
@@ -481,7 +494,7 @@ struct MapTileData {
 };
 
 struct MapChronoSelector {
-    // The value is "selobject" or "selspline"; selector payload semantics remain opaque.
+    // The value is "selobject" or "selspline"; override lines remain raw until applied.
     std::string keyword;
     std::string rawId;
     std::optional<int> id;

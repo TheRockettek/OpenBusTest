@@ -56,6 +56,7 @@ struct SceneryObjectConfig {
     bool surface = false;
     bool onlyEditor = false;
     bool carPark = false;
+    bool entryPoint = false;
     bool busStop = false;
     bool hasPassengerCabin = false;
     std::vector<PassengerCabinPosition> passengerPositions;

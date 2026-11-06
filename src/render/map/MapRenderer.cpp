@@ -484,7 +484,7 @@ MapRenderer::passengerPedestrianJourneyNear(const std::array<double, 3>& stopPos
         }
     }
     return impl_->humanTrafficLaneNetwork.passengerJourneyNear(
-        impl_->humanTrafficRouteNetwork.splineIdsInTiles(tiles), stopPosition, seed, radius);
+        impl_->humanTrafficLaneNetwork.splineIdsInTiles(tiles), stopPosition, seed, radius);
 }
 
 std::optional<openbus::map::MapPassengerPedestrianJourney>
@@ -517,7 +517,7 @@ MapRenderer::passengerPedestrianJourneyBetween(
         }
     }
     return impl_->humanTrafficLaneNetwork.passengerJourneyBetween(
-        impl_->humanTrafficRouteNetwork.splineIdsInTiles(tiles), startPosition,
+        impl_->humanTrafficLaneNetwork.splineIdsInTiles(tiles), startPosition,
         destinationPosition, seed, maximumConnectorMeters, maximumRouteMeters);
 }
 
