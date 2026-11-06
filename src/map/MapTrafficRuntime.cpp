@@ -523,9 +523,11 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     if (!stop.alightingPositions.empty() &&
         (stop.alightingPositions.size() != seatDestinations_.size() ||
          !std::ranges::all_of(stop.alightingPositions, [](const auto& position) {
-             return std::ranges::all_of(position, [](double value) { return std::isfinite(value); });
+             return std::ranges::all_of(position,
+                                        [](double value) { return std::isfinite(value); });
          }))) {
-        throw std::invalid_argument("Passenger alighting positions must match the seats and be finite");
+        throw std::invalid_argument(
+            "Passenger alighting positions must match the seats and be finite");
     }
     if (!stop.onwardStopIds.empty()) {
         std::unordered_set<int> uniqueStops;
@@ -535,8 +537,8 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
         for (const int destination : stop.onwardStopIds) {
             if (destination <= 0 || destination == stop.stopId ||
                 !uniqueStops.insert(destination).second) {
-                throw std::invalid_argument(
-                    "Passenger destination stops must be positive, unique and distinct from origin");
+                throw std::invalid_argument("Passenger destination stops must be positive, unique "
+                                            "and distinct from origin");
             }
         }
     }
@@ -557,8 +559,8 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     alightingAnimationSeconds_ = 0.75;
     alightingAnimationDurationSet_ = false;
     alightingDoorWaitProgress_.reset();
-    std::fill(queuedAlightingAccumulatorSeconds_.begin(),
-              queuedAlightingAccumulatorSeconds_.end(), 0.0);
+    std::fill(queuedAlightingAccumulatorSeconds_.begin(), queuedAlightingAccumulatorSeconds_.end(),
+              0.0);
     std::fill(queuedAlightingAnimationSeconds_.begin(), queuedAlightingAnimationSeconds_.end(),
               0.75);
     std::fill(queuedAlightingAnimationDurationSet_.begin(),
@@ -672,8 +674,8 @@ void MapPassengerServiceRuntime::depart() {
     boardingAccumulatorSeconds_ = 0.0;
     alightingSeat_.reset();
     queuedAlightingSeats_.clear();
-    std::fill(queuedAlightingAccumulatorSeconds_.begin(),
-              queuedAlightingAccumulatorSeconds_.end(), 0.0);
+    std::fill(queuedAlightingAccumulatorSeconds_.begin(), queuedAlightingAccumulatorSeconds_.end(),
+              0.0);
     std::fill(queuedAlightingAnimationDurationSet_.begin(),
               queuedAlightingAnimationDurationSet_.end(), false);
     alightingAccumulatorSeconds_ = 0.0;
@@ -723,9 +725,8 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
         }
         const double targetTime =
             queuedAlightingTargetProgress_[seat] * queuedAlightingAnimationSeconds_[seat];
-        queuedAlightingAccumulatorSeconds_[seat] =
-            std::min(targetTime, queuedAlightingAccumulatorSeconds_[seat] +
-                                     queuedAlightingElapsedSeconds);
+        queuedAlightingAccumulatorSeconds_[seat] = std::min(
+            targetTime, queuedAlightingAccumulatorSeconds_[seat] + queuedAlightingElapsedSeconds);
     }
     while (alightingSeconds > 1.0e-9 && alightingSeat_) {
         if (requireAnimationDuration && !alightingAnimationDurationSet_) {
@@ -757,8 +758,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
             if (!queuedAlightingSeats_.empty()) {
                 alightingSeat_ = queuedAlightingSeats_.front();
                 queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
-                alightingAccumulatorSeconds_ =
-                    queuedAlightingAccumulatorSeconds_[*alightingSeat_];
+                alightingAccumulatorSeconds_ = queuedAlightingAccumulatorSeconds_[*alightingSeat_];
                 alightingAnimationSeconds_ = queuedAlightingAnimationSeconds_[*alightingSeat_];
                 alightingAnimationDurationSet_ =
                     queuedAlightingAnimationDurationSet_[*alightingSeat_];
@@ -949,9 +949,9 @@ bool MapPassengerServiceRuntime::canCurrentPassengerAlightAt(
 }
 
 double MapPassengerServiceRuntime::alightingProgress() const noexcept {
-    return alightingSeat_ ? std::clamp(alightingAccumulatorSeconds_ / alightingAnimationSeconds_,
-                                       0.0, 1.0)
-                          : 0.0;
+    return alightingSeat_
+               ? std::clamp(alightingAccumulatorSeconds_ / alightingAnimationSeconds_, 0.0, 1.0)
+               : 0.0;
 }
 
 std::optional<std::size_t> MapPassengerServiceRuntime::alightingSeatIndex() const noexcept {
@@ -1178,7 +1178,7 @@ MapPassengerServiceRuntime::passengerModelIndexOnSeat(std::size_t seatIndex) con
 std::optional<MapPassengerPedestrianJourney>
 MapPassengerServiceRuntime::passengerPedestrianJourneyOnSeat(std::size_t seatIndex) const {
     return seatIndex < seatPedestrianJourneys_.size() ? seatPedestrianJourneys_[seatIndex]
-                                                       : std::nullopt;
+                                                      : std::nullopt;
 }
 
 std::size_t MapPassengerServiceRuntime::onboardPassengerCount() const noexcept {
@@ -3321,8 +3321,8 @@ void MapTrafficLaneNetwork::addSegment(MapTrafficRouteSegment segment) {
     finalized_ = false;
 }
 
-std::vector<int> MapTrafficLaneNetwork::splineIdsInTiles(
-    const std::vector<std::pair<int, int>>& tiles) const {
+std::vector<int>
+MapTrafficLaneNetwork::splineIdsInTiles(const std::vector<std::pair<int, int>>& tiles) const {
     if (!finalized_) {
         throw std::logic_error(
             trafficInputError("Traffic lane network must be finalized before listing splines",
@@ -3803,11 +3803,12 @@ std::size_t MapTrafficLaneNetwork::laneCount(int splineId) const {
     return lanes == lanesBySpline_.end() ? 0 : lanes->second.size();
 }
 
-std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourneyNear(
-    const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition, std::size_t seed,
-    double maximumDistanceMeters) const {
-    return passengerJourney(splineIds, stopPosition, seed, maximumDistanceMeters, std::nullopt,
-                            0.0, 0.0);
+std::optional<MapPassengerPedestrianJourney>
+MapTrafficLaneNetwork::passengerJourneyNear(const std::vector<int>& splineIds,
+                                            const std::array<double, 3>& stopPosition,
+                                            std::size_t seed, double maximumDistanceMeters) const {
+    return passengerJourney(splineIds, stopPosition, seed, maximumDistanceMeters, std::nullopt, 0.0,
+                            0.0);
 }
 
 double mapTrafficPedestrianLateralOffset(const MapTrafficRoute& route, std::size_t seed) {
@@ -3839,18 +3840,19 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
 }
 
 std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJourney(
-    const std::vector<int>& splineIds, const std::array<double, 3>& startPosition,
-    std::size_t seed, double maximumStartDistanceMeters,
-    const std::optional<std::array<double, 3>>& destinationPosition,
-    double maximumConnectorMeters, double maximumRouteMeters) const {
+    const std::vector<int>& splineIds, const std::array<double, 3>& startPosition, std::size_t seed,
+    double maximumStartDistanceMeters,
+    const std::optional<std::array<double, 3>>& destinationPosition, double maximumConnectorMeters,
+    double maximumRouteMeters) const {
     if (!finalized_) {
         throw std::logic_error("Pedestrian journey requires a finalized lane network");
     }
     if (!std::isfinite(maximumStartDistanceMeters) || maximumStartDistanceMeters < 0.0 ||
-        !std::ranges::all_of(startPosition, [](double value) { return std::isfinite(value); }) ||
+        !std::ranges::all_of(
+            startPosition, [](double value) { return std::isfinite(value); }) ||
         (destinationPosition &&
-         (!std::ranges::all_of(*destinationPosition,
-                               [](double value) { return std::isfinite(value); }) ||
+         (!std::ranges::all_of(
+              *destinationPosition, [](double value) { return std::isfinite(value); }) ||
           !std::isfinite(maximumConnectorMeters) || maximumConnectorMeters < 0.0 ||
           !std::isfinite(maximumRouteMeters) || maximumRouteMeters <= 0.0))) {
         throw std::invalid_argument("Pedestrian journey position or search radius is invalid");
@@ -3876,10 +3878,8 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
             single.totalLength = length;
             double bestDistance = std::numeric_limits<double>::infinity();
             double bestAlong = 0.0;
-            const std::size_t samples =
-                std::max<std::size_t>(
-                    1, static_cast<std::size_t>(
-                           std::ceil(length / (destinationPosition ? 1.0 : 2.0))));
+            const std::size_t samples = std::max<std::size_t>(
+                1, static_cast<std::size_t>(std::ceil(length / (destinationPosition ? 1.0 : 2.0))));
             for (std::size_t sample = 0; sample <= samples; ++sample) {
                 const double along = length * static_cast<double>(sample) / samples;
                 const auto pose = sampleMapTrafficRoute(single, along, 0.0);
@@ -3916,15 +3916,14 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
             if (!route) {
                 continue;
             }
-            const double lateralOffsetMeters =
-                mapTrafficPedestrianLateralOffset(*route, seed);
+            const double lateralOffsetMeters = mapTrafficPedestrianLateralOffset(*route, seed);
             if (!destinationPosition) {
                 if (route->totalLength - candidate.distanceAlongLane < 5.0) {
                     continue;
                 }
-                const double destinationDistance = std::min(
-                    route->totalLength - 0.01,
-                    candidate.distanceAlongLane + 15.0 + static_cast<double>(seed % 31));
+                const double destinationDistance =
+                    std::min(route->totalLength - 0.01,
+                             candidate.distanceAlongLane + 15.0 + static_cast<double>(seed % 31));
                 const auto destination =
                     sampleMapTrafficRoute(*route, destinationDistance, lateralOffsetMeters);
                 if (!destination) {
@@ -3936,22 +3935,21 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
                     lateralOffsetMeters};
             }
 
-            const double lastRouteDistance =
-                std::min(route->totalLength - 0.01,
-                         candidate.distanceAlongLane + maximumRouteMeters);
+            const double lastRouteDistance = std::min(
+                route->totalLength - 0.01, candidate.distanceAlongLane + maximumRouteMeters);
             if (lastRouteDistance < candidate.distanceAlongLane) {
                 continue;
             }
             const auto routeView = std::make_shared<const MapTrafficRoute>(*route);
             const double routeSpan = lastRouteDistance - candidate.distanceAlongLane;
-            const std::size_t sampleCount = std::max<std::size_t>(
-                1, static_cast<std::size_t>(std::ceil(routeSpan / 0.5)));
+            const std::size_t sampleCount =
+                std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(routeSpan / 0.5)));
             for (std::size_t sample = 0; sample <= sampleCount; ++sample) {
                 const double destinationDistance =
                     candidate.distanceAlongLane +
                     routeSpan * static_cast<double>(sample) / static_cast<double>(sampleCount);
-                const auto destination = sampleMapTrafficRoute(
-                    *route, destinationDistance, lateralOffsetMeters);
+                const auto destination =
+                    sampleMapTrafficRoute(*route, destinationDistance, lateralOffsetMeters);
                 if (!destination) {
                     throw std::runtime_error("Cannot sample a pedestrian destination");
                 }
@@ -3964,14 +3962,12 @@ std::optional<MapPassengerPedestrianJourney> MapTrafficLaneNetwork::passengerJou
                 if (connectorDistance > maximumConnectorMeters) {
                     continue;
                 }
-                const double walkingDistance =
-                    candidate.distanceToStop +
-                    destinationDistance - candidate.distanceAlongLane + connectorDistance;
+                const double walkingDistance = candidate.distanceToStop + destinationDistance -
+                                               candidate.distanceAlongLane + connectorDistance;
                 if (walkingDistance < bestWalkingDistance) {
                     bestWalkingDistance = walkingDistance;
                     bestJourney = MapPassengerPedestrianJourney{
-                        routeView,
-                        candidate.distanceAlongLane, destinationDistance,
+                        routeView, candidate.distanceAlongLane, destinationDistance,
                         destination->position, lateralOffsetMeters};
                 }
             }

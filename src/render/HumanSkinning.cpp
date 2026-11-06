@@ -34,8 +34,7 @@ double smoothWeight(double lower, double upper, double value) {
     return t * t * (3.0 - 2.0 * t);
 }
 
-double distanceToSegment(const std::array<double, 3>& point,
-                         const std::array<double, 3>& start,
+double distanceToSegment(const std::array<double, 3>& point, const std::array<double, 3>& start,
                          const std::array<double, 3>& end) {
     std::array<double, 3> segment;
     std::array<double, 3> offset;
@@ -172,8 +171,7 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
     const double armProximity = std::max(upperArmAffinity, lowerArmAffinity) * (1.0 - leg);
     const double armWeight = std::max(arm, armProximity);
     const double armAffinity = upperArmAffinity + lowerArmAffinity;
-    const double upperArmFraction =
-        armAffinity > 1.0e-6 ? upperArmAffinity / armAffinity : 1.0;
+    const double upperArmFraction = armAffinity > 1.0e-6 ? upperArmAffinity / armAffinity : 1.0;
     weights[humanBoneSlotIndex(upperLeg)] = static_cast<float>(leg * (1.0 - lowerLeg));
     weights[humanBoneSlotIndex(lowerLegSlot)] = static_cast<float>(leg * lowerLeg);
     weights[humanBoneSlotIndex(upperArm)] = static_cast<float>(armWeight * upperArmFraction);
@@ -181,11 +179,10 @@ HumanVertexWeights inferHumanSkinWeights(const std::array<double, 3>& position,
         static_cast<float>(armWeight * (1.0 - upperArmFraction));
     const double torso = std::max(0.0, 1.0 - leg - armWeight);
     const double waistHeight = std::max(joints.hip[2], joints.waist[2]);
-    double pelvisFraction = 1.0 - smoothWeight(waistHeight - 0.05 * height,
-                                               waistHeight + 0.05 * height, position[2]);
+    double pelvisFraction =
+        1.0 - smoothWeight(waistHeight - 0.05 * height, waistHeight + 0.05 * height, position[2]);
     double neckFraction =
-        smoothWeight(joints.neck[2] - 0.08 * height, joints.neck[2] + 0.02 * height,
-                     position[2]);
+        smoothWeight(joints.neck[2] - 0.08 * height, joints.neck[2] + 0.02 * height, position[2]);
     const double spineFraction = pelvisFraction + neckFraction;
     if (spineFraction > 1.0) {
         pelvisFraction /= spineFraction;

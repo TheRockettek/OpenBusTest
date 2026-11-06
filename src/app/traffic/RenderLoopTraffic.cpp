@@ -1473,18 +1473,19 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     auto busPose = *sampledBus;
                     busPose.position[2] += trafficVehicle.vehicle->aiDeltaHeight;
                     stopService.alightingPositions = passengerAlightingPositions(
-                        *trafficVehicle.vehicle, busPose, *stopPose, mapRenderer_->leftHandTraffic(),
-                        trafficVehicle.actor.lateralOffsetMeters, trafficVehicle.actor.widthMeters);
-                    if (!trafficVehicle.vehicle->passengers->service.arrive(
-                            stopService)) {
+                        *trafficVehicle.vehicle, busPose, *stopPose,
+                        mapRenderer_->leftHandTraffic(), trafficVehicle.actor.lateralOffsetMeters,
+                        trafficVehicle.actor.widthMeters);
+                    if (!trafficVehicle.vehicle->passengers->service.arrive(stopService)) {
                         throw std::logic_error(
                             "Scheduled bus reached a passenger stop while already dwelling");
                     }
-                    if (trafficVehicle.vehicle->passengers->service
-                            .outOfRangeAssignedPassengers() > 0) {
+                    if (trafficVehicle.vehicle->passengers->service.outOfRangeAssignedPassengers() >
+                        0) {
                         gameLog.Warning(
                             "Scheduled bus reached stop " + std::to_string(stop.stopId) +
-                            " with assigned passenger destinations more than 200 m from their exits." +
+                            " with assigned passenger destinations more than 200 m from their "
+                            "exits." +
                             (stopService.passengersAlighting > 0
                                  ? " Forced alighting at this stop can override the distance check."
                                  : " Those passengers remain aboard."));

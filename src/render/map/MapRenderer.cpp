@@ -473,10 +473,14 @@ MapRenderer::passengerPedestrianJourneyNear(const std::array<double, 3>& stopPos
         throw std::logic_error("Pedestrian lane network is not ready");
     }
     constexpr double radius = 25.0;
-    const int minX = openbus::map::mapWorldTile(stopPosition[0] - radius, impl_->coordinates.tileSize);
-    const int maxX = openbus::map::mapWorldTile(stopPosition[0] + radius, impl_->coordinates.tileSize);
-    const int minY = openbus::map::mapWorldTile(stopPosition[1] - radius, impl_->coordinates.tileSize);
-    const int maxY = openbus::map::mapWorldTile(stopPosition[1] + radius, impl_->coordinates.tileSize);
+    const int minX =
+        openbus::map::mapWorldTile(stopPosition[0] - radius, impl_->coordinates.tileSize);
+    const int maxX =
+        openbus::map::mapWorldTile(stopPosition[0] + radius, impl_->coordinates.tileSize);
+    const int minY =
+        openbus::map::mapWorldTile(stopPosition[1] - radius, impl_->coordinates.tileSize);
+    const int maxY =
+        openbus::map::mapWorldTile(stopPosition[1] + radius, impl_->coordinates.tileSize);
     std::vector<std::pair<int, int>> tiles;
     for (int x = minX; x <= maxX; ++x) {
         for (int y = minY; y <= maxY; ++y) {
@@ -488,15 +492,14 @@ MapRenderer::passengerPedestrianJourneyNear(const std::array<double, 3>& stopPos
 }
 
 std::optional<openbus::map::MapPassengerPedestrianJourney>
-MapRenderer::passengerPedestrianJourneyBetween(
-    const std::array<double, 3>& startPosition,
-    const std::array<double, 3>& destinationPosition, std::size_t seed,
-    double maximumConnectorMeters, double maximumRouteMeters) const {
+MapRenderer::passengerPedestrianJourneyBetween(const std::array<double, 3>& startPosition,
+                                               const std::array<double, 3>& destinationPosition,
+                                               std::size_t seed, double maximumConnectorMeters,
+                                               double maximumRouteMeters) const {
     if (!humanTrafficLaneNetworkReady()) {
         throw std::logic_error("Pedestrian lane network is not ready");
     }
-    if (!std::ranges::all_of(startPosition,
-                             [](double value) { return std::isfinite(value); }) ||
+    if (!std::ranges::all_of(startPosition, [](double value) { return std::isfinite(value); }) ||
         !std::ranges::all_of(destinationPosition,
                              [](double value) { return std::isfinite(value); })) {
         throw std::invalid_argument("Pedestrian journey positions must be finite");
@@ -517,8 +520,8 @@ MapRenderer::passengerPedestrianJourneyBetween(
         }
     }
     return impl_->humanTrafficLaneNetwork.passengerJourneyBetween(
-        impl_->humanTrafficLaneNetwork.splineIdsInTiles(tiles), startPosition,
-        destinationPosition, seed, maximumConnectorMeters, maximumRouteMeters);
+        impl_->humanTrafficLaneNetwork.splineIdsInTiles(tiles), startPosition, destinationPosition,
+        seed, maximumConnectorMeters, maximumRouteMeters);
 }
 
 std::vector<int>
@@ -864,8 +867,9 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                 ", unweighted vertices=" + std::to_string(skin.unweightedVertices));
             }
             if (skin.hasWeights && !hasCompleteHumanSkinWeights(skin)) {
-                gameLog.Warning("Using approximate bone skinning instead of incomplete weights for " +
-                                openbus::pathToUtf8(part.objPath));
+                gameLog.Warning(
+                    "Using approximate bone skinning instead of incomplete weights for " +
+                    openbus::pathToUtf8(part.objPath));
                 skin.hasWeights = false;
             }
         } else if (!parsedPart.mesh->bones.empty() || !part.boneBindings.empty()) {
@@ -932,9 +936,9 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                     if (skin.hasWeights) {
                         seatedWeights = skin.vertices[positionIndex];
                     }
-                    const bool weighted = std::any_of(
-                        seatedWeights.begin(), seatedWeights.begin() + HUMAN_BONE_COUNT,
-                        [](float weight) { return weight > 0.0F; });
+                    const bool weighted =
+                        std::any_of(seatedWeights.begin(), seatedWeights.begin() + HUMAN_BONE_COUNT,
+                                    [](float weight) { return weight > 0.0F; });
                     if (!weighted) {
                         seatedWeights = inferHumanSkinWeights(
                             {(sourcePosition.x - horizontalCenter[0]) * modelScale,
@@ -1079,8 +1083,7 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
             if (skin.hasWeights) {
                 uploadWeights(batch.skinWeightBuffer, weightsByMaterial.at(materialIndex));
             } else if (inferSeatedWeights) {
-                uploadWeights(batch.skinWeightBuffer,
-                              seatedWeightsByMaterial.at(materialIndex));
+                uploadWeights(batch.skinWeightBuffer, seatedWeightsByMaterial.at(materialIndex));
             }
             if (inferSeatedWeights) {
                 uploadWeights(batch.seatedSkinWeightBuffer,

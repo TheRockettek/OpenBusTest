@@ -80,8 +80,7 @@ void RenderLoop::advancePlayerTimetableTrip() {
     const auto* trip = playerTimetable_.advance(
         passengerNetwork_.routes, passengerTimetableCourses_, &playerVehicle_->scripts->hofData());
     if (trip != nullptr) {
-        playerPassengerServiceRouteIndex_ =
-            playerTimetable_.state->selection.passengerRouteIndex;
+        playerPassengerServiceRouteIndex_ = playerTimetable_.state->selection.passengerRouteIndex;
         playerPassengerServiceNextStopIndex_ = playerTimetable_.state->selection.firstStopIndex;
         ++playerPassengerServiceGeneration_;
         applyPlayerTripAiPolicy(*trip, playerTimetable_.state->selection.driveAsAdditionalBus);

@@ -43,8 +43,8 @@ MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
           parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"))),
       roadConnections(mapDefinition.coordinates) {
     carParkChancePercent_ = carParkChancePercent();
-    gameLog.Log("Car-park vehicle occupancy chance: " +
-                std::to_string(carParkChancePercent_) + "%.");
+    gameLog.Log("Car-park vehicle occupancy chance: " + std::to_string(carParkChancePercent_) +
+                "%.");
     splineCantWidth =
         [this](const openbus::map::MapSplinePlacement& spline) -> std::optional<double> {
         const auto found = splineCantWidths.find(spline.assetPath);

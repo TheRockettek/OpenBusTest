@@ -270,8 +270,7 @@ int ScriptRuntime::Impl::safeGiveChangeCoin(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
     const float rawIndex = popSystemFloat(runtime);
     if (!std::isfinite(rawIndex) || rawIndex < 0.0F || std::floor(rawIndex) != rawIndex ||
-        static_cast<double>(rawIndex) >
-            static_cast<double>((std::numeric_limits<int>::max)())) {
+        static_cast<double>(rawIndex) > static_cast<double>((std::numeric_limits<int>::max)())) {
         return 0;
     }
     const int coinIndex = static_cast<int>(rawIndex);
@@ -285,14 +284,12 @@ int ScriptRuntime::Impl::safeGiveChangeCoin(lua_State* lua) {
     const double previousTotal = runtime->localState.get("cash_dispensed_total");
     const double total =
         (std::isfinite(previousTotal) && previousTotal > 0.0 ? previousTotal : 0.0) + amount;
-    runtime->localState.set(
-        "cash_dispensed_total",
-        static_cast<float>(
-            std::min(total, static_cast<double>((std::numeric_limits<float>::max)()))));
+    runtime->localState.set("cash_dispensed_total",
+                            static_cast<float>(std::min(
+                                total, static_cast<double>((std::numeric_limits<float>::max)()))));
     runtime->localState.set("cash_last_coin_value", amount);
     const float previousCount = runtime->localState.get("cash_dispensed_coin_count");
-    const float count =
-        std::isfinite(previousCount) && previousCount > 0.0F ? previousCount : 0.0F;
+    const float count = std::isfinite(previousCount) && previousCount > 0.0F ? previousCount : 0.0F;
     runtime->localState.set("cash_dispensed_coin_count",
                             std::min(count + 1.0F, (std::numeric_limits<float>::max)()));
     runtime->localState.set("cash_last_coin_index", static_cast<float>(coinIndex));
@@ -309,8 +306,7 @@ int ScriptRuntime::Impl::safeTicketName(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
     const float rawIndex = popSystemFloat(runtime);
     if (!std::isfinite(rawIndex) || rawIndex < 0.0F || std::floor(rawIndex) != rawIndex ||
-        static_cast<double>(rawIndex) >
-            static_cast<double>((std::numeric_limits<int>::max)())) {
+        static_cast<double>(rawIndex) > static_cast<double>((std::numeric_limits<int>::max)())) {
         return returnSystemString(lua, "");
     }
     const std::string key = "ticket_name_" + std::to_string(static_cast<int>(rawIndex));
@@ -324,8 +320,7 @@ int ScriptRuntime::Impl::safeTicketValue(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
     const float rawIndex = popSystemFloat(runtime);
     if (!std::isfinite(rawIndex) || rawIndex < 0.0F || std::floor(rawIndex) != rawIndex ||
-        static_cast<double>(rawIndex) >
-            static_cast<double>((std::numeric_limits<int>::max)())) {
+        static_cast<double>(rawIndex) > static_cast<double>((std::numeric_limits<int>::max)())) {
         return returnSystemFloat(lua, 0.0F);
     }
     const std::string key = "ticket_value_" + std::to_string(static_cast<int>(rawIndex));

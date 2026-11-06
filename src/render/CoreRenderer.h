@@ -28,8 +28,7 @@ enum class HumanBoneSlot : std::uint8_t {
     RightHand = 12,
     Count = 13,
 };
-inline constexpr std::size_t HUMAN_BONE_COUNT =
-    static_cast<std::size_t>(HumanBoneSlot::Count);
+inline constexpr std::size_t HUMAN_BONE_COUNT = static_cast<std::size_t>(HumanBoneSlot::Count);
 inline constexpr std::size_t HUMAN_WEIGHT_COUNT = 16;
 
 constexpr std::size_t humanBoneSlotIndex(HumanBoneSlot slot) noexcept {

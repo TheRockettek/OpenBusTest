@@ -74,8 +74,9 @@ PassengerStopRouteState makePlayerTimetableRoute(const openbus::map::MapAiTimeta
             route.profiles};
 }
 
-std::optional<std::size_t> PassengerNetwork::routeCallIndexForBusStop(
-    std::size_t routeIndex, const PassengerStops& busStops, std::size_t busStopIndex) const {
+std::optional<std::size_t>
+PassengerNetwork::routeCallIndexForBusStop(std::size_t routeIndex, const PassengerStops& busStops,
+                                           std::size_t busStopIndex) const {
     if (routeIndex >= routes.size() || busStopIndex >= busStops.size()) {
         return std::nullopt;
     }
@@ -333,9 +334,8 @@ const std::vector<WaitingPassenger>& PassengerNetwork::waitingPassengers(int sto
                     const auto destinationPose = route.stopPose(destination);
                     if (destinationId > 0 && destinationPose &&
                         seen.emplace(routeIndex, origin, destination).second) {
-                        candidates.push_back(
-                            {routeIndex, destinationId, destinationPose->position, false,
-                             std::nullopt, origin, destination});
+                        candidates.push_back({routeIndex, destinationId, destinationPose->position,
+                                              false, std::nullopt, origin, destination});
                     }
                 }
             }
@@ -378,7 +378,8 @@ bool PassengerNetwork::passengerMatchesService(
     }
     const auto& actual = routes[routeIndex];
     const bool sameService = passenger.journey->routeIndex == routeIndex;
-    if (!sameService || !service.acceptsPassengerDestination(passenger.journey->destinationStopId)) {
+    if (!sameService ||
+        !service.acceptsPassengerDestination(passenger.journey->destinationStopId)) {
         return false;
     }
     const std::size_t originIndex = passenger.journey->originStopIndex;
@@ -394,9 +395,9 @@ bool PassengerNetwork::passengerMatchesService(
                                   ? passenger.journey->pedestrianJourney->destination
                                   : passenger.journey->destinationPosition;
     const auto pose = actual.stopPose(destinationIndex);
-    return pose && std::hypot(pose->position[0] - destination[0],
-                              pose->position[1] - destination[1]) <=
-                       openbus::map::passengerStopRequestRadiusMeters;
+    return pose &&
+           std::hypot(pose->position[0] - destination[0], pose->position[1] - destination[1]) <=
+               openbus::map::passengerStopRequestRadiusMeters;
 }
 
 std::optional<std::size_t>
@@ -555,13 +556,11 @@ PassengerStops::Container mapPassengerStopsToTrafficRoute(
     return mappedStops;
 }
 
-NearbyPassengerStop PassengerNetwork::findNearestStop(const std::array<double, 3>& position,
-                                                      double headingRadians,
-                                                      std::optional<std::size_t> selectedRouteIndex,
-                                                      std::size_t firstStopIndex,
-                                                      const std::function<std::optional<std::array<double, 3>>(
-                                                          const openbus::map::MapTrafficPassengerStop&)>&
-                                                          resolvePosition) const {
+NearbyPassengerStop PassengerNetwork::findNearestStop(
+    const std::array<double, 3>& position, double headingRadians,
+    std::optional<std::size_t> selectedRouteIndex, std::size_t firstStopIndex,
+    const std::function<std::optional<std::array<double, 3>>(
+        const openbus::map::MapTrafficPassengerStop&)>& resolvePosition) const {
     NearbyPassengerStop nearest;
     for (std::size_t routeIndex = 0; routeIndex < routes.size(); ++routeIndex) {
         if (selectedRouteIndex && routeIndex != *selectedRouteIndex) {
@@ -576,8 +575,8 @@ NearbyPassengerStop PassengerNetwork::findNearestStop(const std::array<double, 3
             if (!pose) {
                 continue;
             }
-            const auto resolved = resolvePosition ? resolvePosition(route.stops[stopIndex])
-                                                  : std::nullopt;
+            const auto resolved =
+                resolvePosition ? resolvePosition(route.stops[stopIndex]) : std::nullopt;
             const auto& stopPosition = resolved ? *resolved : pose->position;
             const double distance =
                 std::hypot(stopPosition[0] - position[0], stopPosition[1] - position[1]);

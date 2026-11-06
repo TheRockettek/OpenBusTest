@@ -270,11 +270,10 @@ discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
                     currentAppearance.reset();
                     continue;
                 }
-                auto appearance =
-                    std::find_if(appearances.begin(), appearances.end(),
-                                 [&](const VehicleAppearance& candidate) {
-                                     return lower(candidate.name) == lower(name);
-                                 });
+                auto appearance = std::find_if(appearances.begin(), appearances.end(),
+                                               [&](const VehicleAppearance& candidate) {
+                                                   return lower(candidate.name) == lower(name);
+                                               });
                 if (appearance == appearances.end()) {
                     appearances.push_back({name, ctiPath, {}, {}});
                     currentAppearance = appearances.size() - 1;
@@ -316,14 +315,12 @@ discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
     return appearances;
 }
 
-const VehicleAppearance*
-findVehicleAppearance(const std::vector<VehicleAppearance>& appearances,
-                      const std::string& name) {
+const VehicleAppearance* findVehicleAppearance(const std::vector<VehicleAppearance>& appearances,
+                                               const std::string& name) {
     const std::string requested = lower(trim(name));
     const auto appearance = std::find_if(
-        appearances.begin(), appearances.end(), [&](const VehicleAppearance& candidate) {
-            return lower(candidate.name) == requested;
-        });
+        appearances.begin(), appearances.end(),
+        [&](const VehicleAppearance& candidate) { return lower(candidate.name) == requested; });
     return appearance == appearances.end() ? nullptr : &*appearance;
 }
 
@@ -343,8 +340,7 @@ std::vector<VehicleDepot> discoverVehicleDepots(const std::filesystem::path& veh
     return depots;
 }
 
-std::vector<VehicleDepot>
-discoverAllVehicleDepots(const std::filesystem::path& vehiclesDirectory) {
+std::vector<VehicleDepot> discoverAllVehicleDepots(const std::filesystem::path& vehiclesDirectory) {
     std::error_code error;
     if (!std::filesystem::is_directory(vehiclesDirectory, error) || error) {
         throw std::runtime_error("OMSI Vehicles directory is unavailable: " +

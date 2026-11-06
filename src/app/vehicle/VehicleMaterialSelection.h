@@ -21,8 +21,7 @@ inline std::string normalizeCtcTextureKey(std::string value) {
     return value;
 }
 
-inline std::unordered_map<std::string, std::string>
-buildCtcTextureReplacements(
+inline std::unordered_map<std::string, std::string> buildCtcTextureReplacements(
     const std::vector<ModelCtcTexture>& modelTextures,
     const std::unordered_map<std::string, std::string>& appearanceReplacements) {
     std::unordered_map<std::string, std::string> selectedBySlot;
@@ -39,17 +38,17 @@ buildCtcTextureReplacements(
             continue;
         }
         const auto selected = selectedBySlot.find(slot);
-        const std::string& replacement = selected == selectedBySlot.end()
-                                             ? texture.textureName
-                                             : selected->second;
+        const std::string& replacement =
+            selected == selectedBySlot.end() ? texture.textureName : selected->second;
         replacements[slot] = replacement;
         replacements[textureName] = replacement;
     }
     return replacements;
 }
 
-inline void applyCtiVariableReplacements(
-    Variables& variables, const std::unordered_map<std::string, float>& replacements) {
+inline void
+applyCtiVariableReplacements(Variables& variables,
+                             const std::unordered_map<std::string, float>& replacements) {
     for (const auto& [name, value] : replacements) {
         if (name.empty() || !std::isfinite(value)) {
             throw std::invalid_argument("CTI variable replacements must be named and finite");

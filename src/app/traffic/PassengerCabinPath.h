@@ -230,11 +230,11 @@ inline double passengerCabinQueueProgress(const PassengerCabinTravelPathData& pa
         return 0.0;
     }
     constexpr double queueSpacingMeters = 0.6;
-    const double nearDoorProgress = passengerAlightingDoorWaitProgress(path, hasSeat).value_or(
-        std::nextafter(1.0, 0.0));
+    const double nearDoorProgress =
+        passengerAlightingDoorWaitProgress(path, hasSeat).value_or(std::nextafter(1.0, 0.0));
     const double walkingPortion = hasSeat ? 1.0 - passengerSeatTransitionPortion : 1.0;
-    const double separation = walkingPortion * queueSpacingMeters *
-                              static_cast<double>(queuePosition) / length;
+    const double separation =
+        walkingPortion * queueSpacingMeters * static_cast<double>(queuePosition) / length;
     return std::clamp(nearDoorProgress - separation, 0.0, std::nextafter(1.0, 0.0));
 }
 

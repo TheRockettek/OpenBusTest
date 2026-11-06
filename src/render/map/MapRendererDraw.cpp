@@ -148,15 +148,14 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
     const double heightOffset =
         canSit ? humanSeatAnchorOffset(seat->seatHeight, seatedJoints, seatedFraction) +
                      (model->second.seatHeight
-                          ? humanConfiguredSeatHeightOffset(*model->second.seatHeight,
-                                                            seatedJoints, seatedFraction)
+                          ? humanConfiguredSeatHeightOffset(*model->second.seatHeight, seatedJoints,
+                                                            seatedFraction)
                           : 0.0)
                : 0.0;
     const double headingDegrees = pose.headingRadians * 180.0 / std::acos(-1.0);
-    const Matrix4 transform =
-        makeSceneryInstanceTransform(pose.position[0], pose.position[1],
-                                     pose.position[2] + heightOffset,
-                                     {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
+    const Matrix4 transform = makeSceneryInstanceTransform(
+        pose.position[0], pose.position[1], pose.position[2] + heightOffset,
+        {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
 
     pushMatrix();
     multiplyMatrix(transform);

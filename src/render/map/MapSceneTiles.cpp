@@ -53,11 +53,10 @@ void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
                 }
             }
             if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
-                const auto water =
-                    indexedTrafficWaterByTile.find(tileKey(tileX, tileY));
+                const auto water = indexedTrafficWaterByTile.find(tileKey(tileX, tileY));
                 if (water != indexedTrafficWaterByTile.end() &&
-                    !openbus::map::mapTrafficRouteSegmentClearsWater(
-                        segment, water->second, map.coordinates.tileSize)) {
+                    !openbus::map::mapTrafficRouteSegmentClearsWater(segment, water->second,
+                                                                     map.coordinates.tileSize)) {
                     recordSkipped(skipped, "map-wide scenery road paths without water clearance",
                                   "object ID=" + std::to_string(objectId) +
                                       " path=" + std::to_string(path.pathIndex));
@@ -99,8 +98,7 @@ void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
             for (const openbus::map::MapSceneryPose& authoredPose : poses) {
                 openbus::map::MapSceneryPose pose = authoredPose;
                 applyTerrainAlignment(pose, attachment.splineTerrainAlign,
-                                      "spline attachment ID=" +
-                                          std::to_string(attachment.id));
+                                      "spline attachment ID=" + std::to_string(attachment.id));
                 addPaths(attachment.id, tile.reference.x, tile.reference.y, attachment.assetPath,
                          pose, attachment.rules);
             }
@@ -188,8 +186,7 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId, bool useCache) {
         if (object.attachmentIndex < 0) {
             return std::nullopt;
         }
-        const SceneryObjectConfig* parentMetadata =
-            loadSceneryObjectMetadata(parent->assetPath);
+        const SceneryObjectConfig* parentMetadata = loadSceneryObjectMetadata(parent->assetPath);
         if (parentMetadata != nullptr) {
             if (!parentMetadata->attachmentPoints.empty()) {
                 const std::optional<std::size_t> attachmentOffset =
@@ -205,12 +202,11 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId, bool useCache) {
         } else if (object.attachmentIndex != 0) {
             return std::nullopt;
         }
-        ResolvedSceneryPlacement resolved{
-            object.assetPath,
-            openbus::map::composeMapAttachedObjectPose(
-                parent->pose, attachment.translation, attachment.rotationDegrees,
-                object.rotationDegrees),
-            parent->worldHeightResolved};
+        ResolvedSceneryPlacement resolved{object.assetPath,
+                                          openbus::map::composeMapAttachedObjectPose(
+                                              parent->pose, attachment.translation,
+                                              attachment.rotationDegrees, object.rotationDegrees),
+                                          parent->worldHeightResolved};
         applyTerrainAlignment(resolved.pose, object.splineTerrainAlign,
                               "attached object ID=" + std::to_string(objectId));
         if (useCache && resolved.worldHeightResolved) {
@@ -382,8 +378,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             int listIndex = 0;
             if (!placementLabels.empty() && !placementLabels.front().empty()) {
                 const std::string& selector = placementLabels.front();
-                const auto [end, error] = std::from_chars(
-                    selector.data(), selector.data() + selector.size(), listIndex);
+                const auto [end, error] =
+                    std::from_chars(selector.data(), selector.data() + selector.size(), listIndex);
                 if (error != std::errc{} || end != selector.data() + selector.size() ||
                     listIndex < 0) {
                     recordSkipped(skipped, "[carpark_p] markers with invalid park-list indexes",
@@ -392,9 +388,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 }
             }
             const std::vector<std::string>& candidates = loadCarparkVehicleList(listIndex);
-            const std::optional<std::size_t> selected =
-                openbus::map::selectMapCarparkVehicle(carParkChancePercent_, candidates.size(),
-                                                      tileX, tileY, mapObjectId.value_or(0));
+            const std::optional<std::size_t> selected = openbus::map::selectMapCarparkVehicle(
+                carParkChancePercent_, candidates.size(), tileX, tileY, mapObjectId.value_or(0));
             if (!selected.has_value()) {
                 return;
             }
@@ -578,15 +573,15 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                             openbus::map::mapTrafficRulesForPath(*placementRules, path.pathIndex);
                     }
                     segment.pathRules = lane.pathRules;
-                    const auto indexedPaths =
-                        mapObjectId ? mapWideRoadSceneryPathIndexes.find(*mapObjectId)
-                                    : mapWideRoadSceneryPathIndexes.end();
+                    const auto indexedPaths = mapObjectId
+                                                  ? mapWideRoadSceneryPathIndexes.find(*mapObjectId)
+                                                  : mapWideRoadSceneryPathIndexes.end();
                     const bool indexedMapWide =
                         indexedPaths != mapWideRoadSceneryPathIndexes.end() &&
                         indexedPaths->second.contains(path.pathIndex);
                     if (!indexedMapWide && tileWater &&
-                               !openbus::map::mapTrafficRouteSegmentClearsWater(
-                                   lane, *tileWater, map.coordinates.tileSize)) {
+                        !openbus::map::mapTrafficRouteSegmentClearsWater(
+                            lane, *tileWater, map.coordinates.tileSize)) {
                         recordSkipped(skipped, "scenery road paths without water clearance",
                                       tileName +
                                           " object ID=" + std::to_string(mapObjectId.value_or(0)) +

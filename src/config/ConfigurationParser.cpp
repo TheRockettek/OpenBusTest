@@ -134,10 +134,9 @@ void logUnhandledConfigurationTag(const std::string& format,
                              format + " file=" + location + " line=" + std::to_string(line));
 }
 
-void logConfigurationTagStatus(const std::string& format,
-                                const std::filesystem::path& sourcePath, std::size_t line,
-                                const std::string& tag, ConfigurationTagStatus status,
-                                const std::string& detail) {
+void logConfigurationTagStatus(const std::string& format, const std::filesystem::path& sourcePath,
+                               std::size_t line, const std::string& tag,
+                               ConfigurationTagStatus status, const std::string& detail) {
     std::error_code error;
     std::filesystem::path normalizedPath = std::filesystem::weakly_canonical(sourcePath, error);
     if (error) {
@@ -163,8 +162,8 @@ void logConfigurationTagStatus(const std::string& format,
         break;
     }
 
-    const std::string key = format + "\n" + location + "\n" + tag + "\n" + statusText + "\n" +
-                            detail;
+    const std::string key =
+        format + "\n" + location + "\n" + tag + "\n" + statusText + "\n" + detail;
     {
         std::lock_guard<std::mutex> lock(tagStatusMutex);
         if (!loggedTagStatuses.insert(key).second) {
@@ -172,8 +171,8 @@ void logConfigurationTagStatus(const std::string& format,
         }
     }
     configurationLog.Log(level, "Configuration tag [" + tag + "] " + statusText + ": " + detail +
-                                     " in " + format + " file=" + location +
-                                     " line=" + std::to_string(line));
+                                    " in " + format + " file=" + location +
+                                    " line=" + std::to_string(line));
 }
 
 bool Line::isKeyword() const {

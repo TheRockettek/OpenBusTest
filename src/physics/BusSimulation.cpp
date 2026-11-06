@@ -224,8 +224,7 @@ struct BusSimulation::Impl {
         }
         if (points.size() == passengerMassBodies.size() &&
             std::equal(points.begin(), points.end(), passengerMassBodies.begin(),
-                       [](const BusPassengerMassPoint& point,
-                          const PassengerMassBody& passenger) {
+                       [](const BusPassengerMassPoint& point, const PassengerMassBody& passenger) {
                            return point.seatIndex == passenger.seatIndex &&
                                   point.massKg == passenger.massKg &&
                                   point.localPosition == passenger.localPosition;
@@ -1148,8 +1147,7 @@ double BusSimulation::steeringAngle() const {
 
 std::array<double, 3> BusSimulation::centerOfGravity() const {
     const dReal chassisMass =
-        impl_->configuration.mass -
-        impl_->corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
+        impl_->configuration.mass - impl_->corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
     std::array<dReal, 3> center = {0.0, 0.0, 0.0};
     auto addBody = [&](dBodyID body, dReal bodyMass) {
         const dReal* position = dBodyGetPosition(body);

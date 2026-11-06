@@ -159,8 +159,7 @@ const char* ignoredKeywordReason(const std::string& keyword) {
     if (keyword == "terrainmapping") {
         return "terrain-mapping rendering is not implemented";
     }
-    if (keyword == "texchanges" || keyword == "newtexchangemaster" ||
-        keyword == "entries") {
+    if (keyword == "texchanges" || keyword == "newtexchangemaster" || keyword == "entries") {
         return "texture-change replacement is not implemented";
     }
     return nullptr;

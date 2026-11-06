@@ -290,7 +290,7 @@ class RenderLoop {
     void refreshPassengerWaitingPositions();
     void cancelMovingPlayerPassengerService(const BusSimulation& simulation);
     std::optional<openbus::map::MapTrafficPose> passengerQueuePose(int stopId,
-                                                                  std::size_t queueSlot) const;
+                                                                   std::size_t queueSlot) const;
     std::optional<openbus::map::MapTrafficPose>
     passengerQueuePose(int stopId, const openbus::app::WaitingPassenger& passenger) const;
     void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
@@ -539,8 +539,7 @@ class RenderLoop {
     std::unordered_set<int> reportedPassengerHandoffStops_;
     std::unordered_set<int> reportedPassengerDriftStops_;
     std::unordered_set<int> reportedPassengerTicketStops_;
-    std::map<int, std::vector<openbus::map::MapTrafficPose>>
-        passengerPedestrianQueuePositions_;
+    std::map<int, std::vector<openbus::map::MapTrafficPose>> passengerPedestrianQueuePositions_;
     bool passengerPedestrianQueuePositionsPrepared_ = false;
     std::map<std::pair<std::size_t, std::size_t>, openbus::map::MapPassengerPedestrianJourney>
         passengerPedestrianPaths_;
@@ -590,8 +589,7 @@ class RenderLoop {
         openbus::map::MapTrafficPose destinationPose;
         bool posesInitialized = false;
     };
-    std::unordered_map<Vehicle*,
-                       std::unordered_map<std::size_t, PassengerQueueApproachProgress>>
+    std::unordered_map<Vehicle*, std::unordered_map<std::size_t, PassengerQueueApproachProgress>>
         passengerQueueApproachProgress_;
     std::map<std::pair<int, std::size_t>, openbus::map::MapTrafficPose>
         passengerHeldQueuePositions_;
@@ -599,8 +597,7 @@ class RenderLoop {
         passengerRenderedQueuePositions_;
     std::optional<std::size_t> playerPassengerServiceRouteIndex_;
     std::size_t playerPassengerServiceNextStopIndex_ = 0;
-    std::optional<openbus::app::PlayerTimetableStopVisitLatch>
-        playerTimetableStopVisitLatch_;
+    std::optional<openbus::app::PlayerTimetableStopVisitLatch> playerTimetableStopVisitLatch_;
     std::uint64_t playerPassengerServiceGeneration_ = 0;
     std::uint64_t activePlayerPassengerStopServiceGeneration_ = 0;
     void publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,

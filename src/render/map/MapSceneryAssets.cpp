@@ -74,8 +74,7 @@ std::filesystem::path MapSceneLoader::resolveSceneryConfigPath(const std::string
     return std::filesystem::path{};
 }
 
-const SceneryObjectConfig*
-MapSceneLoader::loadSceneryObjectMetadata(const std::string& assetPath) {
+const SceneryObjectConfig* MapSceneLoader::loadSceneryObjectMetadata(const std::string& assetPath) {
     const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
     if (configPath.empty()) {
         return nullptr;
@@ -94,8 +93,7 @@ MapSceneLoader::loadSceneryObjectMetadata(const std::string& assetPath) {
         return &entry->second;
     } catch (const std::exception& error) {
         recordSkipped(skipped, "scenery object metadata unavailable for map indexing",
-                      openbus::pathToUtf8(configPath) + ": " + error.what(), 1,
-                      LogLevel::Warning);
+                      openbus::pathToUtf8(configPath) + ": " + error.what(), 1, LogLevel::Warning);
         return nullptr;
     }
 }

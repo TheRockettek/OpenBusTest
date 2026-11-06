@@ -61,46 +61,74 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         return result;
     }
 
-    static const std::unordered_set<std::string> inlineModelKeywords = {
-        "mesh_ident",
-        "lod",
-        "alphascale",
-        "matl",
-        "matl_alpha",
-        "matl_bumpmap",
-        "matl_change",
-        "matl_envmap",
-        "matl_item",
-        "matl_freetex",
-        "matl_lightmap",
-        "matl_nightmap",
-        "matl_nozcheck",
-        "matl_nozwrite",
-        "matl_texadress_border",
-        "matl_texadress_clamp",
-        "matl_texadress_mirror",
-        "matl_texadress_mirroronce",
-        "matl_transmap",
-        "scripttexture",
-        "texttexture",
-        "texttexture_enh",
-        "texcoordtransx",
-        "texcoordtransy",
-        "usescripttexture",
-        "usetexttexture",
-        "visible",
-        "fixed",
-        "isshadow",
-        "viewpoint",
-        "shadow"};
+    static const std::unordered_set<std::string> inlineModelKeywords = {"mesh_ident",
+                                                                        "lod",
+                                                                        "alphascale",
+                                                                        "matl",
+                                                                        "matl_alpha",
+                                                                        "matl_bumpmap",
+                                                                        "matl_change",
+                                                                        "matl_envmap",
+                                                                        "matl_item",
+                                                                        "matl_freetex",
+                                                                        "matl_lightmap",
+                                                                        "matl_nightmap",
+                                                                        "matl_nozcheck",
+                                                                        "matl_nozwrite",
+                                                                        "matl_texadress_border",
+                                                                        "matl_texadress_clamp",
+                                                                        "matl_texadress_mirror",
+                                                                        "matl_texadress_mirroronce",
+                                                                        "matl_transmap",
+                                                                        "scripttexture",
+                                                                        "texttexture",
+                                                                        "texttexture_enh",
+                                                                        "texcoordtransx",
+                                                                        "texcoordtransy",
+                                                                        "usescripttexture",
+                                                                        "usetexttexture",
+                                                                        "visible",
+                                                                        "fixed",
+                                                                        "isshadow",
+                                                                        "viewpoint",
+                                                                        "shadow"};
     static const std::unordered_set<std::string> knownSceneryObjectKeywords = {
-        "description", "helparrow", "trafficlight", "busstop", "passengercabin", "groups",
-        "friendlyname", "model", "mesh", "new_attachment", "path", "traffic_lights_group",
-        "traffic_light", "phase", "approachdist", "use_traffic_light", "traffic_light_stop",
-        "traffic_light_jump", "tree", "boundingbox", "collision_mesh", "nocollision",
-        "onlyeditor", "carpark_p", "entrypoint", "absheight", "surface", "crashmode_pole",
-        "maplight", "complexity", "nightmapmode", "rendertype", "script", "varnamelist",
-        "stringvarnamelist", "constfile"};
+        "description",
+        "helparrow",
+        "trafficlight",
+        "busstop",
+        "passengercabin",
+        "groups",
+        "friendlyname",
+        "model",
+        "mesh",
+        "new_attachment",
+        "path",
+        "traffic_lights_group",
+        "traffic_light",
+        "phase",
+        "approachdist",
+        "use_traffic_light",
+        "traffic_light_stop",
+        "traffic_light_jump",
+        "tree",
+        "boundingbox",
+        "collision_mesh",
+        "nocollision",
+        "onlyeditor",
+        "carpark_p",
+        "entrypoint",
+        "absheight",
+        "surface",
+        "crashmode_pole",
+        "maplight",
+        "complexity",
+        "nightmapmode",
+        "rendertype",
+        "script",
+        "varnamelist",
+        "stringvarnamelist",
+        "constfile"};
 
     Line line;
     bool hasInlineModel = false;
@@ -124,7 +152,8 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                 } else if (keyword == "groups" || keyword == "friendlyname") {
                     ignoredReason = "editor metadata is not used at runtime";
                 } else if (keyword == "maplight") {
-                    ignoredReason = "map-light data is parsed but map-light rendering is not implemented";
+                    ignoredReason =
+                        "map-light data is parsed but map-light rendering is not implemented";
                 } else if (keyword == "complexity") {
                     ignoredReason =
                         "value retained but scenery detail filtering is not implemented";
@@ -133,9 +162,8 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                 }
                 openbus::config::logConfigurationTagStatus(
                     "scenery object (.sco)", configPath, line.number, line.keyword(),
-                    ignoredReason == nullptr
-                        ? openbus::config::ConfigurationTagStatus::Active
-                        : openbus::config::ConfigurationTagStatus::Ignored,
+                    ignoredReason == nullptr ? openbus::config::ConfigurationTagStatus::Active
+                                             : openbus::config::ConfigurationTagStatus::Ignored,
                     ignoredReason == nullptr ? "scenery-object record has runtime handling"
                                              : ignoredReason);
             }

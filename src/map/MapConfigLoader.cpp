@@ -1669,14 +1669,14 @@ struct MapChronoSelectorEdits {
     std::vector<MapTileRule> rules;
 };
 
-MapChronoSelectorEdits parseMapChronoSelectorEdits(
-    const MapChronoSelector& selector, const std::filesystem::path& path,
-    ConfigurationDiagnostics& diagnostics) {
+MapChronoSelectorEdits parseMapChronoSelectorEdits(const MapChronoSelector& selector,
+                                                   const std::filesystem::path& path,
+                                                   ConfigurationDiagnostics& diagnostics) {
     MapChronoSelectorEdits edits;
     const auto warn = [&](std::size_t line, const std::string& keyword,
                           const std::string& message) {
         openbus::config::logUnhandledConfigurationTag("Chrono map tile", path, line, keyword,
-                                                       message);
+                                                      message);
         diagnostics.warning(line, keyword, message);
     };
     for (std::size_t index = 0; index < selector.followingLines.size(); ++index) {
@@ -1716,8 +1716,8 @@ MapChronoSelectorEdits parseMapChronoSelectorEdits(
         if (section == "[delete]") {
             edits.deleteTarget = true;
             edits.deleteLine = line;
-        } else if (section == "[typ]" || section == "[relabel]" ||
-                   section == "[rule]" || section == "[kill_rule]") {
+        } else if (section == "[typ]" || section == "[relabel]" || section == "[rule]" ||
+                   section == "[kill_rule]") {
             std::size_t valueIndex = index + 1;
             while (valueIndex < selector.followingLines.size() &&
                    trim(selector.followingLines[valueIndex]).empty()) {
@@ -1748,8 +1748,7 @@ MapChronoSelectorEdits parseMapChronoSelectorEdits(
                     bool valid = true;
                     for (std::size_t fieldIndex = 0; fieldIndex < rule.fields.size();
                          ++fieldIndex) {
-                        const std::string& field =
-                            selector.followingLines[valueIndex + fieldIndex];
+                        const std::string& field = selector.followingLines[valueIndex + fieldIndex];
                         if (isSectionHeaderLine(trim(field))) {
                             warn(line, section.substr(1, section.size() - 2),
                                  "Chrono rule is truncated before its four fields");
@@ -1799,9 +1798,8 @@ void applyMapChronoSelector(MapTileData& tile, const MapChronoSelector& selector
                             const std::filesystem::path& path) {
     if (selector.keyword != "selobject" && selector.keyword != "selspline") {
         const std::string message = "Chrono selector operations are not implemented";
-        openbus::config::logUnhandledConfigurationTag("Chrono map tile", path,
-                                                       selector.sectionLine, selector.keyword,
-                                                       message);
+        openbus::config::logUnhandledConfigurationTag("Chrono map tile", path, selector.sectionLine,
+                                                      selector.keyword, message);
         tile.diagnostics.warning(selector.sectionLine, selector.keyword, message);
         return;
     }
@@ -1817,14 +1815,12 @@ void applyMapChronoSelector(MapTileData& tile, const MapChronoSelector& selector
             return spline.splineId == id;
         };
         const auto match = std::find_if(tile.splines.begin(), tile.splines.end(), matches);
-        const std::size_t matchCount =
-            static_cast<std::size_t>(std::count_if(tile.splines.begin(), tile.splines.end(),
-                                                   matches));
+        const std::size_t matchCount = static_cast<std::size_t>(
+            std::count_if(tile.splines.begin(), tile.splines.end(), matches));
         if (matchCount != 1) {
-            tile.diagnostics.warning(
-                selector.sectionLine, selector.keyword,
-                matchCount == 0 ? "selector ID did not match a tile spline"
-                                : "selector ID matched multiple tile splines");
+            tile.diagnostics.warning(selector.sectionLine, selector.keyword,
+                                     matchCount == 0 ? "selector ID did not match a tile spline"
+                                                     : "selector ID matched multiple tile splines");
             return;
         }
         if (edits.deleteTarget) {
@@ -1835,23 +1831,21 @@ void applyMapChronoSelector(MapTileData& tile, const MapChronoSelector& selector
                 std::any_of(tile.splines.begin(), tile.splines.end(),
                             [id](const MapSplinePlacement& spline) {
                                 return spline.splineId != id &&
-                                       (spline.previousSplineId == id ||
-                                        spline.nextSplineId == id);
+                                       (spline.previousSplineId == id || spline.nextSplineId == id);
                             });
-            const bool hasAttachments =
-                std::any_of(tile.splineAttachments.begin(), tile.splineAttachments.end(),
-                            [splineIndex](const MapSplineAttachment& attachment) {
-                                return attachment.splineIndex >= 0 &&
-                                       static_cast<std::size_t>(attachment.splineIndex) ==
-                                           splineIndex;
-                            });
+            const bool hasAttachments = std::any_of(
+                tile.splineAttachments.begin(), tile.splineAttachments.end(),
+                [splineIndex](const MapSplineAttachment& attachment) {
+                    return attachment.splineIndex >= 0 &&
+                           static_cast<std::size_t>(attachment.splineIndex) == splineIndex;
+                });
             if (hasLinkReferences || hasAttachments) {
                 const std::size_t line = edits.deleteLine.value_or(selector.sectionLine);
                 const std::string message =
                     "Chrono spline deletion is not applied because the spline has link "
                     "references or attached placements";
                 openbus::config::logUnhandledConfigurationTag("Chrono map tile", path, line,
-                                                               "delete", message);
+                                                              "delete", message);
                 tile.diagnostics.warning(line, "delete", message);
             } else {
                 tile.splines.erase(match);
@@ -1884,17 +1878,17 @@ void applyMapChronoSelector(MapTileData& tile, const MapChronoSelector& selector
 
     const auto matches = [id](const auto& placement) { return placement.id == id; };
     const std::size_t matchCount =
-        static_cast<std::size_t>(std::count_if(tile.sceneryObjects.begin(),
-                                               tile.sceneryObjects.end(), matches)) +
-        static_cast<std::size_t>(std::count_if(tile.attachedObjects.begin(),
-                                               tile.attachedObjects.end(), matches)) +
-        static_cast<std::size_t>(std::count_if(tile.splineAttachments.begin(),
-                                               tile.splineAttachments.end(), matches));
+        static_cast<std::size_t>(
+            std::count_if(tile.sceneryObjects.begin(), tile.sceneryObjects.end(), matches)) +
+        static_cast<std::size_t>(
+            std::count_if(tile.attachedObjects.begin(), tile.attachedObjects.end(), matches)) +
+        static_cast<std::size_t>(
+            std::count_if(tile.splineAttachments.begin(), tile.splineAttachments.end(), matches));
     if (matchCount != 1) {
-        tile.diagnostics.warning(
-            selector.sectionLine, selector.keyword,
-            matchCount == 0 ? "selector ID did not match a base tile object"
-                            : "selector ID matched multiple base tile objects");
+        tile.diagnostics.warning(selector.sectionLine, selector.keyword,
+                                 matchCount == 0
+                                     ? "selector ID did not match a base tile object"
+                                     : "selector ID matched multiple base tile objects");
         return;
     }
     if (!edits.deleteTarget && !edits.assetPath.has_value() && !edits.labels.has_value() &&
@@ -2039,9 +2033,9 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
             MapTileReference& tile = map.tiles[tileIndex->second];
             if (!tile.chronoBaseAssets.has_value()) {
                 tile.chronoBaseAssets = MapChronoBaseAssets{
-                    tile.textPath,          tile.terrainPath, tile.hasTerrainFile,
-                    tile.waterPath,         tile.hasWaterFile, tile.lightmapPath,
-                    tile.hasLightmapFile,   tile.groundTextureSidecars};
+                    tile.textPath,        tile.terrainPath,          tile.hasTerrainFile,
+                    tile.waterPath,       tile.hasWaterFile,         tile.lightmapPath,
+                    tile.hasLightmapFile, tile.groundTextureSidecars};
             }
             tile.chronoOverlayPaths.push_back(tileIterator->path());
             tile.textPath = tileIterator->path();
@@ -2098,14 +2092,29 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
 
     openbus::rendering::TraceScope manifestTrace("map", "MapConfigLoader.parseGlobalCfg");
     static const std::unordered_set<std::string> knownGlobalSections = {
-        "[name]",          "[friendlyname]",       "[version]",
-        "[NextIDCode]",    "[description]",        "[worldcoordinates]",
-        "[dynhelperactive]", "[realrail]",          "[LHT]",
-        "[backgroundimage]", "[mapcam]",            "[moneysystem]",
-        "[ticketpack]",    "[repair_time_min]",    "[years]",
-        "[realyearoffset]", "[standarddepot]",     "[addseason]",
-        "[trafficdensity_road]", "[trafficdensity_passenger]", "[groundtex]",
-        "[entrypoints]",   "[map]"};
+        "[name]",
+        "[friendlyname]",
+        "[version]",
+        "[NextIDCode]",
+        "[description]",
+        "[worldcoordinates]",
+        "[dynhelperactive]",
+        "[realrail]",
+        "[LHT]",
+        "[backgroundimage]",
+        "[mapcam]",
+        "[moneysystem]",
+        "[ticketpack]",
+        "[repair_time_min]",
+        "[years]",
+        "[realyearoffset]",
+        "[standarddepot]",
+        "[addseason]",
+        "[trafficdensity_road]",
+        "[trafficdensity_passenger]",
+        "[groundtex]",
+        "[entrypoints]",
+        "[map]"};
     for (; cursor < lines.size();) {
         const std::size_t sectionLine = cursor;
         const std::string section = trim(lines[cursor]);
@@ -2137,20 +2146,19 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                 } else if (section == "[standarddepot]") {
                     ignoredReason = "standard depot is retained but not selected at runtime";
                 } else if (section == "[addseason]") {
-                    ignoredReason = "season metadata is retained but seasonal switching is not implemented";
+                    ignoredReason =
+                        "season metadata is retained but seasonal switching is not implemented";
                 }
                 openbus::config::logConfigurationTagStatus(
                     "global.cfg", globalPath, sectionLine + 1, keyword,
-                    ignoredReason == nullptr
-                        ? openbus::config::ConfigurationTagStatus::Active
-                        : openbus::config::ConfigurationTagStatus::Ignored,
+                    ignoredReason == nullptr ? openbus::config::ConfigurationTagStatus::Active
+                                             : openbus::config::ConfigurationTagStatus::Ignored,
                     ignoredReason == nullptr ? "global map record has runtime handling"
                                              : ignoredReason);
             } else {
                 openbus::config::logConfigurationTagStatus(
                     "global.cfg", globalPath, sectionLine + 1, keyword,
-                    openbus::config::ConfigurationTagStatus::Unknown,
-                    "unknown global.cfg section");
+                    openbus::config::ConfigurationTagStatus::Unknown, "unknown global.cfg section");
             }
         }
         if (section == "[name]") {
@@ -2525,10 +2533,9 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
                 definition.chattiness = values[2];
                 definition.whingeProbability = values[3];
             } else {
-                definition.diagnostics.warning(
-                    lineIndex + 1, "ticketpack",
-                    "invalid or incomplete ticket-pack properties in " +
-                        pathToUtf8(ticketPackPath.filename()));
+                definition.diagnostics.warning(lineIndex + 1, "ticketpack",
+                                               "invalid or incomplete ticket-pack properties in " +
+                                                   pathToUtf8(ticketPackPath.filename()));
             }
             if (next > lineIndex + 1) {
                 lineIndex = next - 1;
@@ -2539,11 +2546,10 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
             bool valid = false;
             if (fields.size() == 7) {
                 valid = !fields[0].empty() && !fields[1].empty() &&
-                        parseInteger(fields[2], ticket.maxStations) &&
-                        ticket.maxStations >= 0 && parseReal(fields[3], ticket.ageMin) &&
-                        ticket.ageMin >= 0.0 && parseReal(fields[4], ticket.ageMax) &&
-                        ticket.ageMax >= ticket.ageMin && parseReal(fields[5], ticket.value) &&
-                        ticket.value >= 0.0 &&
+                        parseInteger(fields[2], ticket.maxStations) && ticket.maxStations >= 0 &&
+                        parseReal(fields[3], ticket.ageMin) && ticket.ageMin >= 0.0 &&
+                        parseReal(fields[4], ticket.ageMax) && ticket.ageMax >= ticket.ageMin &&
+                        parseReal(fields[5], ticket.value) && ticket.value >= 0.0 &&
                         ticket.value <= static_cast<double>((std::numeric_limits<float>::max)());
                 if (valid) {
                     ticket.name = unquote(std::move(fields[0]));
@@ -3392,11 +3398,24 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         return tileVersion;
     };
     static const std::unordered_set<std::string> knownTileSections = {
-        "[version]", "[terrain]", "[water]", "[variable_terrain]",
-        "[variable_terrainlightmap]", "[spline]", "[spline_h]", "[object]",
-        "[attachObj]", "[splineAttachement]", "[splineAttachement_repeater]",
-        "[varparent]", "[spline_terrain_align]", "[spline_terrain_align_2]",
-        "[rule]", "[kill_rule]", "[selobject]", "[selspline]"};
+        "[version]",
+        "[terrain]",
+        "[water]",
+        "[variable_terrain]",
+        "[variable_terrainlightmap]",
+        "[spline]",
+        "[spline_h]",
+        "[object]",
+        "[attachObj]",
+        "[splineAttachement]",
+        "[splineAttachement_repeater]",
+        "[varparent]",
+        "[spline_terrain_align]",
+        "[spline_terrain_align_2]",
+        "[rule]",
+        "[kill_rule]",
+        "[selobject]",
+        "[selspline]"};
     enum class ModifierTarget { None, SceneryObject, AttachedObject, SplineAttachment, Spline };
     ModifierTarget modifierTarget = ModifierTarget::None;
     std::size_t modifierTargetIndex = 0;
@@ -3411,23 +3430,22 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 } else if (section == "[variable_terrainlightmap]") {
                     ignoredReason = "dynamic terrain lightmap behavior is not implemented";
                 } else if (section == "[spline_terrain_align_2]") {
-                    ignoredReason = "record is retained but its runtime behavior is not implemented";
+                    ignoredReason =
+                        "record is retained but its runtime behavior is not implemented";
                 } else if ((section == "[selobject]" || section == "[selspline]") &&
                            chronoData == nullptr) {
                     ignoredReason = "Chrono selector records are only applied to Chrono map tiles";
                 }
                 openbus::config::logConfigurationTagStatus(
                     "map tile", tile.textPath, cursor + 1, keyword,
-                    ignoredReason == nullptr
-                        ? openbus::config::ConfigurationTagStatus::Active
-                        : openbus::config::ConfigurationTagStatus::Ignored,
+                    ignoredReason == nullptr ? openbus::config::ConfigurationTagStatus::Active
+                                             : openbus::config::ConfigurationTagStatus::Ignored,
                     ignoredReason == nullptr ? "map tile record has runtime handling"
                                              : ignoredReason);
             } else {
                 openbus::config::logConfigurationTagStatus(
                     "map tile", tile.textPath, cursor + 1, keyword,
-                    openbus::config::ConfigurationTagStatus::Unknown,
-                    "unknown map tile section");
+                    openbus::config::ConfigurationTagStatus::Unknown, "unknown map tile section");
             }
         }
         const bool isModifier = section == "[varparent]" || section == "[spline_terrain_align]" ||
@@ -3930,11 +3948,10 @@ MapTileData loadMapTile(const MapTileReference& tile) {
         MapChronoTileData chronoData;
         MapTileData overlayData = loadMapTileInternal(overlayReference, &chronoData);
         for (const MapSplinePlacement& spline : overlayData.splines) {
-            const auto existing = std::find_if(
-                baseData.splines.begin(), baseData.splines.end(),
-                [&](const MapSplinePlacement& candidate) {
-                    return candidate.splineId == spline.splineId;
-                });
+            const auto existing = std::find_if(baseData.splines.begin(), baseData.splines.end(),
+                                               [&](const MapSplinePlacement& candidate) {
+                                                   return candidate.splineId == spline.splineId;
+                                               });
             if (existing == baseData.splines.end()) {
                 baseData.splines.push_back(spline);
             } else {
@@ -3946,7 +3963,7 @@ MapTileData loadMapTile(const MapTileReference& tile) {
             std::erase_if(baseData.attachedObjects, matches);
             std::erase_if(baseData.splineAttachments, matches);
             const auto existing = std::find_if(baseData.sceneryObjects.begin(),
-                                                baseData.sceneryObjects.end(), matches);
+                                               baseData.sceneryObjects.end(), matches);
             if (existing == baseData.sceneryObjects.end()) {
                 baseData.sceneryObjects.push_back(object);
             } else {
@@ -3958,7 +3975,7 @@ MapTileData loadMapTile(const MapTileReference& tile) {
             std::erase_if(baseData.sceneryObjects, matches);
             std::erase_if(baseData.splineAttachments, matches);
             const auto existing = std::find_if(baseData.attachedObjects.begin(),
-                                                baseData.attachedObjects.end(), matches);
+                                               baseData.attachedObjects.end(), matches);
             if (existing == baseData.attachedObjects.end()) {
                 baseData.attachedObjects.push_back(object);
             } else {
@@ -3972,7 +3989,7 @@ MapTileData loadMapTile(const MapTileReference& tile) {
             std::erase_if(baseData.sceneryObjects, matches);
             std::erase_if(baseData.attachedObjects, matches);
             const auto existing = std::find_if(baseData.splineAttachments.begin(),
-                                                baseData.splineAttachments.end(), matches);
+                                               baseData.splineAttachments.end(), matches);
             if (existing == baseData.splineAttachments.end()) {
                 baseData.splineAttachments.push_back(attachment);
             } else {
@@ -3990,14 +4007,14 @@ MapTileData loadMapTile(const MapTileReference& tile) {
                                             overlayData.diagnostics.entries.begin(),
                                             overlayData.diagnostics.entries.end());
     }
-    baseData.splineCount = static_cast<std::size_t>(std::count_if(
-        baseData.splines.begin(), baseData.splines.end(),
-        [](const MapSplinePlacement& spline) { return !spline.elevated; }));
+    baseData.splineCount = static_cast<std::size_t>(
+        std::count_if(baseData.splines.begin(), baseData.splines.end(),
+                      [](const MapSplinePlacement& spline) { return !spline.elevated; }));
     baseData.elevatedSplineCount = baseData.splines.size() - baseData.splineCount;
     baseData.objectCount = baseData.sceneryObjects.size();
-    baseData.splineAttachmentCount = static_cast<std::size_t>(std::count_if(
-        baseData.splineAttachments.begin(), baseData.splineAttachments.end(),
-        [](const MapSplineAttachment& attachment) { return !attachment.repeater; }));
+    baseData.splineAttachmentCount = static_cast<std::size_t>(
+        std::count_if(baseData.splineAttachments.begin(), baseData.splineAttachments.end(),
+                      [](const MapSplineAttachment& attachment) { return !attachment.repeater; }));
     baseData.splineRepeaterCount =
         baseData.splineAttachments.size() - baseData.splineAttachmentCount;
     baseData.reference = tile;

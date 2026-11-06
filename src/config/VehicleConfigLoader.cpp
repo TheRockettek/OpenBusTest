@@ -203,8 +203,8 @@ std::string ignoredPassengerCabinKeywordReason(const std::string& keyword) {
 
 const std::unordered_set<std::string>& passengerPathKeywords() {
     static const std::unordered_set<std::string> keywords = {
-        "pathpnt",          "pathlink",        "pathlink_oneway",
-        "stepsoundpack",    "next_stepsound",  "next_roomheight",
+        "pathpnt",       "pathlink",       "pathlink_oneway",
+        "stepsoundpack", "next_stepsound", "next_roomheight",
     };
     return keywords;
 }
@@ -343,8 +343,7 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
         if (passengerCabinKeywords().find(keyword) != passengerCabinKeywords().end()) {
             const std::string ignoredReason = ignoredPassengerCabinKeywordReason(keyword);
             openbus::config::logConfigurationTagStatus(
-                "passengercabin.cfg", source.passengerCabinConfigPath, line.number,
-                line.keyword(),
+                "passengercabin.cfg", source.passengerCabinConfigPath, line.number, line.keyword(),
                 ignoredReason.empty() ? openbus::config::ConfigurationTagStatus::Active
                                       : openbus::config::ConfigurationTagStatus::Ignored,
                 ignoredReason.empty() ? "passenger-cabin record has runtime handling"
@@ -630,10 +629,10 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
         openbus::config::logUnhandledConfigurationTag("paths.cfg", source.pathsConfigPath,
                                                       line.number, line.keyword(),
                                                       "passenger-path keyword is not implemented");
-        openbus::config::logConfigurationTagStatus(
-            "paths.cfg", source.pathsConfigPath, line.number, line.keyword(),
-            openbus::config::ConfigurationTagStatus::Unknown,
-            "passenger-path keyword is not recognized");
+        openbus::config::logConfigurationTagStatus("paths.cfg", source.pathsConfigPath, line.number,
+                                                   line.keyword(),
+                                                   openbus::config::ConfigurationTagStatus::Unknown,
+                                                   "passenger-path keyword is not recognized");
     }
 }
 
@@ -828,8 +827,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
     std::size_t scheduleLine = 0;
     std::size_t ticketSellingLine = 0;
     std::size_t cogLine = 0;
-    const std::string configFormat =
-        kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg";
+    const std::string configFormat = kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg";
     Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
@@ -1238,8 +1236,8 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         if (unsupported != unsupportedVehicleKeywords().end()) {
             const std::string message = "recognized but unsupported: " + unsupported->second;
             result.diagnostics.warning(line.number, line.keyword(), message);
-            openbus::config::logUnhandledConfigurationTag(
-                configFormat, configPath, line.number, line.keyword(), message);
+            openbus::config::logUnhandledConfigurationTag(configFormat, configPath, line.number,
+                                                          line.keyword(), message);
             continue;
         }
         result.diagnostics.warning(line.number, line.keyword(), "unknown vehicle keyword");

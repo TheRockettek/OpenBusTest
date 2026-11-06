@@ -36,10 +36,9 @@ inline void synchronizePassengerDoorOpenVariables(Variables& variables) {
 }
 
 inline PassengerRequestVariables
-passengerRequestVariables(std::optional<std::size_t> entryDoor,
-                          std::optional<std::size_t> exitDoor, bool atPassengerStop,
-                          std::size_t waitingPassengers, bool boardingPassenger,
-                          bool alightingPassenger) {
+passengerRequestVariables(std::optional<std::size_t> entryDoor, std::optional<std::size_t> exitDoor,
+                          bool atPassengerStop, std::size_t waitingPassengers,
+                          bool boardingPassenger, bool alightingPassenger) {
     PassengerRequestVariables requests;
     if (!atPassengerStop) {
         return requests;

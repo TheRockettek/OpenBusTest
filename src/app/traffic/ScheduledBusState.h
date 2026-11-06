@@ -60,8 +60,7 @@ inline void rebaseScheduledBusClock(ScheduledBusState& bus, double startHour,
         return;
     }
     bus.nextScheduledDepartureIndex =
-        openbus::map::mapTrafficNextDepartureIndex(startHour, 0.0,
-                                                   bus.scheduledDepartureMinutes);
+        openbus::map::mapTrafficNextDepartureIndex(startHour, 0.0, bus.scheduledDepartureMinutes);
     bus.nextScheduledDepartureElapsedSeconds = openbus::map::mapTrafficNextDepartureElapsedSeconds(
         startHour, 0.0, bus.scheduledDepartureMinutes[bus.nextScheduledDepartureIndex]);
     if (bus.suppressedDeparture) {

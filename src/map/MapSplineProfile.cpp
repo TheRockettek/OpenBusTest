@@ -138,8 +138,8 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
     const auto logStatus = [&](std::size_t line, const std::string& tag,
                                openbus::config::ConfigurationTagStatus status,
                                const std::string& detail) {
-        openbus::config::logConfigurationTagStatus("spline profile (.sli)", path, line, tag,
-                                                   status, detail);
+        openbus::config::logConfigurationTagStatus("spline profile (.sli)", path, line, tag, status,
+                                                   detail);
     };
 
     for (std::size_t cursor = 0; cursor < lines.size();) {
@@ -162,9 +162,9 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             double width = 0.0;
             if (!readPayload(lines, cursor, widthText) || !parseReal(widthText, width) ||
                 width < 0.0) {
-                logStatus(sectionLine, "halfcantwidth",
-                          openbus::config::ConfigurationTagStatus::Ignored,
-                          "invalid or missing non-negative width; height-profile fallback retained");
+                logStatus(
+                    sectionLine, "halfcantwidth", openbus::config::ConfigurationTagStatus::Ignored,
+                    "invalid or missing non-negative width; height-profile fallback retained");
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "halfcantwidth",
                     "invalid or missing non-negative width; height-profile fallback retained");
@@ -195,8 +195,7 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             }
             heightProfile.valid = complete && numeric;
             profile.heightProfiles.push_back(std::move(heightProfile));
-            logStatus(sectionLine, "heightprofile",
-                      openbus::config::ConfigurationTagStatus::Active,
+            logStatus(sectionLine, "heightprofile", openbus::config::ConfigurationTagStatus::Active,
                       "height-profile record is retained for spline geometry");
         } else if (section == "[path]") {
             MapSplinePathDefinition pathDefinition;
@@ -301,8 +300,7 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 }
             } else {
                 currentSection = nullptr;
-                logStatus(sectionLine, "profile",
-                          openbus::config::ConfigurationTagStatus::Ignored,
+                logStatus(sectionLine, "profile", openbus::config::ConfigurationTagStatus::Ignored,
                           "missing texture index; profile strip ignored");
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "profile",

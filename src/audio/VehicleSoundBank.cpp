@@ -200,8 +200,8 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
         }
     };
     static const std::unordered_set<std::string> activeSoundKeywords = {
-        "sound", "loopsound", "trigger", "noloop", "loop", "looped", "viewpoint", "3d",
-        "volcurve", "conditionSingle"};
+        "sound",  "loopsound", "trigger", "noloop",   "loop",
+        "looped", "viewpoint", "3d",      "volcurve", "conditionSingle"};
     openbus::config::Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {

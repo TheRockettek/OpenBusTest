@@ -68,8 +68,8 @@ std::size_t selectMapSceneryLod(const std::vector<double>& thresholds, double di
 // Deterministically selects a weighted park-list entry for a map object ID.
 // Duplicate candidates in the list retain their authored selection weight.
 std::optional<std::size_t> selectMapCarparkVehicle(double occupancyPercent,
-                                                   std::size_t candidateCount, int tileX,
-                                                   int tileY, int objectId) noexcept;
+                                                   std::size_t candidateCount, int tileX, int tileY,
+                                                   int objectId) noexcept;
 
 // Places a spline-attachment row on its spline and subsequent linked splines in the same tile.
 // A repeater resumes the row at the encoded first-object index on its own spline.

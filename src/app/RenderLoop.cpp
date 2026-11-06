@@ -805,8 +805,8 @@ void RenderLoop::ResetMapClockEpoch(double previousSimulationTime, double newSim
         throw std::invalid_argument("Simulation time is invalid");
     }
     const MapCalendarRequest current = currentMapCalendar();
-    simulationState_.sharedVariables().configureSimulationClock(
-        current.year, current.month, current.day, current.timeSeconds);
+    simulationState_.sharedVariables().configureSimulationClock(current.year, current.month,
+                                                                current.day, current.timeSeconds);
     calendarElapsedSeconds_ = 0.0;
     previousCalendarSimulationTime_ = newSimulationTime;
     hasPreviousCalendarSimulationTime_ = true;
@@ -826,8 +826,7 @@ void RenderLoop::rebaseMapTrafficClock(double previousSimulationTime, double new
         if (!state.bus) {
             continue;
         }
-        openbus::app::rebaseScheduledBusClock(*state.bus, newStartHour,
-                                              previousElapsedSeconds);
+        openbus::app::rebaseScheduledBusClock(*state.bus, newStartHour, previousElapsedSeconds);
     }
     trafficFleet_.mapTrafficStartHour = newStartHour;
     trafficFleet_.mapTrafficStartSimulationTime = newSimulationTime;
@@ -837,8 +836,8 @@ void RenderLoop::rebaseMapTrafficClock(double previousSimulationTime, double new
             passengerTimetableCourses_[playerTimetable_.state->selection.courseIndex].trips;
         const std::size_t tripIndex = playerTimetable_.state->selection.courseTripIndex;
         if (tripIndex < trips.size()) {
-            applyPlayerTripAiPolicy(
-                trips[tripIndex], playerTimetable_.state->selection.driveAsAdditionalBus);
+            applyPlayerTripAiPolicy(trips[tripIndex],
+                                    playerTimetable_.state->selection.driveAsAdditionalBus);
         }
     }
 }
@@ -880,8 +879,8 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
     if (!actor) {
         return false;
     }
-    actor->lateralOffsetMeters = openbus::map::mapTrafficPedestrianLateralOffset(
-        actor->route, humanTrafficActors_.size());
+    actor->lateralOffsetMeters =
+        openbus::map::mapTrafficPedestrianLateralOffset(actor->route, humanTrafficActors_.size());
     if (!openbus::map::placeMapTrafficActorNearLooping(*actor, startDistanceMeters, centerX,
                                                        centerY, maximumDistanceMeters, 0.01)) {
         return false;
@@ -1091,9 +1090,9 @@ void RenderLoop::RemovePlayerVehicle() {
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     glfwSetCursor(window_, nullptr);
     vehicles_.erase(std::remove_if(vehicles_.begin(), vehicles_.end(),
-                                  [removedVehicle](const std::unique_ptr<Vehicle>& vehicle) {
-                                      return vehicle.get() == removedVehicle;
-                                  }),
+                                   [removedVehicle](const std::unique_ptr<Vehicle>& vehicle) {
+                                       return vehicle.get() == removedVehicle;
+                                   }),
                     vehicles_.end());
     vehicleCameras_.clear();
     vehicleScheduleViews_.clear();

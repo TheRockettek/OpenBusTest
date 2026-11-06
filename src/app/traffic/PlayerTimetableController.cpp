@@ -154,13 +154,14 @@ PassengerHofMatch analyzePreparedPassengerRouteHof(const PassengerStopRouteState
 
 } // namespace
 
-std::optional<std::size_t> releasePlayerTimetableStopVisit(
-    std::optional<PlayerTimetableStopVisitLatch>& latch, std::size_t nextStopIndex,
-    const std::array<double, 3>& busPosition, double releaseRadiusMeters) {
+std::optional<std::size_t>
+releasePlayerTimetableStopVisit(std::optional<PlayerTimetableStopVisitLatch>& latch,
+                                std::size_t nextStopIndex, const std::array<double, 3>& busPosition,
+                                double releaseRadiusMeters) {
     if (!std::ranges::all_of(busPosition, [](double value) { return std::isfinite(value); }) ||
         !std::isfinite(releaseRadiusMeters) || releaseRadiusMeters < 0.0 ||
-        (latch && !std::ranges::all_of(latch->position,
-                                       [](double value) { return std::isfinite(value); }))) {
+        (latch && !std::ranges::all_of(
+                      latch->position, [](double value) { return std::isfinite(value); }))) {
         throw std::invalid_argument("Player timetable stop visit requires finite positions");
     }
     if (!latch) {
@@ -170,8 +171,8 @@ std::optional<std::size_t> releasePlayerTimetableStopVisit(
         latch.reset();
         return std::nullopt;
     }
-    if (std::hypot(latch->position[0] - busPosition[0],
-                   latch->position[1] - busPosition[1]) <= releaseRadiusMeters) {
+    if (std::hypot(latch->position[0] - busPosition[0], latch->position[1] - busPosition[1]) <=
+        releaseRadiusMeters) {
         return std::nullopt;
     }
     const std::size_t completedStopIndex = latch->stopIndex;
@@ -184,8 +185,8 @@ bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
     return passengerRouteHofRoute(route, hof) != nullptr;
 }
 
-std::size_t matchingPlayerTimetableRouteCount(
-    const std::vector<PassengerStopRouteState>& routes, const openbus::config::HofData& hof) {
+std::size_t matchingPlayerTimetableRouteCount(const std::vector<PassengerStopRouteState>& routes,
+                                              const openbus::config::HofData& hof) {
     const PreparedHof prepared(hof);
     std::unordered_set<std::string> matchedTimetables;
     for (const PassengerStopRouteState& route : routes) {
@@ -479,9 +480,8 @@ bool PlayerTimetableCatalog::update(const std::vector<PassengerStopRouteState>& 
             }
         }
     }
-    std::erase_if(newLines, [](const PlayerTimetableCatalogLine& line) {
-        return line.courses.empty();
-    });
+    std::erase_if(newLines,
+                  [](const PlayerTimetableCatalogLine& line) { return line.courses.empty(); });
     routes = std::move(newRoutes);
     lines = std::move(newLines);
     valid_ = true;

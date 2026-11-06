@@ -14,8 +14,8 @@ namespace openbus::app {
 
 bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
                               const openbus::config::HofData& hof);
-std::size_t matchingPlayerTimetableRouteCount(
-    const std::vector<PassengerStopRouteState>& routes, const openbus::config::HofData& hof);
+std::size_t matchingPlayerTimetableRouteCount(const std::vector<PassengerStopRouteState>& routes,
+                                              const openbus::config::HofData& hof);
 const openbus::config::HofRoute* passengerRouteHofRoute(const PassengerStopRouteState& route,
                                                         const openbus::config::HofData& hof);
 std::string passengerRouteDisplayLine(const PassengerStopRouteState& route,
@@ -95,9 +95,10 @@ struct PlayerTimetableStopVisitLatch {
 };
 
 // Returns the visited stop only after the bus leaves its arrival-radius latch.
-std::optional<std::size_t> releasePlayerTimetableStopVisit(
-    std::optional<PlayerTimetableStopVisitLatch>& latch, std::size_t nextStopIndex,
-    const std::array<double, 3>& busPosition, double releaseRadiusMeters);
+std::optional<std::size_t>
+releasePlayerTimetableStopVisit(std::optional<PlayerTimetableStopVisitLatch>& latch,
+                                std::size_t nextStopIndex, const std::array<double, 3>& busPosition,
+                                double releaseRadiusMeters);
 
 class PlayerTimetableController {
   public:

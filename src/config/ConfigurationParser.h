@@ -53,9 +53,8 @@ void logUnhandledConfigurationTag(const std::string& format,
                                   const std::string& tag,
                                   const std::string& disposition = "unknown");
 enum class ConfigurationTagStatus { Active, Ignored, Unknown };
-void logConfigurationTagStatus(const std::string& format,
-                                const std::filesystem::path& sourcePath, std::size_t line,
-                                const std::string& tag, ConfigurationTagStatus status,
-                                const std::string& detail);
+void logConfigurationTagStatus(const std::string& format, const std::filesystem::path& sourcePath,
+                               std::size_t line, const std::string& tag,
+                               ConfigurationTagStatus status, const std::string& detail);
 
 } // namespace openbus::config

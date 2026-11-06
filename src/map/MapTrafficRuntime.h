@@ -379,7 +379,7 @@ class MapPassengerServiceRuntime {
     std::size_t waitingPassengers(int stopId) const noexcept;
     void setPassengerAnimationDuration(double seconds);
     void setQueuedAlightingPassengerAnimation(std::size_t seatIndex, double seconds,
-                                               double queueProgress);
+                                              double queueProgress);
     void setAlightingDoorWaitProgress(std::optional<double> progress);
     void setPassengerPathLinkProgressProfile(
         std::vector<std::pair<double, std::optional<std::size_t>>> profile);
@@ -653,14 +653,13 @@ class MapTrafficLaneNetwork {
     std::size_t laneCount(int splineId) const;
     std::vector<int> splineIdsInTiles(const std::vector<std::pair<int, int>>& tiles) const;
     std::optional<MapPassengerPedestrianJourney>
-    passengerJourneyNear(const std::vector<int>& splineIds, const std::array<double, 3>& stopPosition,
-                         std::size_t seed, double maximumDistanceMeters = 25.0) const;
-    std::optional<MapPassengerPedestrianJourney>
-    passengerJourneyBetween(const std::vector<int>& splineIds,
-                            const std::array<double, 3>& startPosition,
-                            const std::array<double, 3>& destinationPosition, std::size_t seed,
-                            double maximumConnectorMeters = 2.0,
-                            double maximumRouteMeters = 50.0) const;
+    passengerJourneyNear(const std::vector<int>& splineIds,
+                         const std::array<double, 3>& stopPosition, std::size_t seed,
+                         double maximumDistanceMeters = 25.0) const;
+    std::optional<MapPassengerPedestrianJourney> passengerJourneyBetween(
+        const std::vector<int>& splineIds, const std::array<double, 3>& startPosition,
+        const std::array<double, 3>& destinationPosition, std::size_t seed,
+        double maximumConnectorMeters = 2.0, double maximumRouteMeters = 50.0) const;
     std::vector<MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
     std::optional<MapTrafficPose> timetableStopPose(int splineId, std::size_t pathIndex,

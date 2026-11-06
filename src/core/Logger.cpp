@@ -24,10 +24,9 @@ LogLevel configuredMinimumLogLevel() {
         return LogLevel::Debug;
     }
     std::string level(configuredLevel);
-    std::transform(level.begin(), level.end(), level.begin(),
-                   [](unsigned char character) {
-                       return static_cast<char>(std::toupper(character));
-                   });
+    std::transform(level.begin(), level.end(), level.begin(), [](unsigned char character) {
+        return static_cast<char>(std::toupper(character));
+    });
     if (level == "TRACE") {
         return LogLevel::Trace;
     }
