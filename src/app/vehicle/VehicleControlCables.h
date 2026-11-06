@@ -15,9 +15,10 @@ inline bool controlCableSidesConnect(VehicleControlCableSide first,
            (first == VehicleControlCableSide::Right && second == VehicleControlCableSide::Left);
 }
 
-inline void synchronizeControlCables(
-    Variables& rearVehicleVariables, const std::vector<VehicleControlCable>& rearCables,
-    Variables& frontVehicleVariables, const std::vector<VehicleControlCable>& frontCables) {
+inline void synchronizeControlCables(Variables& rearVehicleVariables,
+                                     const std::vector<VehicleControlCable>& rearCables,
+                                     Variables& frontVehicleVariables,
+                                     const std::vector<VehicleControlCable>& frontCables) {
     struct ReadAssignment {
         Variables* variables;
         const std::string* name;
@@ -42,12 +43,10 @@ inline void synchronizeControlCables(
                 frontVehicleVariables.get(frontCable.couplingVariable) != 1.0F) {
                 continue;
             }
-            assignments.push_back(
-                {&rearVehicleVariables, &rearCable.readVariable,
-                 frontVehicleVariables.get(frontCable.writeVariable)});
-            assignments.push_back(
-                {&frontVehicleVariables, &frontCable.readVariable,
-                 rearVehicleVariables.get(rearCable.writeVariable)});
+            assignments.push_back({&rearVehicleVariables, &rearCable.readVariable,
+                                   frontVehicleVariables.get(frontCable.writeVariable)});
+            assignments.push_back({&frontVehicleVariables, &frontCable.readVariable,
+                                   rearVehicleVariables.get(rearCable.writeVariable)});
         }
     }
 

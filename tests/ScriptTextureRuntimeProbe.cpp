@@ -88,6 +88,15 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
               "\"UnitFont\" (M.V.GetFontIndex) (S.L.other_font_index)\n"
               "\"ProbeFont\" (M.V.GetFontIndex) (S.L.repeated_font_index)\n"
               "(L.L.font_index) \"AB\" (M.V.TextLength) (S.L.text_width)\n"
+              "(L.L.font_index) \"A@B\" (M.V.TextLength) (S.L.multiline_width)\n"
+              "(L.L.font_index) (L.$.multiline_input) (M.V.TextLength) (S.L.newline_width)\n"
+              "(L.L.font_index) \"a\" (M.V.TextLength) (S.L.lowercase_width)\n"
+              "(L.L.other_font_index) \"\xc2\xb0"
+              "c\" (M.V.TextLength) (S.L.degree_width)\n"
+              "(L.L.other_font_index) \"" "\xc3\xb1"
+              "\" (M.V.TextLength) (S.L.latin1_width)\n"
+              "(L.L.other_font_index) \"" "\xf0\x9f\x98\x80"
+              "\" (M.V.TextLength) (S.L.unicode_fallback_width)\n"
               "1 (M.V.STNewTex)\n"
               "1 (M.V.STLock)\n"
               "1 128 10 20 30 (M.V.STSetColor)\n"
@@ -108,6 +117,7 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
               "1 255 0 0 0 (M.V.STSetColor)\n"
               "1 0 0 (L.L.font_index) 0 0 \"A\" (M.V.STTextOut)\n"
               "(L.L.font_index) \"AB\" (M.V.TextLength) (S.L.text_width)\n"
+              "(L.L.font_index) \"A@B\" (M.V.TextLength) (S.L.multiline_width)\n"
               "{end}\n";
     source.close();
     std::string error;
@@ -115,7 +125,8 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         std::cerr << error << '\n';
         return false;
     }
-    ScriptRuntime::prepareFontSearch(root / "drawing.bus", {"ProbeFont", "UnitFont", "GridFont"});
+    ScriptRuntime::prepareFontSearch(root / "drawing.bus",
+                                     {"ProbeFont", "UnitFont", "GridFont", "SpacingFont"});
     const auto probeFontPath = root / "Fonts" / "probe.oft";
     const auto fontDirectoryTime = std::filesystem::last_write_time(root / "Fonts");
     int fontTimestampOffset = 60;
@@ -152,13 +163,17 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         SimulationState simulation;
         ScriptRuntime runtime(config, variables, simulation);
         runtime.configureScriptTextures({ModelScriptTexture{1, 8, 8, {}}});
+        variables.setString("multiline_input", "A\r\nB");
         runtime.initialize();
         ScriptRuntime::ScriptTextureSnapshot snapshot;
         if (!runtime.valid() || !runtime.errors().empty() ||
             !runtime.copyScriptTexture(1, snapshot) || snapshot.width != 8 ||
             variables.get("font_index") == variables.get("other_font_index") ||
             variables.get("font_index") != variables.get("repeated_font_index") ||
-            variables.get("text_width") != 4.0F) {
+            variables.get("text_width") != 4.0F || variables.get("lowercase_width") != 2.0F ||
+            variables.get("degree_width") != 3.0F || variables.get("latin1_width") != 1.0F ||
+            variables.get("unicode_fallback_width") != 1.0F ||
+            variables.get("multiline_width") != 2.0F || variables.get("newline_width") != 2.0F) {
             std::cerr << backend << ": authored font selection/drawing failed\n";
             return false;
         }
@@ -182,7 +197,8 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         runtime.invokeEntryPoint("trigger_draw_font");
         ScriptRuntime::ScriptTextureSnapshot reloadedFontTexture;
         if (!runtime.copyScriptTexture(1, reloadedFontTexture) ||
-            reloadedFontTexture.pixels[3] != 128 || variables.get("text_width") != 5.0F) {
+            reloadedFontTexture.pixels[3] != 128 || variables.get("text_width") != 5.0F ||
+            variables.get("multiline_width") != 2.0F) {
             std::cerr << backend << ": existing script font index did not reload edited OFT data"
                       << " (alpha="
                       << (reloadedFontTexture.pixels.size() > 3
@@ -197,7 +213,8 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         }
         runtime.invokeEntryPoint("trigger_draw_font");
         if (!runtime.copyScriptTexture(1, reloadedFontTexture) ||
-            reloadedFontTexture.pixels[3] != 255 || variables.get("text_width") != 4.0F) {
+            reloadedFontTexture.pixels[3] != 255 || variables.get("text_width") != 4.0F ||
+            variables.get("multiline_width") != 2.0F) {
             std::cerr << backend << ": existing script font index did not reload restored OFT data\n";
             return false;
         }
@@ -224,8 +241,10 @@ int main() {
     std::filesystem::create_directories(fonts);
     writeTestBmp(fonts / "probe.bmp", 4, 2, {255, 255, 80, 80, 255, 255, 80, 80});
     writeTestBmp(fonts / "probe_alpha.bmp", 4, 2, {255, 255, 128, 128, 255, 255, 128, 128});
-    writeTestBmp(fonts / "unit.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
-    writeTestBmp(fonts / "unit_alpha.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
+    writeTestBmp(fonts / "unit.bmp", 6, 2,
+                 {255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255});
+    writeTestBmp(fonts / "unit_alpha.bmp", 6, 2,
+                 {255, 255, 255, 255, 128, 255, 255, 255, 255, 255, 128, 255});
     writeTestBmp(fonts / "grid.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
     writeTestBmp(fonts / "grid_alpha.bmp", 4, 2, {0, 0, 0, 0, 255, 255, 255, 255});
     std::ofstream font(fonts / "probe.oft");
@@ -240,7 +259,8 @@ int main() {
     unitFont << "[newfont]\nUnitFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
                 "[char]\nA\n0\n1\n0\n"
                 "[char]\nc\n1\n2\n0\n"
-                "[char]\n\xc2\xb0\n2\n4\n0\n";
+                "[char]\n\xc2\xb0\n2\n4\n0\n"
+                "[char]\n\xc3\xb1\n4\n5\n0\n";
     unitFont.close();
     std::ofstream legacyFont(fonts / "legacy.oft");
     legacyFont << "[newfont]\nLegacyFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
@@ -251,6 +271,11 @@ int main() {
     gridFont << "[newfont]\nGridFont\ngrid.bmp\ngrid_alpha.bmp\n2\n0\n"
                 "[char]\nA\n0\n2\n0\n";
     gridFont.close();
+    std::ofstream spacingFont(fonts / "spacing.oft");
+    spacingFont << "[newfont]\nSpacingFont\nprobe.bmp\nprobe_alpha.bmp\n2\n1\n"
+                   "[char]\nA\n0\n2\n0\n"
+                   "[char]\nB\n2\n4\n0\n";
+    spacingFont.close();
     if (!checkAuthoredScriptDrawing(root)) {
         openbus::probe::removeProbeDirectory(root);
         return 1;
@@ -898,6 +923,86 @@ int main() {
              22, true, {"fallbackmultilinedisplay", "MissingFont", "24", "20", "0", "255", "255", "255", "1", "0"}},
          ModelTextTexture{
              23, true, {"lowercaseauthored", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
+         ModelTextTexture{
+             24, true, {"fallbackgermandisplay", "MissingFont", "44", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             25, true, {"fallbackquestiondisplay", "MissingFont", "44", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             26, true, {"fallbacklatin1display", "MissingFont", "110", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             27, true, {"fallbacklatin1questiondisplay", "MissingFont", "110", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             28, true, {"unitlatin1display", "UnitFont", "6", "8", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             29, true, {"unitunicodefallbackdisplay", "UnitFont", "6", "8", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             30, true, {"unitfallbackreferencedisplay", "UnitFont", "6", "8", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             31, true, {"spacingcenterdisplay", "SpacingFont", "10", "4", "0", "255", "255", "255", "3", "0"}},
+         ModelTextTexture{
+             32, true, {"spacingrightdisplay", "SpacingFont", "10", "4", "0", "255", "255", "255", "2", "0"}},
+         ModelTextTexture{
+             33, true, {"spacingleftbiasdisplay", "SpacingFont", "10", "4", "0", "255", "255", "255", "4", "0"}},
+         ModelTextTexture{
+             34, true, {"spacingrightbiasdisplay", "SpacingFont", "10", "4", "0", "255", "255", "255", "5", "0"}},
+         ModelTextTexture{
+             35, true, {"typographicfallbackdisplay", "MissingFont", "62", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             36, true, {"typographicquestiondisplay", "MissingFont", "62", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             37, true, {"fallbackcurrencydisplay", "MissingFont", "62", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             38, true, {"fallbackcurrencyquestiondisplay", "MissingFont", "62", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             39, true, {"fallbackmathdisplay", "MissingFont", "20", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             40, true, {"fallbackmathquestiondisplay", "MissingFont", "20", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             41, true, {"fallbackarrowsdisplay", "MissingFont", "26", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             42, true, {"fallbackarrowsquestiondisplay", "MissingFont", "26", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             43, true, {"fallbackdotdisplay", "MissingFont", "14", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             44, true, {"fallbackdotquestiondisplay", "MissingFont", "14", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             45, true, {"fallbackspacesdisplay", "MissingFont", "20", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             46, true, {"fallbackspacesreferencedisplay", "MissingFont", "20", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             47, true, {"fallbackgreekdisplay", "MissingFont", "32", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             48, true, {"fallbackgreekquestiondisplay", "MissingFont", "32", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             49, true, {"fallbacknordicdisplay", "MissingFont", "50", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             50, true, {"fallbacknordicquestiondisplay", "MissingFont", "50", "10", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             51, false, {"malformedwidth", "MissingFont", "6junk", "4", "0", "255", "255", "255"}},
+         ModelTextTexture{
+             52, false, {"malformedheight", "MissingFont", "6", "4junk", "0", "255", "255", "255"}},
+         ModelTextTexture{
+             53, false, {"malformedcolor", "MissingFont", "6", "8", "0", "128junk", "255", "255"}},
+         ModelTextTexture{
+             54, false, {"referencewhite", "MissingFont", "6", "8", "0", "255", "255", "255"}},
+         ModelTextTexture{
+             55, true, {"malformedalignment", "MissingFont", "8", "8", "0", "255", "255", "255", "1junk", "0"}},
+         ModelTextTexture{
+             56, true, {"referencecenter", "MissingFont", "8", "8", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             57, true, {"outofrangealignment", "MissingFont", "8", "8", "0", "255", "255", "255", "9", "0"}},
+         ModelTextTexture{
+             58, true, {"referencecenteroutofrange", "MissingFont", "8", "8", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             59, false, {"outofrangedimension", "MissingFont", "1000000", "4", "0", "255", "255", "255"}},
+         ModelTextTexture{
+             60, false, {"malformedcolormode", "MissingFont", "6", "8", "0junk", "255", "255", "255"}},
+         ModelTextTexture{
+             61, false, {"referencecolormode", "MissingFont", "6", "8", "0", "255", "255", "255"}},
+         ModelTextTexture{
+             64, true, {"malformedpixelmode", "GridFont", "4", "6", "0", "255", "255", "255", "0", "1junk"}},
+         ModelTextTexture{
+             65, true, {"referencepixelmode", "GridFont", "4", "6", "0", "255", "255", "255", "0", "0"}},
          });
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
@@ -916,6 +1021,50 @@ int main() {
     variables.setString("unitreference", std::string("\xc2\xb0"
                                                      "c",
                                                      3));
+    variables.setString("unitlatin1display", std::string("\xc3\xb1", 2));
+    variables.setString("unitunicodefallbackdisplay", std::string("\xf0\x9f\x98\x80", 4));
+    variables.setString("unitfallbackreferencedisplay", "A");
+    variables.setString("spacingcenterdisplay", "AB");
+    variables.setString("spacingrightdisplay", "AB");
+    variables.setString("spacingleftbiasdisplay", "AB");
+    variables.setString("spacingrightbiasdisplay", "AB");
+    variables.setString(
+        "typographicfallbackdisplay",
+        std::string("\xc2\xa0\xc2\xa1\xc2\xbf\xc2\xab\xc2\xbb"
+                    "\xe2\x80\x93\xe2\x80\x94\xe2\x80\x98\xe2\x80\x99\xe2\x80\xa6",
+                    25));
+    variables.setString("typographicquestiondisplay", "??????????");
+    variables.setString("fallbackcurrencydisplay",
+                        std::string("\xc2\xa2\xc2\xa3\xc2\xa5\xe2\x82\xac\xc2\xa9\xc2\xae\xe2\x84\xa2"
+                                    "\xc2\xb5\xc2\xa7\xc2\xb6",
+                                    22));
+    variables.setString("fallbackcurrencyquestiondisplay", "??????????");
+    variables.setString("fallbackmathdisplay", std::string("\xc2\xb1\xc3\x97\xc3\xb7", 6));
+    variables.setString("fallbackmathquestiondisplay", "???");
+    variables.setString("fallbackarrowsdisplay",
+                        std::string("\xe2\x86\x90\xe2\x86\x91\xe2\x86\x92\xe2\x86\x93", 12));
+    variables.setString("fallbackarrowsquestiondisplay", "????");
+    variables.setString("fallbackdotdisplay", std::string("\xc2\xb7\xe2\x80\xa2", 5));
+    variables.setString("fallbackdotquestiondisplay", "??");
+    variables.setString("fallbackspacesdisplay", std::string("\xe2\x80\x83\xe2\x80\xaf\xe3\x80\x80", 9));
+    variables.setString("fallbackspacesreferencedisplay", "   ");
+    variables.setString("fallbackgreekdisplay",
+                        std::string("\xce\xb1\xce\xb2\xce\xbc\xcf\x80\xce\xa9", 10));
+    variables.setString("fallbackgreekquestiondisplay", "?????");
+    variables.setString("fallbacknordicdisplay",
+                        std::string("\xc3\x98\xc3\xb8\xc3\x86\xc3\xa6\xc3\x90\xc3\xb0\xc3\x9e\xc3\xbe",
+                                    16));
+    variables.setString("fallbacknordicquestiondisplay", "????????");
+    variables.setString("malformedcolor", "A");
+    variables.setString("referencewhite", "A");
+    variables.setString("malformedalignment", "A");
+    variables.setString("referencecenter", "A");
+    variables.setString("outofrangealignment", "A");
+    variables.setString("referencecenteroutofrange", "A");
+    variables.setString("malformedcolormode", "A");
+    variables.setString("referencecolormode", "A");
+    variables.setString("malformedpixelmode", "A");
+    variables.setString("referencepixelmode", "A");
     variables.setString("legacyreference", "AAAc");
     variables.setString("gridboxdisplay", "A");
     variables.setString("gridpixelsdisplay", "A");
@@ -928,6 +1077,17 @@ int main() {
     variables.setString("uppercasefallbackdisplay", "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     variables.setString("fallbackmultilinedisplay", "A@A");
     variables.setString("lowercaseauthored", "a");
+    variables.setString("fallbackgermandisplay",
+                        std::string("\xc3\x84\xc3\x96\xc3\x9c\xc3\xa4\xc3\xb6\xc3\xbc\xc3\x9f",
+                                    14));
+    variables.setString("fallbackquestiondisplay", "???????");
+    variables.setString("fallbacklatin1display",
+                        std::string("\xc3\x81\xc3\x89\xc3\x8d\xc3\x93\xc3\x9a"
+                                    "\xc3\x83\xc3\x95\xc3\x91\xc3\x87"
+                                    "\xc3\xa1\xc3\xa9\xc3\xad\xc3\xb3\xc3\xba"
+                                    "\xc3\xa3\xc3\xb5\xc3\xb1\xc3\xa7",
+                                    36));
+    variables.setString("fallbacklatin1questiondisplay", "??????????????????");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
     ScriptRuntime::ScriptTextureSnapshot initialPlateText;
@@ -982,6 +1142,33 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot uppercaseFallbackText;
     ScriptRuntime::ScriptTextureSnapshot fallbackMultilineText;
     ScriptRuntime::ScriptTextureSnapshot lowercaseAuthoredText;
+    ScriptRuntime::ScriptTextureSnapshot germanFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot questionFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot latin1FallbackText;
+    ScriptRuntime::ScriptTextureSnapshot latin1QuestionFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot unitLatin1Text;
+    ScriptRuntime::ScriptTextureSnapshot unitUnicodeFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot unitFallbackReferenceText;
+    ScriptRuntime::ScriptTextureSnapshot spacingCenterText;
+    ScriptRuntime::ScriptTextureSnapshot spacingRightText;
+    ScriptRuntime::ScriptTextureSnapshot spacingLeftBiasText;
+    ScriptRuntime::ScriptTextureSnapshot spacingRightBiasText;
+    ScriptRuntime::ScriptTextureSnapshot typographicFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot typographicQuestionText;
+    ScriptRuntime::ScriptTextureSnapshot currencyFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot currencyQuestionText;
+    ScriptRuntime::ScriptTextureSnapshot mathFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot mathQuestionText;
+    ScriptRuntime::ScriptTextureSnapshot arrowsFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot arrowsQuestionText;
+    ScriptRuntime::ScriptTextureSnapshot dotFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot dotQuestionText;
+    ScriptRuntime::ScriptTextureSnapshot unicodeSpacesText;
+    ScriptRuntime::ScriptTextureSnapshot asciiSpacesText;
+    ScriptRuntime::ScriptTextureSnapshot greekFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot greekQuestionText;
+    ScriptRuntime::ScriptTextureSnapshot nordicFallbackText;
+    ScriptRuntime::ScriptTextureSnapshot nordicQuestionText;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -1013,13 +1200,111 @@ int main() {
         !runtime.copyTextTexture(20, lowercaseFallbackText) ||
         !runtime.copyTextTexture(21, uppercaseFallbackText) ||
         !runtime.copyTextTexture(22, fallbackMultilineText) ||
-        !runtime.copyTextTexture(23, lowercaseAuthoredText)) {
+        !runtime.copyTextTexture(23, lowercaseAuthoredText) ||
+        !runtime.copyTextTexture(24, germanFallbackText) ||
+        !runtime.copyTextTexture(25, questionFallbackText) ||
+        !runtime.copyTextTexture(26, latin1FallbackText) ||
+        !runtime.copyTextTexture(27, latin1QuestionFallbackText) ||
+        !runtime.copyTextTexture(28, unitLatin1Text) ||
+        !runtime.copyTextTexture(29, unitUnicodeFallbackText) ||
+        !runtime.copyTextTexture(30, unitFallbackReferenceText) ||
+        !runtime.copyTextTexture(31, spacingCenterText) ||
+        !runtime.copyTextTexture(32, spacingRightText) ||
+        !runtime.copyTextTexture(33, spacingLeftBiasText) ||
+        !runtime.copyTextTexture(34, spacingRightBiasText) ||
+        !runtime.copyTextTexture(35, typographicFallbackText) ||
+        !runtime.copyTextTexture(36, typographicQuestionText) ||
+        !runtime.copyTextTexture(37, currencyFallbackText) ||
+        !runtime.copyTextTexture(38, currencyQuestionText) ||
+        !runtime.copyTextTexture(39, mathFallbackText) ||
+        !runtime.copyTextTexture(40, mathQuestionText) ||
+        !runtime.copyTextTexture(41, arrowsFallbackText) ||
+        !runtime.copyTextTexture(42, arrowsQuestionText) ||
+        !runtime.copyTextTexture(43, dotFallbackText) ||
+        !runtime.copyTextTexture(44, dotQuestionText) ||
+        !runtime.copyTextTexture(45, unicodeSpacesText) ||
+        !runtime.copyTextTexture(46, asciiSpacesText) ||
+        !runtime.copyTextTexture(47, greekFallbackText) ||
+        !runtime.copyTextTexture(48, greekQuestionText) ||
+        !runtime.copyTextTexture(49, nordicFallbackText) ||
+        !runtime.copyTextTexture(50, nordicQuestionText)) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
     if (repairedUnitTexture.pixels != expectedUnitTexture.pixels ||
         unchangedLegacyUnitTexture.pixels != expectedLegacyTexture.pixels) {
         std::cerr << "legacy replacement-byte Celsius suffix was not conditionally repaired\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot malformedTextTexture;
+    if (runtime.copyTextTexture(51, malformedTextTexture) ||
+        runtime.copyTextTexture(52, malformedTextTexture) ||
+        runtime.copyTextTexture(59, malformedTextTexture)) {
+        std::cerr << "text texture dimensions accepted numeric prefixes with trailing data\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot malformedColorText;
+    ScriptRuntime::ScriptTextureSnapshot referenceWhiteText;
+    ScriptRuntime::ScriptTextureSnapshot malformedAlignmentText;
+    ScriptRuntime::ScriptTextureSnapshot referenceCenterText;
+    ScriptRuntime::ScriptTextureSnapshot outOfRangeAlignmentText;
+    ScriptRuntime::ScriptTextureSnapshot referenceCenterOutOfRangeText;
+    ScriptRuntime::ScriptTextureSnapshot malformedColorModeText;
+    ScriptRuntime::ScriptTextureSnapshot referenceColorModeText;
+    ScriptRuntime::ScriptTextureSnapshot malformedPixelModeText;
+    ScriptRuntime::ScriptTextureSnapshot referencePixelModeText;
+    if (!runtime.copyTextTexture(53, malformedColorText) ||
+        !runtime.copyTextTexture(54, referenceWhiteText) ||
+        !runtime.copyTextTexture(55, malformedAlignmentText) ||
+        !runtime.copyTextTexture(56, referenceCenterText) ||
+        !runtime.copyTextTexture(57, outOfRangeAlignmentText) ||
+        !runtime.copyTextTexture(58, referenceCenterOutOfRangeText) ||
+        !runtime.copyTextTexture(60, malformedColorModeText) ||
+        !runtime.copyTextTexture(61, referenceColorModeText) ||
+        !runtime.copyTextTexture(64, malformedPixelModeText) ||
+        !runtime.copyTextTexture(65, referencePixelModeText) ||
+        malformedColorText.pixels != referenceWhiteText.pixels ||
+        malformedAlignmentText.pixels != referenceCenterText.pixels ||
+        outOfRangeAlignmentText.pixels != referenceCenterOutOfRangeText.pixels ||
+        malformedColorModeText.pixels != referenceColorModeText.pixels ||
+        malformedPixelModeText.pixels != referencePixelModeText.pixels) {
+        std::cerr << "text texture color/alignment accepted numeric prefixes with trailing data\n";
+        return 1;
+    }
+    if (unicodeSpacesText.pixels != asciiSpacesText.pixels) {
+        std::cerr << "Unicode whitespace fallback did not render as blank cells\n";
+        return 1;
+    }
+    if (unitLatin1Text.pixels[(3U * unitLatin1Text.width + 2U) * 4U + 3U] != 128 ||
+        unitLatin1Text.pixels[(3U * unitLatin1Text.width + 3U) * 4U + 3U] != 0) {
+        std::cerr << "authored UTF-8 Latin-1 glyph was not decoded as one OFT character: "
+                  << static_cast<int>(
+                         unitLatin1Text.pixels[(3U * unitLatin1Text.width + 2U) * 4U + 3U])
+                  << ", "
+                  << static_cast<int>(
+                         unitLatin1Text.pixels[(3U * unitLatin1Text.width + 3U) * 4U + 3U])
+                  << '\n';
+        return 1;
+    }
+    if (unitUnicodeFallbackText.pixels != unitFallbackReferenceText.pixels) {
+        std::cerr << "unsupported UTF-8 codepoint did not resolve as one fallback glyph\n";
+        return 1;
+    }
+    if (spacingCenterText.pixels[(1U * 10U + 2U) * 4U + 3U] != 255 ||
+        spacingCenterText.pixels[(1U * 10U + 3U) * 4U + 3U] != 255 ||
+        spacingCenterText.pixels[(1U * 10U + 4U) * 4U + 3U] != 0 ||
+        spacingCenterText.pixels[(1U * 10U + 5U) * 4U + 3U] != 128 ||
+        spacingCenterText.pixels[(1U * 10U + 6U) * 4U + 3U] != 128 ||
+        spacingRightText.pixels[(1U * 10U + 5U) * 4U + 3U] != 255 ||
+        spacingRightText.pixels[(1U * 10U + 6U) * 4U + 3U] != 255 ||
+        spacingRightText.pixels[(1U * 10U + 7U) * 4U + 3U] != 0 ||
+        spacingRightText.pixels[(1U * 10U + 8U) * 4U + 3U] != 128 ||
+        spacingRightText.pixels[(1U * 10U + 9U) * 4U + 3U] != 128 ||
+        spacingLeftBiasText.pixels[(1U * 10U + 2U) * 4U + 3U] != 255 ||
+        spacingLeftBiasText.pixels[(1U * 10U + 5U) * 4U + 3U] != 128 ||
+        spacingRightBiasText.pixels[(1U * 10U + 3U) * 4U + 3U] != 255 ||
+        spacingRightBiasText.pixels[(1U * 10U + 6U) * 4U + 3U] != 128) {
+        std::cerr << "authored-font alignment did not include inter-glyph spacing\n";
         return 1;
     }
     ScriptRuntime::ScriptTextureSnapshot rejectedTexture;
@@ -1156,6 +1441,156 @@ int main() {
     if (fallbackPunctuationPixelCount != 33U) {
         std::cerr << "fallback text did not rasterize its common punctuation glyphs\n";
         return 1;
+    }
+    for (std::size_t glyphIndex = 0; glyphIndex < 10; ++glyphIndex) {
+        bool differsFromQuestion = false;
+        for (std::size_t row = 0; row < 7; ++row) {
+            for (std::size_t column = 0; column < 5; ++column) {
+                const std::size_t pixelOffset =
+                    (row * germanFallbackText.width + glyphIndex * 6 + column) * 4 + 3;
+                differsFromQuestion =
+                    differsFromQuestion ||
+                    germanFallbackText.pixels[pixelOffset] !=
+                        questionFallbackText.pixels[pixelOffset];
+            }
+        }
+        for (std::size_t glyphIndex = 0; glyphIndex < 3; ++glyphIndex) {
+            bool differsFromQuestion = false;
+            for (std::size_t row = 0; row < 7; ++row) {
+                for (std::size_t column = 0; column < 5; ++column) {
+                    const std::size_t pixelOffset =
+                        (row * mathFallbackText.width + 1U + glyphIndex * 6U + column) * 4U + 3U;
+                    differsFromQuestion =
+                        differsFromQuestion ||
+                        mathFallbackText.pixels[pixelOffset] != mathQuestionText.pixels[pixelOffset];
+                }
+            }
+            for (std::size_t glyphIndex = 0; glyphIndex < 4; ++glyphIndex) {
+                bool differsFromQuestion = false;
+                for (std::size_t row = 0; row < 7; ++row) {
+                    for (std::size_t column = 0; column < 5; ++column) {
+                        const std::size_t pixelOffset =
+                            (row * arrowsFallbackText.width + 1U + glyphIndex * 6U + column) * 4U + 3U;
+                        differsFromQuestion =
+                            differsFromQuestion ||
+                            arrowsFallbackText.pixels[pixelOffset] !=
+                                arrowsQuestionText.pixels[pixelOffset];
+                    }
+                }
+                for (std::size_t glyphIndex = 0; glyphIndex < 2; ++glyphIndex) {
+                    bool differsFromQuestion = false;
+                    for (std::size_t row = 0; row < 7; ++row) {
+                        for (std::size_t column = 0; column < 5; ++column) {
+                            const std::size_t pixelOffset =
+                                (row * dotFallbackText.width + 1U + glyphIndex * 6U + column) * 4U + 3U;
+                            differsFromQuestion =
+                                differsFromQuestion ||
+                                dotFallbackText.pixels[pixelOffset] != dotQuestionText.pixels[pixelOffset];
+                        }
+                    }
+                    for (std::size_t glyphIndex = 0; glyphIndex < 5; ++glyphIndex) {
+                        bool differsFromQuestion = false;
+                        for (std::size_t row = 0; row < 7; ++row) {
+                            for (std::size_t column = 0; column < 5; ++column) {
+                                const std::size_t pixelOffset =
+                                    (row * greekFallbackText.width + 1U + glyphIndex * 6U + column) * 4U + 3U;
+                                differsFromQuestion =
+                                    differsFromQuestion ||
+                                    greekFallbackText.pixels[pixelOffset] != greekQuestionText.pixels[pixelOffset];
+                            }
+                        }
+                        for (std::size_t glyphIndex = 0; glyphIndex < 8; ++glyphIndex) {
+                            bool differsFromQuestion = false;
+                            for (std::size_t row = 0; row < 7; ++row) {
+                                for (std::size_t column = 0; column < 5; ++column) {
+                                    const std::size_t pixelOffset =
+                                        (row * nordicFallbackText.width + 1U + glyphIndex * 6U + column) * 4U + 3U;
+                                    differsFromQuestion =
+                                        differsFromQuestion ||
+                                        nordicFallbackText.pixels[pixelOffset] != nordicQuestionText.pixels[pixelOffset];
+                                }
+                            }
+                            if (!differsFromQuestion) {
+                                std::cerr << "fallback text substituted a Nordic/Latin-1 ligature with '?'\n";
+                                return 1;
+                            }
+                        }
+                        if (!differsFromQuestion) {
+                            std::cerr << "fallback text substituted a Greek glyph with '?'\n";
+                            return 1;
+                        }
+                    }
+                    if (!differsFromQuestion) {
+                        std::cerr << "fallback text substituted a punctuation dot with '?'\n";
+                        return 1;
+                    }
+                }
+                if (!differsFromQuestion) {
+                    std::cerr << "fallback text substituted a directional arrow with '?'\n";
+                    return 1;
+                }
+            }
+            if (!differsFromQuestion) {
+                std::cerr << "fallback text substituted a mathematical glyph with '?'\n";
+                return 1;
+            }
+        }
+        if (!differsFromQuestion) {
+            std::cerr << "fallback text substituted a German glyph with '?'\n";
+            return 1;
+        }
+    }
+    for (std::size_t glyphIndex = 0; glyphIndex < 18; ++glyphIndex) {
+        bool differsFromQuestion = false;
+        for (std::size_t row = 0; row < 7; ++row) {
+            for (std::size_t column = 0; column < 5; ++column) {
+                const std::size_t pixelOffset =
+                    (row * latin1FallbackText.width + glyphIndex * 6 + column) * 4 + 3;
+                differsFromQuestion =
+                    differsFromQuestion ||
+                    latin1FallbackText.pixels[pixelOffset] !=
+                        latin1QuestionFallbackText.pixels[pixelOffset];
+            }
+        }
+        if (!differsFromQuestion) {
+            std::cerr << "fallback text substituted an accented Latin-1 glyph with '?'\n";
+            return 1;
+        }
+    }
+    for (std::size_t glyphIndex = 0; glyphIndex < 10; ++glyphIndex) {
+        bool differsFromQuestion = false;
+        for (std::size_t row = 0; row < 7; ++row) {
+            for (std::size_t column = 0; column < 5; ++column) {
+                const std::size_t pixelOffset =
+                    (row * typographicFallbackText.width + 1U + glyphIndex * 6U + column) * 4U +
+                    3U;
+                differsFromQuestion =
+                    differsFromQuestion ||
+                    typographicFallbackText.pixels[pixelOffset] !=
+                        typographicQuestionText.pixels[pixelOffset];
+            }
+        }
+        if (!differsFromQuestion) {
+            std::cerr << "fallback text substituted typographic punctuation with '?'\n";
+            return 1;
+        }
+    }
+    for (std::size_t glyphIndex = 0; glyphIndex < 10; ++glyphIndex) {
+        bool differsFromQuestion = false;
+        for (std::size_t row = 0; row < 7; ++row) {
+            for (std::size_t column = 0; column < 5; ++column) {
+                const std::size_t pixelOffset =
+                    (row * currencyFallbackText.width + 1U + glyphIndex * 6U + column) * 4U + 3U;
+                differsFromQuestion =
+                    differsFromQuestion ||
+                    currencyFallbackText.pixels[pixelOffset] !=
+                        currencyQuestionText.pixels[pixelOffset];
+            }
+        }
+        if (!differsFromQuestion) {
+            std::cerr << "fallback text substituted a currency/legal glyph with '?'\n";
+            return 1;
+        }
     }
     if (lowercaseFallbackText.pixels == uppercaseFallbackText.pixels ||
         lowercaseFallbackText.pixels[(3U * 160U + 1U) * 4U + 3U] != 255 ||

@@ -873,6 +873,13 @@ int main() {
                 startupSelection.year = static_cast<int>(currentCalendar.get("year"));
                 startupSelection.month = static_cast<int>(currentCalendar.get("month"));
                 startupSelection.day = static_cast<int>(currentCalendar.get("day"));
+                if (startupSelection.mapDefinition.environment.startDateYyyyMmDd.has_value()) {
+                    const int startDate =
+                        *startupSelection.mapDefinition.environment.startDateYyyyMmDd;
+                    startupSelection.year = startDate / 10000;
+                    startupSelection.month = (startDate / 100) % 100;
+                    startupSelection.day = startDate % 100;
+                }
                 const double configuredHour =
                     nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0);
                 const double normalizedHour = std::fmod(configuredHour, 24.0);

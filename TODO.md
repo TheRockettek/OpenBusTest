@@ -580,12 +580,13 @@ for alignment is not mistaken for supporting it.
 - [~] `[terrainmapping]` variable-length payloads are retained verbatim and
   serialized in model-config JSON; terrain/material rendering remains
   unsupported.
-- [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
+- [~] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
   vertical/layout, and alpha semantics; basic alignment and the enhanced
   font-height/visible-pixel grid modes are supported. Modes 3–5 center using
   font advances, with modes 4/5 resolving odd-pixel ties left/right. The
   fallback 5x7 renderer now scales multiline text to fit its complete block;
-  native spacing-aware parity and broader fallback glyph coverage remain
+  OpenBus alignment includes inter-glyph spacing, with center/right regressions.
+  Exact native spacing-aware parity and broader fallback glyph coverage remain
   incomplete.
   Font-directory indexes
   now refresh on directory timestamp changes and do not cache missing
@@ -597,15 +598,28 @@ for alignment is not mistaken for supporting it.
   OFT parser now decodes UTF-8 literals in the Latin-1 code range, alongside
   raw single-byte and numeric glyph identifiers. The no-OFT 5x7 fallback
   decodes UTF-8 sequences as single glyphs, draws `°`, preserves lowercase
-  glyph shapes, treats `@` as a line break, and covers common ASCII
-  punctuation; broader font parity remains incomplete.
+  glyph shapes, treats `@` as a line break, and covers common ASCII and
+  typographic punctuation, selected accented Latin-1 letters, German umlauts,
+  `ß`, selected currency/legal symbols, common mathematical symbols, and
+  directional arrows, punctuation dots, common Unicode spacing characters,
+  selected Greek letters, and the micro sign; broader font parity remains
+  incomplete. Text texture dimensions, modes, alignment, and color channels
+  now use strict full-token numeric parsing; malformed dimensions, alignment,
+  and color-channel prefixes are covered by regression tests and produce
+  runtime warnings when rejected or defaulted. Out-of-range dimensions,
+  alignment values, and texture-memory-limit failures are also reported.
   Cached OFT paths are checked by file timestamp and size, and cached misses
   detect changed OFT metadata even when the directory timestamp is unchanged.
   Existing text textures recheck fonts when `Refresh_Strings` is requested,
-  and script font handles recheck on draw or `TextLength`. Cached fonts also
-  recheck their referenced color and alpha bitmap timestamps and sizes, causing
-  refreshed text textures to reload changed images. Same-size edits with
-  unchanged file timestamps may still be missed.
+  and script font handles recheck on draw or `TextLength`. `TextLength` shares
+  the authored glyph fallback rules with drawing, including lowercase-to-
+  uppercase lookup and UTF-8 codepoint decoding; supported Latin-1 glyphs are
+  resolved directly and unsupported codepoints fall back once. It reports the
+  widest line for `@`/newline-separated text, matching rendering's line breaks;
+  OMSI measurement parity remains unverified. Cached fonts also recheck their
+  referenced color and alpha bitmap timestamps and sizes, causing refreshed
+  text textures to reload changed images. Same-size edits with unchanged file
+  timestamps may still be missed.
 
 #### General CFG dialects
 
@@ -647,14 +661,20 @@ for alignment is not mistaken for supporting it.
   without window-specific mixer logic. Triggered sounds evaluate and multiply
   their named variable curves during playback for player and AI vehicles;
   special-curve semantics remain incomplete.
-- [ ] Complete sound spatialization and control semantics for `[loopsound]`
-  and `[3d]` beyond the current player sound loading/trigger path. Ambient
-  definitions sharing a file retain independent positions and controls.
+- [~] Complete sound spatialization and control semantics for `[loopsound]`
+  and `[3d]` beyond the current player sound loading/trigger path. Vehicle
+  sound definitions retain independent IDs, positions, and controls even when
+  ambient loops share a file; probes cover per-definition gain updates and
+  stop/restart behavior. Native attenuation, orientation, and remaining
+  per-record field semantics remain unverified.
 - [~] Map AI lists, depot groups, bus stops, and station links are parsed and
   partially used for traffic and scheduled passenger service. Complete their
   remaining native semantics and `signalroutes.cfg` routing.
-- [ ] Add environment configuration support for `[sky_textures]`,
-  `[cloudtype]`, and `[startdate]`.
+- [~] Parse map `environment/sky.cfg` `[sky_textures]` entries,
+  `environment/clouds.cfg` `[cloudtype]` records, and a valid `[startdate]`
+  from environment CFGs or `global.cfg`. The date initializes the setup
+  calendar, including benchmark startup; sky/cloud data is retained in source
+  order but rendering remains unimplemented.
 - [~] Map-referenced `[currency]` and `[coin]` records provide coin values to
   change-coin script macros; coin rendering and passenger transactions remain
   incomplete.

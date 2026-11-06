@@ -174,6 +174,12 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         try {
             TraceScope mapTrace("startup", "startup.loadSelectedMapDefinition");
             selectedDefinition = openbus::map::loadMapDefinition(maps[selectedMapIndex]);
+            if (selectedDefinition->environment.startDateYyyyMmDd.has_value()) {
+                const int startDate = *selectedDefinition->environment.startDateYyyyMmDd;
+                year = startDate / 10000;
+                month = (startDate / 100) % 100;
+                day = startDate % 100;
+            }
         } catch (const std::exception& error) {
             mapLoadError = error.what();
             gameLog.Error("Unable to load map '" + pathToUtf8(maps[selectedMapIndex]) +

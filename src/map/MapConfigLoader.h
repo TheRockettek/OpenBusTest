@@ -40,6 +40,27 @@ struct MapSeasonDefinition {
     std::array<std::string, 3> fields;
 };
 
+struct MapOpaqueSection {
+    std::string keyword;
+    std::size_t sectionLine = 0;
+    std::vector<std::string> payloadLines;
+};
+
+struct MapCloudTypeDefinition {
+    std::string name;
+    std::string texturePath;
+    std::string distanceScale;
+    std::string classification;
+};
+
+struct MapEnvironmentConfiguration {
+    std::vector<std::string> skyTexturePaths;
+    std::vector<MapCloudTypeDefinition> cloudTypes;
+    std::string startDate;
+    std::optional<int> startDateYyyyMmDd;
+    std::vector<MapOpaqueSection> unsupportedSections;
+};
+
 struct MapGlobalMetadata {
     std::string name;
     std::string friendlyName;
@@ -322,12 +343,6 @@ struct MapGroundTextureSidecar {
     std::filesystem::path path;
 };
 
-struct MapOpaqueSection {
-    std::string keyword;
-    std::size_t sectionLine = 0;
-    std::vector<std::string> payloadLines;
-};
-
 struct MapChronoBaseAssets {
     std::filesystem::path textPath;
     std::filesystem::path terrainPath;
@@ -464,6 +479,7 @@ struct MapAttachedObject {
 struct MapDefinition {
     std::filesystem::path rootPath;
     MapGlobalMetadata metadata;
+    MapEnvironmentConfiguration environment;
     MapCoordinates coordinates;
     MapAiTrafficData aiTraffic;
     std::vector<GroundTextureDefinition> groundTextures;

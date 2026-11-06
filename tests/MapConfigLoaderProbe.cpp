@@ -68,6 +68,15 @@ void runFixtureProbe() {
                                                "tile_0_0.map.preview.dds"}) {
             std::ofstream(groundTextureDirectory / sidecarName, std::ios::binary);
         }
+        const std::filesystem::path environmentDirectory = root / "environment";
+        std::filesystem::create_directories(environmentDirectory);
+        writeUtf16Le(environmentDirectory / "sky.cfg",
+                     "[sky_textures]\nsky\\day.bmp\nsky\\evening.dds\n"
+                     "[startdate]\n20210304\n");
+        writeUtf16Le(environmentDirectory / "clouds.cfg",
+                     "[cloudtype]\nCumulus\nclouds\\cumulus.bmp\n1200\n1\n"
+                     "[cloudtype]\nCirrus\nclouds\\cirrus.bmp\n1800\n2\n"
+                     "[unknown_environment]\n raw environment payload \n");
         std::ofstream(root / "tile_0_0.map.LM.bmp", std::ios::binary);
         std::ofstream(root / "tile_0_0.map.terrain_0.rdy", std::ios::binary);
         writeUtf16Le(root / "global.cfg",
@@ -77,7 +86,7 @@ void runFixtureProbe() {
                      "[dynhelperactive]\n[realrail]\n[LHT]\n[backgroundimage]\n1\n2\n3\n4\n5\n6\n"
                      "[mapcam]\n0\n1\n2\n3\n4\n5\n6\n7\n[moneysystem]\nMoney.cfg\n"
                      "[ticketpack]\nTickets.otp\n[repair_time_min]\n10\n[years]\n2022\n2023\n"
-                     "[realyearoffset]\n0\n[standarddepot]\nDepot\n"
+                     "[realyearoffset]\n0\n[standarddepot]\nDepot\n[startdate]\n20210304\n"
                      "Winter:\n[addseason]\n4\n0\n38\n[trafficdensity_road]\n12\n1\n"
                      "[trafficdensity_passenger]\n0\n0.2\n[groundtex]\nTexture\\grass.bmp\n"
                      "Texture\\detail.bmp\n0\n1\n60\n[groundtex]\n"
@@ -306,6 +315,23 @@ void runFixtureProbe() {
                     definition.metadata.hasDynamicHelperActive && definition.metadata.hasRealRail &&
                     definition.metadata.hasLeftHandTraffic,
                 "global map identity, description, version, and marker metadata captured");
+        require(definition.environment.skyTexturePaths ==
+                    std::vector<std::string>{"sky\\day.bmp", "sky\\evening.dds"} &&
+                    definition.environment.cloudTypes.size() == 2 &&
+                    definition.environment.cloudTypes[0].name == "Cumulus" &&
+                    definition.environment.cloudTypes[0].texturePath == "clouds\\cumulus.bmp" &&
+                    definition.environment.cloudTypes[0].distanceScale == "1200" &&
+                    definition.environment.cloudTypes[0].classification == "1" &&
+                    definition.environment.cloudTypes[1].name == "Cirrus" &&
+                    definition.environment.cloudTypes[1].classification == "2" &&
+                    definition.environment.startDate == "20210304" &&
+                    definition.environment.startDateYyyyMmDd == 20210304 &&
+                    definition.environment.unsupportedSections.size() == 1 &&
+                    definition.environment.unsupportedSections[0].keyword ==
+                        "unknown_environment" &&
+                    definition.environment.unsupportedSections[0].payloadLines ==
+                        std::vector<std::string>{" raw environment payload ", ""},
+                "environment sky, cloud, and start-date records are retained in authored order");
         const auto ticketPack = openbus::map::loadMapTicketPackDefinition(root / "Tickets.otp");
         const auto legacyTicketPack =
             openbus::map::loadMapTicketPackDefinition(root / "LegacyTickets.otp");
@@ -1495,8 +1521,16 @@ void runFixtureProbe() {
                     statusLog.find("Configuration tag [variable_terrain] recognized but ignored") !=
                         std::string::npos &&
                     statusLog.find("Configuration tag [unknown_future_section] unknown") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [sky_textures] recognized but ignored") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [cloudtype] recognized but ignored") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [startdate] recognized and active") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [unknown_environment] unknown") !=
                         std::string::npos,
-                "global.cfg and map tile records log active, ignored, and unknown statuses");
+                "global, environment, and map tile records log active, ignored, and unknown statuses");
     } catch (...) {
         openbus::probe::removeProbeDirectory(root);
         throw;

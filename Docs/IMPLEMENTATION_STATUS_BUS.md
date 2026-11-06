@@ -47,9 +47,14 @@ those references as disk filenames. Both script backends allow drawing between
 `STLock` and `STUnlock`, retain RGBA channel order for rectangles, and implement
 `GetFontIndex`, `TextLength`, and `STTextOut` using the installed OFT bitmap fonts.
 `STTextOut`'s Full Colour argument selects font colours; zero uses `STSetColor`,
-not a transparent packed colour. Font/layout parity beyond this subset remains
-unverified. Font-directory indexes refresh when directory timestamps change,
-including after definitions are added or removed, and cached OFT entries detect
+not a transparent packed colour. `TextLength` shares drawing's authored glyph
+fallback for lowercase-to-uppercase lookup, and drawing and measurement decode
+UTF-8 codepoints consistently, resolving Latin-1 glyphs and falling back once
+for unsupported codepoints. For multiline text it reports the widest line;
+native `TextLength` parity remains unverified. Font/layout parity beyond this
+subset remains unverified.
+Font-directory indexes refresh when directory timestamps change, including
+after definitions are added or removed, and cached OFT entries detect
 file metadata changes even when the directory timestamp is unchanged. Runtime
 font caches recheck OFT definitions and referenced color/alpha bitmaps by
 timestamp and size when text is refreshed or a script font is used. Same-size
@@ -83,7 +88,7 @@ override is applied.
 | `[tex_detail_factor]` | Partial | Finite scalar is retained and serialized in model-config JSON; detail-texture rendering is not implemented. |
 | `[terrainmapping]` | Partial | Variable-length payloads are retained verbatim and serialized in model-config JSON; terrain/material rendering is not implemented. |
 | `[origin_from_mesh]` | Partial | Source transform metadata supplies the pivot when available; otherwise the parsed mesh bounds center is used. Native pivot parity remains unverified. |
-| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, font-height/visible-pixel vertical alignment, uppercase retry for missing lowercase OFT glyphs, question-mark/first-defined fallback for other missing OFT glyphs, Latin-1-range UTF-8 OFT glyph identifiers, UTF-8/degree/`@`/lowercase/common-punctuation handling in the 5x7 fallback, and OFT/bitmap reload on text refresh or script-font use are active. Native spacing-aware alignment parity, other missing-glyph behavior, and broader fallback glyph coverage remain unverified/incomplete; same-size asset edits with unchanged timestamps may be missed. |
+| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, font-height/visible-pixel vertical alignment, center/right OFT alignment accounting for inter-glyph spacing, uppercase retry for missing lowercase OFT glyphs with matching `TextLength` lookup, widest-line `TextLength` for `@`/newline-separated strings, UTF-8 codepoint decoding in authored-font drawing and measurement, Latin-1 glyph lookup and single fallback for unsupported codepoints, question-mark/first-defined fallback for other missing OFT glyphs, Latin-1-range UTF-8 OFT glyph identifiers, UTF-8/degree/`@`/lowercase/common ASCII and typographic punctuation/selected-accented-Latin-1/German-umlaut/`ß`/selected-currency/legal/mathematical-symbol/directional-arrow/punctuation-dot/common-Unicode-space/selected-Greek-letter/micro-sign handling in the 5x7 fallback, and OFT/bitmap reload on text refresh or script-font use are active. Exact native spacing-aware alignment and `TextLength` parity, other missing-glyph behavior, and broader fallback glyph coverage remain unverified/incomplete; same-size asset edits with unchanged timestamps may be missed. |
 | `[illumination_interior]`, `[interiorlight]` | Partial | Controller-driven point-light shading, mesh assignments, and distance attenuation are active. GPU coverage exercises color, zero strength, and attenuation; controller integration with representative assets and OMSI intensity parity remain unverified. |
 | `[mouseevent]` | Partial | Transformed-triangle picking, captured press/held-drag/release, and player W/A/S/D event transitions are active. Handler lookup and dispatch normalize authored punctuation consistently (including DL05 `bus_20h-switch`); drag/release handlers are optional. Configurable key maps and scenery-object mouse dispatch are not complete. |
 

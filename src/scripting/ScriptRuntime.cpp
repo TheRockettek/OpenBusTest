@@ -2,6 +2,8 @@
 
 #include "scripting/ScriptRuntimeImpl.h"
 
+#include "config/ConfigurationParser.h"
+
 ScriptRuntime::ScriptRuntime(
     const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
     std::function<void(const std::string&, const std::string&, float)> soundTrigger,
@@ -67,18 +69,29 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         const std::size_t heightIndex = definition.placementLabel ? 2U : 3U;
         const std::size_t colorModeIndex = definition.placementLabel ? 3U : 4U;
         const std::size_t colorStartIndex = definition.placementLabel ? 4U : 5U;
+        const std::string textureSlot = std::to_string(definition.slot);
         configured.variable = definition.placementLabel
                                   ? "__openbus_placement_label_" + std::to_string(definition.slot)
                                   : definition.values[0];
         configured.font = lower(definition.values[fontIndex]);
-        try {
-            configured.width = std::stoi(definition.values[widthIndex]);
-            configured.height = std::stoi(definition.values[heightIndex]);
-        } catch (const std::exception&) {
+        int width = 0;
+        int height = 0;
+        if (!openbus::config::parseInt(definition.values[widthIndex], width) ||
+            !openbus::config::parseInt(definition.values[heightIndex], height)) {
+            impl_->log(LogLevel::Warning, "warning: ignoring text texture slot " + textureSlot +
+                                              " with invalid dimensions");
             continue;
         }
-        if (configured.variable.empty() ||
-            !openbus::scripting::validScriptTextureSize(configured.width, configured.height)) {
+        configured.width = width;
+        configured.height = height;
+        if (configured.variable.empty()) {
+            impl_->log(LogLevel::Warning, "warning: ignoring text texture slot " + textureSlot +
+                                              " with an empty source variable");
+            continue;
+        }
+        if (!openbus::scripting::validScriptTextureSize(configured.width, configured.height)) {
+            impl_->log(LogLevel::Warning, "warning: ignoring text texture slot " + textureSlot +
+                                              " with out-of-range dimensions");
             continue;
         }
         if (definition.placementLabel) {
@@ -94,64 +107,72 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         const std::size_t oldBytes =
             existing == impl_->textTextures.end() ? 0U : existing->second.pixels.size();
         if (!impl_->canReplaceTextureBytes(oldBytes, pixelBytes)) {
+            impl_->log(LogLevel::Warning, "warning: text texture slot " + textureSlot +
+                                              " exceeds the configured texture memory limit");
             continue;
         }
         if (definition.values.size() > colorModeIndex) {
-            try {
-                configured.useFontColor = std::stoi(definition.values[colorModeIndex]) != 0;
-            } catch (const std::exception&) {
-                configured.useFontColor = false;
+            int colorMode = 0;
+            if (openbus::config::parseInt(definition.values[colorModeIndex], colorMode)) {
+                configured.useFontColor = colorMode != 0;
+            } else {
+                impl_->log(LogLevel::Warning, "warning: invalid color mode for text texture slot " +
+                                                  textureSlot + "; using explicit color");
             }
         }
         // Modes 3-5 center using font advances; modes 4 and 5 break half-pixel
         // ties toward the left and right respectively.
         if (definition.enhanced && definition.values.size() > 8) {
-            try {
-                const int alignment = std::stoi(definition.values[8]);
-                switch (alignment) {
-                case 1:
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
-                    break;
-                case 2:
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Right;
-                    break;
-                case 0:
-                case 3:
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
-                    break;
-                case 4:
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::CenterLeftBias;
-                    break;
-                case 5:
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::CenterRightBias;
-                    break;
-                default:
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
-                    break;
-                }
-            } catch (const std::exception&) {
+            int alignment = 0;
+            if (!openbus::config::parseInt(definition.values[8], alignment) || alignment < 0 ||
+                alignment > 5) {
                 configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                impl_->log(LogLevel::Warning, "warning: invalid alignment for text texture slot " +
+                                                  textureSlot + "; using center alignment");
+                alignment = 0;
+            }
+            switch (alignment) {
+            case 1:
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
+                break;
+            case 2:
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::Right;
+                break;
+            case 0:
+            case 3:
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                break;
+            case 4:
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::CenterLeftBias;
+                break;
+            case 5:
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::CenterRightBias;
+                break;
+            default:
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                break;
             }
         }
         if (definition.enhanced && definition.values.size() > 9) {
-            try {
-                std::size_t consumed = 0;
-                const int alignment = std::stoi(definition.values[9], &consumed);
-                if (consumed == definition.values[9].size() &&
-                    (alignment == 0 || alignment == 1)) {
-                    configured.alignToFontPixels = alignment == 1;
-                }
-            } catch (const std::exception&) {
-                configured.alignToFontPixels = false;
+            int alignment = 0;
+            if (openbus::config::parseInt(definition.values[9], alignment) &&
+                (alignment == 0 || alignment == 1)) {
+                configured.alignToFontPixels = alignment == 1;
+            } else {
+                impl_->log(LogLevel::Warning, "warning: invalid font-pixel alignment for text texture "
+                                              "slot " +
+                                                  textureSlot + "; using grid alignment");
             }
         }
         for (std::size_t channel = 0;
              channel < 3 && channel + colorStartIndex < definition.values.size(); ++channel) {
-            try {
-                const float value = std::stof(definition.values[channel + colorStartIndex]);
+            float value = 0.0F;
+            if (openbus::config::parseFloat(definition.values[channel + colorStartIndex], value)) {
                 configured.color[channel] = ScriptRuntime::Impl::colorChannel(value);
-            } catch (const std::exception&) {
-                continue;
+            } else {
+                impl_->log(LogLevel::Warning, "warning: invalid color channel " +
+                                                  std::to_string(channel) +
+                                                  " for text texture slot " + textureSlot);
             }
         }
         impl_->textTextureDefinitions[definition.slot] = configured;

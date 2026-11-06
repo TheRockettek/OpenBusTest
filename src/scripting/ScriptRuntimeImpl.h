@@ -352,6 +352,13 @@ struct ScriptRuntime::Impl {
                   std::array<std::uint8_t, 4> color, int letterSpacing = 0, int maximumScale = 8,
                   TextAlignment alignment = TextAlignment::Left, bool centerVertically = false);
 
+    int fontFallbackGlyphCode(const FontAsset& font) const;
+
+    int decodeFontTextCode(const FontAsset& font, const std::string& value,
+                           std::size_t& characterIndex) const;
+
+    int resolveFontGlyphCode(const FontAsset& font, int code, int fallbackCode) const;
+
     bool drawBitmapFontText(ScriptTexture& texture, const std::string& value, int x, int y,
                             const TextTextureDefinition& definition, const FontAsset& font,
                             bool centerVertically = true, int letterSpacing = 0);

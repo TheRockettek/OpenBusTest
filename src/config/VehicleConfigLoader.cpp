@@ -171,7 +171,8 @@ std::string ignoredVehicleKeywordReason(const std::string& keyword) {
         return "articulated vehicle behavior is not implemented";
     }
     if (keyword == "control_cable_front" || keyword == "control_cable_back") {
-        return "control-cable transfer requires an already-loaded, uniquely referenced vehicle pair";
+        return "control-cable transfer requires an already-loaded, uniquely referenced vehicle "
+               "pair";
     }
     return {};
 }
@@ -1239,9 +1240,9 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             }
             const std::string side = lower(trim(values[0]));
             int cableNumber = 0;
-            if ((side != "l" && side != "r" && side != "c") ||
-                !parseInt(values[1], cableNumber) || cableNumber < 0 ||
-                trim(values[2]).empty() || trim(values[3]).empty() || trim(values[4]).empty()) {
+            if ((side != "l" && side != "r" && side != "c") || !parseInt(values[1], cableNumber) ||
+                cableNumber < 0 || trim(values[2]).empty() || trim(values[3]).empty() ||
+                trim(values[4]).empty()) {
                 result.diagnostics.error(
                     line.number, keyword,
                     "expected side L/R/C, a non-negative cable number, and three variable names");
@@ -1255,9 +1256,9 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             cable.readVariable = trim(values[2]);
             cable.writeVariable = trim(values[3]);
             cable.couplingVariable = trim(values[4]);
-            std::vector<VehicleControlCable>& cables =
-                keyword == "control_cable_front" ? result.frontControlCables
-                                                  : result.rearControlCables;
+            std::vector<VehicleControlCable>& cables = keyword == "control_cable_front"
+                                                           ? result.frontControlCables
+                                                           : result.rearControlCables;
             const auto duplicate = std::find_if(
                 cables.begin(), cables.end(), [&cable](const VehicleControlCable& existing) {
                     return existing.side == cable.side && existing.number == cable.number;
@@ -1268,9 +1269,9 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 continue;
             }
             cables.push_back(std::move(cable));
-            const std::string message =
-                "recognized but partially implemented: control transfer requires an already-loaded, "
-                "uniquely referenced vehicle pair";
+            const std::string message = "recognized but partially implemented: control transfer "
+                                        "requires an already-loaded, "
+                                        "uniquely referenced vehicle pair";
             result.diagnostics.warning(line.number, line.keyword(), message);
             openbus::config::logUnhandledConfigurationTag(configFormat, configPath, line.number,
                                                           line.keyword(), message);

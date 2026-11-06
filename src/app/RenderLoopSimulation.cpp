@@ -32,9 +32,9 @@ std::string normalizedVehicleConfigPath(const std::filesystem::path& path) {
     return key;
 }
 
-std::vector<std::pair<Vehicle*, Vehicle*>> coupledVehiclePairs(
-    const std::vector<std::unique_ptr<Vehicle>>& vehicles,
-    std::vector<std::string>& pairingWarnings) {
+std::vector<std::pair<Vehicle*, Vehicle*>>
+coupledVehiclePairs(const std::vector<std::unique_ptr<Vehicle>>& vehicles,
+                    std::vector<std::string>& pairingWarnings) {
     std::vector<std::string> vehiclePaths;
     vehiclePaths.reserve(vehicles.size());
     for (const std::unique_ptr<Vehicle>& vehicle : vehicles) {
@@ -74,9 +74,9 @@ std::vector<std::pair<Vehicle*, Vehicle*>> coupledVehiclePairs(
         }
         const std::size_t target = targetsByLead[lead].front();
         if (referencesToTarget[target] != 1) {
-            pairingWarnings.push_back(
-                "Control-cable synchronization skipped: loaded target '" + vehiclePaths[target] +
-                "' is referenced by multiple lead vehicles");
+            pairingWarnings.push_back("Control-cable synchronization skipped: loaded target '" +
+                                      vehiclePaths[target] +
+                                      "' is referenced by multiple lead vehicles");
             continue;
         }
         pairs.emplace_back(vehicles[lead].get(), vehicles[target].get());
@@ -1900,8 +1900,8 @@ void RenderLoop::updateScripts() {
     const auto synchronizeCoupledVehicleCables = [&] {
         for (const auto& [rearVehicle, frontVehicle] : cablePairs) {
             openbus::app::vehicle::synchronizeControlCables(
-                rearVehicle->variables, rearVehicle->rearControlCables,
-                frontVehicle->variables, frontVehicle->frontControlCables);
+                rearVehicle->variables, rearVehicle->rearControlCables, frontVehicle->variables,
+                frontVehicle->frontControlCables);
         }
     };
     const auto updatePlayerAndMapScripts = [&] {

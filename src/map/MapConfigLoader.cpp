@@ -1526,6 +1526,106 @@ parseChronoDate(std::string_view value, const std::filesystem::path& configPath)
     return parsed;
 }
 
+void recordMapEnvironmentStartDate(MapDefinition& definition, const std::string& value,
+                                  const std::filesystem::path& configPath, std::size_t line) {
+    try {
+        static_cast<void>(parseChronoDate(value, configPath));
+    } catch (const std::exception&) {
+        definition.diagnostics.warning(line, "startdate",
+                                       "invalid environment date; expected a valid YYYYMMDD date");
+        return;
+    }
+    if (!definition.environment.startDate.empty()) {
+        if (definition.environment.startDate != value) {
+            definition.diagnostics.warning(
+                line, "startdate",
+                "duplicate environment start date ignored; the first valid date is retained");
+        }
+        return;
+    }
+    int startDate = 0;
+    if (!parseInteger(value, startDate)) {
+        definition.diagnostics.warning(line, "startdate",
+                                       "invalid environment date; expected a valid YYYYMMDD date");
+        return;
+    }
+    definition.environment.startDate = value;
+    definition.environment.startDateYyyyMmDd = startDate;
+}
+
+void loadMapEnvironmentConfigFile(MapDefinition& definition,
+                                  const std::filesystem::path& configPath) {
+    if (!std::filesystem::is_regular_file(configPath)) {
+        return;
+    }
+    const std::string format = pathToUtf8(configPath.filename());
+    const std::vector<std::string> lines = splitLines(decodeText(configPath));
+    std::size_t cursor = 0;
+    const auto readEnvironmentField = [&](const std::string& section) {
+        while (cursor < lines.size() && trim(lines[cursor]).empty()) {
+            ++cursor;
+        }
+        if (cursor >= lines.size() || isSectionHeaderLine(trim(lines[cursor]))) {
+            throw std::runtime_error("Truncated [" + section + "] record in " +
+                                     pathToUtf8(configPath));
+        }
+        return trim(lines[cursor++]);
+    };
+    while (cursor < lines.size()) {
+        const std::size_t sectionLine = cursor;
+        const std::string section = trim(lines[cursor++]);
+        if (!isSectionHeaderLine(section)) {
+            continue;
+        }
+        const std::string keyword = section.substr(1, section.size() - 2);
+        if (section == "[sky_textures]" || section == "[cloudtype]" ||
+            section == "[startdate]") {
+            openbus::config::logConfigurationTagStatus(
+                format, configPath, sectionLine + 1, keyword,
+                section == "[startdate]"
+                    ? openbus::config::ConfigurationTagStatus::Active
+                    : openbus::config::ConfigurationTagStatus::Ignored,
+                section == "[startdate]"
+                    ? "valid environment start date initializes the startup calendar"
+                    : "environment assets are retained but not rendered by the runtime");
+        } else {
+            openbus::config::logConfigurationTagStatus(
+                format, configPath, sectionLine + 1, keyword,
+                openbus::config::ConfigurationTagStatus::Unknown,
+                "unknown environment configuration section");
+            definition.diagnostics.warning(sectionLine + 1, keyword,
+                                           "environment configuration section is not implemented");
+            MapOpaqueSection opaqueSection;
+            opaqueSection.keyword = keyword;
+            opaqueSection.sectionLine = sectionLine + 1;
+            while (cursor < lines.size() && !isSectionHeaderLine(trim(lines[cursor]))) {
+                opaqueSection.payloadLines.push_back(lines[cursor++]);
+            }
+            definition.environment.unsupportedSections.push_back(std::move(opaqueSection));
+            continue;
+        }
+
+        if (section == "[sky_textures]") {
+            while (cursor < lines.size() && !isSectionHeaderLine(trim(lines[cursor]))) {
+                std::string texturePath = trim(lines[cursor++]);
+                if (!texturePath.empty()) {
+                    definition.environment.skyTexturePaths.push_back(std::move(texturePath));
+                }
+            }
+        } else if (section == "[cloudtype]") {
+            MapCloudTypeDefinition cloudType;
+            cloudType.name = readEnvironmentField("cloudtype");
+            cloudType.texturePath = readEnvironmentField("cloudtype");
+            cloudType.distanceScale = readEnvironmentField("cloudtype");
+            cloudType.classification = readEnvironmentField("cloudtype");
+            definition.environment.cloudTypes.push_back(std::move(cloudType));
+        } else {
+            recordMapEnvironmentStartDate(definition, readEnvironmentField("startdate"), configPath,
+                                          sectionLine + 1);
+        }
+    }
+}
+
 std::optional<MapChronoDateRange> loadMapChronoDateRange(const std::filesystem::path& configPath,
                                                          ConfigurationDiagnostics& diagnostics) {
     const std::vector<std::string> lines = splitLines(decodeText(configPath));
@@ -2110,6 +2210,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         "[realyearoffset]",
         "[standarddepot]",
         "[addseason]",
+        "[startdate]",
         "[trafficdensity_road]",
         "[trafficdensity_passenger]",
         "[groundtex]",
@@ -2213,6 +2314,9 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             definition.metadata.realYearOffset = readOptionalValue();
         } else if (section == "[standarddepot]") {
             definition.metadata.standardDepot = readOptionalValue();
+        } else if (section == "[startdate]") {
+            recordMapEnvironmentStartDate(definition, readOptionalValue(), globalPath,
+                                          sectionLine + 1);
         } else if (section == "[addseason]") {
             MapSeasonDefinition season;
             if (sectionLine > 0) {
@@ -2352,6 +2456,9 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             definition.unsupportedSections.push_back(std::move(opaqueSection));
         }
     }
+    const std::filesystem::path environmentDirectory = mapDirectory / "environment";
+    loadMapEnvironmentConfigFile(definition, environmentDirectory / "sky.cfg");
+    loadMapEnvironmentConfigFile(definition, environmentDirectory / "clouds.cfg");
     manifestTrace.finish();
 
     if (definition.tiles.empty()) {

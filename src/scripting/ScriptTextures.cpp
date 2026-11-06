@@ -124,8 +124,8 @@ std::vector<std::string> readFontLines(const std::filesystem::path& path, bool& 
     return lines;
 }
 
-std::shared_ptr<const FontDirectoryIndex>
-fontDirectoryIndex(const std::filesystem::path& directory, const std::string& requestedName) {
+std::shared_ptr<const FontDirectoryIndex> fontDirectoryIndex(const std::filesystem::path& directory,
+                                                             const std::string& requestedName) {
     const std::string key = normalizedFontDirectoryKey(directory);
     std::lock_guard<std::mutex> lock(fontDirectoryIndexMutex());
     auto& indexes = fontDirectoryIndexes();
@@ -151,8 +151,8 @@ fontDirectoryIndex(const std::filesystem::path& directory, const std::string& re
     if (cached != indexes.end() && cached->second->modified == modified) {
         const auto found = cached->second->pathsByName.find(requestedName);
         if (found != cached->second->pathsByName.end()) {
-            const auto indexedStamp = cached->second->fileStampsByPath.find(
-                normalizedFontFileKey(found->second));
+            const auto indexedStamp =
+                cached->second->fileStampsByPath.find(normalizedFontFileKey(found->second));
             FontFileStamp currentStamp;
             if (indexedStamp != cached->second->fileStampsByPath.end() &&
                 readFontFileStamp(found->second, currentStamp, error) &&
@@ -237,6 +237,41 @@ std::filesystem::path findFontPath(const std::filesystem::path& sourcePath,
         sourceDirectory = parentDirectory;
     }
     return {};
+}
+
+bool decodeUtf8Codepoint(const std::string& value, std::size_t offset, std::uint32_t& codepoint,
+                         std::size_t& sequenceLength) {
+    if (offset >= value.size()) {
+        return false;
+    }
+    const auto firstByte = static_cast<unsigned char>(value[offset]);
+    sequenceLength = 0;
+    codepoint = 0;
+    if (firstByte >= 0xc2U && firstByte <= 0xdfU) {
+        sequenceLength = 2;
+        codepoint = firstByte & 0x1fU;
+    } else if (firstByte >= 0xe0U && firstByte <= 0xefU) {
+        sequenceLength = 3;
+        codepoint = firstByte & 0x0fU;
+    } else if (firstByte >= 0xf0U && firstByte <= 0xf4U) {
+        sequenceLength = 4;
+        codepoint = firstByte & 0x07U;
+    }
+
+    bool validSequence = sequenceLength != 0 && offset + sequenceLength <= value.size();
+    for (std::size_t index = 1; validSequence && index < sequenceLength; ++index) {
+        const auto nextByte = static_cast<unsigned char>(value[offset + index]);
+        validSequence = (nextByte & 0xc0U) == 0x80U;
+        codepoint = (codepoint << 6U) | (nextByte & 0x3fU);
+    }
+    if (validSequence) {
+        const auto secondByte = static_cast<unsigned char>(value[offset + 1]);
+        validSequence = (sequenceLength != 3 || (firstByte != 0xe0U || secondByte >= 0xa0U)) &&
+                        (sequenceLength != 3 || (firstByte != 0xedU || secondByte < 0xa0U)) &&
+                        (sequenceLength != 4 || (firstByte != 0xf0U || secondByte >= 0x90U)) &&
+                        (sequenceLength != 4 || (firstByte != 0xf4U || secondByte <= 0x8fU));
+    }
+    return validSequence;
 }
 
 } // namespace
@@ -520,6 +555,157 @@ std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(int character) {
         return {8, 4, 4, 2, 4, 4, 8};
     case '~':
         return {0, 0, 9, 22, 0, 0, 0};
+    case 0xa0:
+    case 0x2000:
+    case 0x2001:
+    case 0x2002:
+    case 0x2003:
+    case 0x2004:
+    case 0x2005:
+    case 0x2006:
+    case 0x2007:
+    case 0x2008:
+    case 0x2009:
+    case 0x200a:
+    case 0x202f:
+    case 0x205f:
+    case 0x3000:
+        return {0, 0, 0, 0, 0, 0, 0};
+    case 0xa1:
+        return {4, 0, 4, 4, 4, 4, 4};
+    case 0xa2:
+        return {4, 14, 17, 16, 17, 14, 4};
+    case 0xa3:
+        return {6, 8, 8, 30, 8, 8, 31};
+    case 0xa5:
+        return {17, 10, 31, 4, 31, 4, 4};
+    case 0xa7:
+        return {14, 16, 14, 17, 14, 1, 14};
+    case 0xb7:
+        return {0, 0, 4, 4, 0, 0, 0};
+    case 0xb6:
+        return {30, 21, 21, 30, 20, 20, 20};
+    case 0xab:
+        return {0, 5, 10, 20, 10, 5, 0};
+    case 0xa9:
+        return {14, 17, 23, 20, 23, 17, 14};
+    case 0xae:
+        return {14, 17, 30, 20, 30, 17, 14};
+    case 0xb1:
+        return {0, 4, 4, 31, 4, 31, 0};
+    case 0xd7:
+        return {0, 17, 10, 4, 10, 17, 0};
+    case 0xf7:
+        return {0, 4, 0, 31, 0, 4, 0};
+    case 0xbb:
+        return {0, 20, 10, 5, 10, 20, 0};
+    case 0xbf:
+        return {4, 0, 4, 2, 4, 17, 14};
+    case 0xc1:
+        return {4, 8, 14, 17, 31, 17, 17};
+    case 0xc3:
+        return {10, 5, 14, 17, 17, 31, 17};
+    case 0xc7:
+        return {14, 17, 16, 16, 16, 18, 12};
+    case 0xc9:
+        return {4, 8, 31, 16, 30, 16, 31};
+    case 0xcd:
+        return {2, 4, 14, 4, 4, 4, 14};
+    case 0xd0:
+        return {30, 17, 17, 31, 17, 17, 30};
+    case 0xd1:
+        return {10, 5, 17, 25, 21, 19, 17};
+    case 0xd3:
+        return {4, 8, 14, 17, 17, 17, 14};
+    case 0xd5:
+        return {10, 5, 14, 17, 17, 17, 14};
+    case 0xda:
+        return {4, 8, 17, 17, 17, 17, 14};
+    case 0xc4:
+        return {10, 14, 17, 17, 31, 17, 17};
+    case 0xc6:
+        return {15, 20, 20, 31, 20, 20, 23};
+    case 0xd6:
+        return {10, 14, 17, 17, 17, 17, 14};
+    case 0xd8:
+        return {14, 17, 19, 21, 25, 17, 14};
+    case 0xdc:
+        return {10, 17, 17, 17, 17, 17, 14};
+    case 0xdf:
+        return {12, 18, 16, 28, 18, 18, 28};
+    case 0xde:
+        return {30, 17, 17, 30, 16, 16, 16};
+    case 0xe1:
+        return {4, 8, 14, 1, 15, 17, 15};
+    case 0xe3:
+        return {10, 5, 14, 1, 15, 17, 15};
+    case 0xe7:
+        return {0, 0, 14, 16, 16, 17, 12};
+    case 0xe9:
+        return {4, 8, 14, 17, 31, 16, 14};
+    case 0xed:
+        return {2, 4, 12, 4, 4, 4, 14};
+    case 0xf0:
+        return {1, 15, 17, 31, 17, 17, 15};
+    case 0xf1:
+        return {10, 5, 30, 17, 17, 17, 17};
+    case 0xf3:
+        return {4, 8, 14, 17, 17, 17, 14};
+    case 0xf5:
+        return {10, 5, 14, 17, 17, 17, 14};
+    case 0xfa:
+        return {4, 8, 17, 17, 17, 19, 13};
+    case 0xe4:
+        return {10, 0, 14, 1, 15, 17, 15};
+    case 0xe6:
+        return {0, 13, 18, 31, 20, 20, 15};
+    case 0xf6:
+        return {10, 0, 14, 17, 17, 17, 14};
+    case 0xfe:
+        return {16, 30, 17, 30, 16, 16, 16};
+    case 0xf8:
+        return {0, 14, 19, 21, 25, 14, 0};
+    case 0xfc:
+        return {10, 0, 17, 17, 17, 19, 13};
+    case 0x20ac:
+        return {14, 17, 24, 16, 24, 17, 14};
+    case 0x2122:
+        return {0, 0, 21, 31, 10, 0, 0};
+    case 0x2190:
+        return {0, 4, 8, 31, 8, 4, 0};
+    case 0x2191:
+        return {4, 14, 21, 4, 4, 4, 4};
+    case 0x2192:
+        return {0, 4, 2, 31, 2, 4, 0};
+    case 0x2193:
+        return {4, 4, 4, 4, 21, 14, 4};
+    case 0x2022:
+        return {0, 0, 4, 14, 4, 0, 0};
+    case 0x03b1:
+        return {0, 14, 17, 15, 17, 15, 0};
+    case 0x03b2:
+        return {24, 20, 20, 30, 17, 17, 30};
+    case 0xb5:
+    case 0x03bc:
+        return {0, 0, 17, 17, 17, 19, 29};
+    case 0x03c0:
+        return {31, 10, 10, 10, 10, 10, 10};
+    case 0x03a9:
+        return {14, 17, 17, 17, 10, 27, 0};
+    case 0x2013:
+        return {0, 0, 0, 14, 0, 0, 0};
+    case 0x2014:
+        return {0, 0, 0, 31, 0, 0, 0};
+    case 0x2018:
+        return {8, 4, 2, 0, 0, 0, 0};
+    case 0x2019:
+        return {2, 4, 8, 0, 0, 0, 0};
+    case 0x201c:
+        return {10, 10, 5, 0, 0, 0, 0};
+    case 0x201d:
+        return {0, 0, 0, 0, 5, 10, 10};
+    case 0x2026:
+        return {0, 0, 0, 0, 0, 21, 0};
     case '.':
         return {0, 0, 0, 0, 0, 0, 4};
     case ':':
@@ -565,9 +751,9 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             }
             if (stampError && stampError != std::errc::no_such_file_or_directory &&
                 stampError != std::errc::not_a_directory) {
-                scriptRuntimeLogger.Warning(
-                    "Could not validate cached font definition '" +
-                    cached->second->sourcePath.string() + "': " + stampError.message());
+                scriptRuntimeLogger.Warning("Could not validate cached font definition '" +
+                                            cached->second->sourcePath.string() +
+                                            "': " + stampError.message());
             }
         }
         fonts.erase(cached);
@@ -659,14 +845,14 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             std::error_code imageStampError;
             if (!readFontFileStamp(font->colorImagePath, colorStamp, imageStampError)) {
                 scriptRuntimeLogger.Warning("Could not read font color image metadata '" +
-                                            font->colorImagePath.string() + "': " +
-                                            imageStampError.message());
+                                            font->colorImagePath.string() +
+                                            "': " + imageStampError.message());
                 continue;
             }
             if (!readFontFileStamp(font->alphaImagePath, alphaStamp, imageStampError)) {
                 scriptRuntimeLogger.Warning("Could not read font alpha image metadata '" +
-                                            font->alphaImagePath.string() + "': " +
-                                            imageStampError.message());
+                                            font->alphaImagePath.string() +
+                                            "': " + imageStampError.message());
                 continue;
             }
             font->colorImageModified = colorStamp.modified;
@@ -678,14 +864,14 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             {
                 openbus::rendering::TraceScope colorTrace("script",
                                                           "ScriptRuntime.loadFont.colorImage");
-                colorLoaded = openbus::rendering::TextureLoader::readImage(
-                    font->colorImagePath, font->colorImage);
+                colorLoaded = openbus::rendering::TextureLoader::readImage(font->colorImagePath,
+                                                                           font->colorImage);
             }
             {
                 openbus::rendering::TraceScope alphaTrace("script",
                                                           "ScriptRuntime.loadFont.alphaImage");
-                alphaLoaded = openbus::rendering::TextureLoader::readImage(
-                    font->alphaImagePath, font->alphaImage);
+                alphaLoaded = openbus::rendering::TextureLoader::readImage(font->alphaImagePath,
+                                                                           font->alphaImage);
             }
             if (!colorLoaded || !alphaLoaded) {
                 continue;
@@ -709,8 +895,7 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             } else if (values[0].size() > 1) {
                 const auto firstByte = static_cast<unsigned char>(values[0][0]);
                 const auto secondByte = static_cast<unsigned char>(values[0][1]);
-                if ((firstByte == 0xc2U || firstByte == 0xc3U) &&
-                    (secondByte & 0xc0U) == 0x80U) {
+                if ((firstByte == 0xc2U || firstByte == 0xc3U) && (secondByte & 0xc0U) == 0x80U) {
                     code = ((firstByte & 0x1fU) << 6U) | (secondByte & 0x3fU);
                 }
             }
@@ -802,42 +987,9 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
             characters.push_back(firstByte);
             continue;
         }
-
         std::size_t sequenceLength = 0;
         std::uint32_t codepoint = 0;
-        if (firstByte >= 0xc2U && firstByte <= 0xdfU) {
-            sequenceLength = 2;
-            codepoint = firstByte & 0x1fU;
-        } else if (firstByte >= 0xe0U && firstByte <= 0xefU) {
-            sequenceLength = 3;
-            codepoint = firstByte & 0x0fU;
-        } else if (firstByte >= 0xf0U && firstByte <= 0xf4U) {
-            sequenceLength = 4;
-            codepoint = firstByte & 0x07U;
-        }
-
-        bool validSequence = sequenceLength != 0 && offset + sequenceLength <= value.size();
-        for (std::size_t index = 1; validSequence && index < sequenceLength; ++index) {
-            const auto nextByte = static_cast<unsigned char>(value[offset + index]);
-            validSequence = (nextByte & 0xc0U) == 0x80U;
-            codepoint = (codepoint << 6U) | (nextByte & 0x3fU);
-        }
-        if (validSequence) {
-            validSequence =
-                (sequenceLength != 3 ||
-                 (firstByte != 0xe0U ||
-                  static_cast<unsigned char>(value[offset + 1]) >= 0xa0U)) &&
-                (sequenceLength != 3 ||
-                 (firstByte != 0xedU ||
-                  static_cast<unsigned char>(value[offset + 1]) < 0xa0U)) &&
-                (sequenceLength != 4 ||
-                 (firstByte != 0xf0U ||
-                  static_cast<unsigned char>(value[offset + 1]) >= 0x90U)) &&
-                (sequenceLength != 4 ||
-                 (firstByte != 0xf4U ||
-                  static_cast<unsigned char>(value[offset + 1]) <= 0x8fU));
-        }
-        if (validSequence) {
+        if (decodeUtf8Codepoint(value, offset, codepoint, sequenceLength)) {
             characters.push_back(static_cast<int>(codepoint));
             offset += sequenceLength - 1;
         } else {
@@ -892,12 +1044,11 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
             lineLength == 0 ? 0 : static_cast<int>((lineLength - 1) * advance + 5 * scale);
         const int remainingWidth = std::max(0, texture.width - lineWidth);
         const int horizontalOffset =
-            alignment == TextAlignment::CenterRightBias
-                ? (remainingWidth + 1) / 2
-                : alignment == TextAlignment::Center ||
-                          alignment == TextAlignment::CenterLeftBias
-                      ? remainingWidth / 2
-                      : alignment == TextAlignment::Right ? remainingWidth : 0;
+            alignment == TextAlignment::CenterRightBias ? (remainingWidth + 1) / 2
+            : alignment == TextAlignment::Center || alignment == TextAlignment::CenterLeftBias
+                ? remainingWidth / 2
+            : alignment == TextAlignment::Right ? remainingWidth
+                                                : 0;
         const int originX = x + horizontalOffset + columnIndex * advance;
         const int originY = y + verticalOffset + line * 8 * lineScale;
         for (int row = 0; row < 7; ++row) {
@@ -924,6 +1075,55 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
     texture.revision = ++revisionCounter;
 }
 
+int ScriptRuntime::Impl::fontFallbackGlyphCode(const FontAsset& font) const {
+    if (font.glyphs[static_cast<std::size_t>('?')].defined) {
+        return '?';
+    }
+    for (std::size_t index = 0; index < font.glyphs.size(); ++index) {
+        if (font.glyphs[index].defined) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+int ScriptRuntime::Impl::decodeFontTextCode(const FontAsset& font, const std::string& value,
+                                            std::size_t& characterIndex) const {
+    const unsigned char character = static_cast<unsigned char>(value[characterIndex]);
+    if (character == 0xef && characterIndex + 3 < value.size() &&
+        static_cast<unsigned char>(value[characterIndex + 1]) == 0xbf &&
+        static_cast<unsigned char>(value[characterIndex + 2]) == 0xbd &&
+        value[characterIndex + 3] == 'c') {
+        if (font.glyphs[176].defined) {
+            characterIndex += 2;
+            return 176;
+        }
+        return character;
+    }
+    std::uint32_t codepoint = 0;
+    std::size_t sequenceLength = 0;
+    if (decodeUtf8Codepoint(value, characterIndex, codepoint, sequenceLength)) {
+        characterIndex += sequenceLength - 1;
+        return static_cast<int>(codepoint);
+    }
+    return character;
+}
+
+int ScriptRuntime::Impl::resolveFontGlyphCode(const FontAsset& font, int code,
+                                              int fallbackCode) const {
+    if (code >= 0 && static_cast<std::size_t>(code) < font.glyphs.size() &&
+        font.glyphs[static_cast<std::size_t>(code)].defined) {
+        return code;
+    }
+    if (code >= 'a' && code <= 'z') {
+        const int uppercaseCode = code - 'a' + 'A';
+        if (font.glyphs[static_cast<std::size_t>(uppercaseCode)].defined) {
+            return uppercaseCode;
+        }
+    }
+    return fallbackCode;
+}
+
 bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::string& value,
                                              int x, int y, const TextTextureDefinition& definition,
                                              const FontAsset& font, bool centerVertically,
@@ -933,12 +1133,7 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return false;
     }
-    int fallbackCode = font.glyphs[static_cast<std::size_t>('?')].defined ? '?' : -1;
-    for (std::size_t index = 0; index < font.glyphs.size(); ++index) {
-        if (fallbackCode < 0 && font.glyphs[index].defined) {
-            fallbackCode = static_cast<int>(index);
-        }
-    }
+    const int fallbackCode = fontFallbackGlyphCode(font);
     if (fallbackCode < 0 || font.colorImage.width <= 0 || font.alphaImage.width <= 0) {
         return false;
     }
@@ -952,40 +1147,14 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
         if (character == '\r') {
             continue;
         }
-        if (character == 0xef && characterIndex + 3 < value.size() &&
-            static_cast<unsigned char>(value[characterIndex + 1]) == 0xbf &&
-            static_cast<unsigned char>(value[characterIndex + 2]) == 0xbd &&
-            value[characterIndex + 3] == 'c' && font.glyphs[176].defined) {
-            // Some legacy CP1252 scripts contain UTF-8 replacement bytes where a
-            // degree sign was lost. Only the exact replacement-byte + lowercase-c suffix
-            // is unambiguous.
-            lines.back().push_back(&font.glyphs[176]);
-            characterIndex += 2;
-            continue;
-        }
-        int code = character;
-        if (character == 0xc2 && characterIndex + 1 < value.size() &&
-            static_cast<unsigned char>(value[characterIndex + 1]) == 0xb0) {
-            code = 176;
-            ++characterIndex;
-        }
-        std::size_t glyphIndex = static_cast<std::size_t>(code);
-        if (!font.glyphs[glyphIndex].defined && code >= 'a' && code <= 'z') {
-            const std::size_t uppercaseIndex = static_cast<std::size_t>(code - 'a' + 'A');
-            if (font.glyphs[uppercaseIndex].defined) {
-                glyphIndex = uppercaseIndex;
-            }
-        }
-        if (!font.glyphs[glyphIndex].defined) {
-            glyphIndex = static_cast<std::size_t>(fallbackCode);
-        }
-        lines.back().push_back(&font.glyphs[glyphIndex]);
+        const int code = decodeFontTextCode(font, value, characterIndex);
+        const int glyphCode = resolveFontGlyphCode(font, code, fallbackCode);
+        lines.back().push_back(&font.glyphs[static_cast<std::size_t>(glyphCode)]);
     }
 
     const int textBlockHeight = static_cast<int>(lines.size()) * font.height;
     const int horizontalGap = font.horizontalGap + letterSpacing;
-    int verticalOffset =
-        centerVertically ? std::max(0, (texture.height - textBlockHeight) / 2) : 0;
+    int verticalOffset = centerVertically ? std::max(0, (texture.height - textBlockHeight) / 2) : 0;
     if (centerVertically && definition.alignToFontPixels) {
         int visibleTop = textBlockHeight;
         int visibleBottom = -1;
@@ -1005,8 +1174,7 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
                             continue;
                         }
                         const std::size_t sourceOffset =
-                            (static_cast<std::size_t>(sourceY) * font.alphaImage.width +
-                             sourceX) *
+                            (static_cast<std::size_t>(sourceY) * font.alphaImage.width + sourceX) *
                             4;
                         if (font.alphaImage.rgba[sourceOffset] == 0) {
                             continue;
@@ -1151,8 +1319,8 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
         }
         if (!bitmapFontRendered && !value.empty()) {
             openbus::rendering::TraceScope bitmapTrace("script", "updateTextTextures.drawText");
-            drawText(texture, value, 0, 0, definition.color, 0, maximumScale,
-                     definition.alignment, true);
+            drawText(texture, value, 0, 0, definition.color, 0, maximumScale, definition.alignment,
+                     true);
         } else if (!bitmapFontRendered) {
             texture.revision = ++revisionCounter;
         }
@@ -1475,14 +1643,35 @@ float ScriptRuntime::Impl::scriptTextLength(int fontIndex, const std::string& va
     warnedMissingFontHandles.erase(fontName);
     scriptFonts[static_cast<std::size_t>(fontIndex)] = loadedFont;
     const FontAsset& font = *loadedFont;
-    int width = 0;
-    for (const unsigned char character : value) {
-        const FontGlyph& glyph = font.glyphs[character];
-        if (glyph.defined) {
-            width += glyph.right - glyph.left + font.horizontalGap;
-        }
+    const int fallbackCode = fontFallbackGlyphCode(font);
+    if (fallbackCode < 0) {
+        return 0.0F;
     }
-    return static_cast<float>(std::max(0, width - (value.empty() ? 0 : font.horizontalGap)));
+    int widestLineWidth = 0;
+    int lineWidth = 0;
+    int lineGlyphCount = 0;
+    for (std::size_t characterIndex = 0; characterIndex < value.size(); ++characterIndex) {
+        const unsigned char character = static_cast<unsigned char>(value[characterIndex]);
+        if (character == '@' || character == '\n') {
+            widestLineWidth =
+                std::max(widestLineWidth,
+                         std::max(0, lineWidth - (lineGlyphCount == 0 ? 0 : font.horizontalGap)));
+            lineWidth = 0;
+            lineGlyphCount = 0;
+            continue;
+        }
+        if (character == '\r') {
+            continue;
+        }
+        const int code = decodeFontTextCode(font, value, characterIndex);
+        const int glyphCode = resolveFontGlyphCode(font, code, fallbackCode);
+        const FontGlyph& glyph = font.glyphs[static_cast<std::size_t>(glyphCode)];
+        lineWidth += glyph.right - glyph.left + font.horizontalGap;
+        ++lineGlyphCount;
+    }
+    widestLineWidth = std::max(
+        widestLineWidth, std::max(0, lineWidth - (lineGlyphCount == 0 ? 0 : font.horizontalGap)));
+    return static_cast<float>(widestLineWidth);
 }
 
 bool ScriptRuntime::Impl::copyScriptTexture(int index,
