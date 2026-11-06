@@ -1,5 +1,6 @@
 #include "config/SceneryObjectConfigLoader.h"
 #include "config/ModelConfigLoader.h"
+#include "core/Logger.h"
 #include "core/Variables.h"
 #include "ProbeTempDirectory.h"
 
@@ -7,8 +8,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 
 namespace {
@@ -82,6 +85,18 @@ int main(int argc, char** argv) {
     const std::filesystem::path invalidDetailPath = directory / "invalid-detail.sco";
     const std::filesystem::path missingDetailPath = directory / "missing-detail.sco";
     const std::filesystem::path externalModelPath = directory / "external.cfg";
+    const std::filesystem::path statusPath = directory / "status.sco";
+    const std::filesystem::path statusLogPath = directory / "diagnostics.log";
+    const std::string statusLogPathText = statusLogPath.string();
+#ifdef _WIN32
+    if (_putenv_s("OPENBUS_LOG_FILE", statusLogPathText.c_str()) != 0) {
+#else
+    if (setenv("OPENBUS_LOG_FILE", statusLogPathText.c_str(), 1) != 0) {
+#endif
+        std::cerr << "Could not configure scenery diagnostic log path\n";
+        openbus::probe::removeProbeDirectory(directory);
+        return 1;
+    }
     {
         std::ofstream output(path);
         if (!output) {
@@ -248,6 +263,19 @@ int main(int argc, char** argv) {
         std::ofstream mesh(directory / "mesh.x");
         mesh << "xof 0303txt 0032\n";
     }
+    {
+        std::ofstream output(statusPath);
+        output << "[mesh]\nmesh.x\n"
+                  "[description]\neditor description\n[end]\n"
+                  "[busstop]\n"
+                  "[helparrow]\n"
+                  "[groups]\n"
+                  "[friendlyname]\neditor name\n"
+                  "[complexity]\n2\n"
+                  "[nightmapmode]\n1\n"
+                  "[maplight]\n0\n0\n0\n0\n0\n0\n0\n"
+                  "[unknown_probe_keyword]\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
     const SceneryObjectConfig cycleFallbackConfiguration =
@@ -268,6 +296,7 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig detail = loadSceneryObjectFile(detailPath);
     const SceneryObjectConfig invalidDetail = loadSceneryObjectFile(invalidDetailPath);
     const SceneryObjectConfig missingDetail = loadSceneryObjectFile(missingDetailPath);
+    const SceneryObjectConfig statusConfiguration = loadSceneryObjectFile(statusPath);
     openbus::scripting::SceneryObject textureAddressVariables;
     const ModelConfig textureAddressModel =
         loadSceneryObjectConfig(textureAddressPath, directory, textureAddressVariables);
@@ -277,9 +306,39 @@ int main(int argc, char** argv) {
     const ModelConfig externalModel =
         loadModelConfig(externalModelPath, directory, ModelConfigKind::SceneryObject,
                         textureAddressVariables);
+    Logger::Flush();
+    std::ifstream statusLogInput(statusLogPath);
+    const std::string statusLog((std::istreambuf_iterator<char>(statusLogInput)),
+                                std::istreambuf_iterator<char>());
+    const bool statusLogOpened = statusLogInput.is_open();
+    statusLogInput.close();
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
+    valid &= require(statusConfiguration.busStop && !statusConfiguration.diagnostics.hasErrors() &&
+                         statusLogOpened,
+                     "SCO configuration statuses distinguish active, ignored, and unknown tags");
+    valid &= require(statusLog.find("Configuration tag [busstop] recognized and active") !=
+                         std::string::npos,
+                     "SCO active status is logged");
+    valid &= require(statusLog.find("Configuration tag [description] recognized but ignored") !=
+                         std::string::npos &&
+                         statusLog.find("Configuration tag [helparrow] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [groups] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [friendlyname] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [complexity] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [nightmapmode] recognized but ignored") !=
+                             std::string::npos &&
+                         statusLog.find("Configuration tag [maplight] recognized but ignored") !=
+                             std::string::npos,
+                     "SCO ignored statuses are logged");
+    valid &= require(statusLog.find("Configuration tag [unknown_probe_keyword] unknown") !=
+                         std::string::npos,
+                     "SCO unknown status is logged");
     valid &= require(detail.complexity == 2 && detail.nightMapMode == 1 &&
                          !detail.diagnostics.hasErrors() && detailModel.parts.size() == 1 &&
                          detailModel.diagnostics.entries.empty(),

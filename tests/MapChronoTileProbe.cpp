@@ -1,11 +1,14 @@
 #include "map/MapConfigLoader.h"
 #include "map/MapTrafficRuntime.h"
+#include "core/Logger.h"
 #include "ProbeTempDirectory.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -34,6 +37,16 @@ void writeUtf16Le(const std::filesystem::path& path, const std::string& text) {
 void runProbe() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus-map-chrono-tile-probe");
+    const std::filesystem::path statusLogPath = root / "diagnostics.log";
+    const std::string statusLogPathText = statusLogPath.string();
+#ifdef _WIN32
+    if (_putenv_s("OPENBUS_LOG_FILE", statusLogPathText.c_str()) != 0) {
+#else
+    if (setenv("OPENBUS_LOG_FILE", statusLogPathText.c_str(), 1) != 0) {
+#endif
+        openbus::probe::removeProbeDirectory(root);
+        throw std::runtime_error("could not configure Chrono diagnostic log path");
+    }
     std::filesystem::create_directories(root);
     try {
         const std::string chronoText =
@@ -141,8 +154,10 @@ void runProbe() {
             firstScenario / "tile_1_2.map",
             "[version]\n14\n[selobject]\n101\n[delete]\n\n"
             "[selobject]\n102\n[typ]\nScenery\\replacement.sco\n"
-            "[relabel]\n1\nNew label\n\nObject Nr. 2\n[object]\n0\n"
-            "Scenery\\variant-source.sco\n102\n4\n5\n6\n0\n0\n0\n1\nVariant\n\n"
+            "[relabel]\n1\nNew label\n"
+            "[rule]\n0\nspeedlimit\n30\n0\n[unknown_selector_operation]\nignored payload\n"
+            "\nObject Nr. 2\n[object]\n0\nScenery\\variant-source.sco\n"
+            "102\n4\n5\n6\n0\n0\n0\n1\nVariant\n\n"
             "Object Nr. 3\n[object]\n0\n"
             "Scenery\\added.sco\n103\n10\n20\n30\n0\n0\n0\n0\n0\n"
             "[selobject]\n104\n[typ]\nScenery\\new-attachment.sco\n"
@@ -288,6 +303,20 @@ void runProbe() {
             oversizedDateRejected = true;
         }
         require(oversizedDateRejected, "oversized Chrono dates are rejected before year conversion");
+        Logger::Flush();
+        std::ifstream statusLogInput(statusLogPath);
+        const std::string statusLog((std::istreambuf_iterator<char>(statusLogInput)),
+                                    std::istreambuf_iterator<char>());
+        require(statusLogInput.is_open() &&
+                    statusLog.find("Configuration tag [typ] recognized and active") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [relabel] recognized and active") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [rule] recognized but ignored") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [unknown_selector_operation] unknown") !=
+                        std::string::npos,
+                "Chrono selector subrecords report active, ignored, and unknown statuses");
     } catch (...) {
         openbus::probe::removeProbeDirectory(root);
         throw;

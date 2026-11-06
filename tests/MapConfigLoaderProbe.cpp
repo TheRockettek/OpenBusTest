@@ -1,5 +1,6 @@
 #include "map/MapConfigLoader.h"
 #include "map/MapSceneryPlacement.h"
+#include "core/Logger.h"
 #include "ProbeTempDirectory.h"
 
 #include <algorithm>
@@ -7,9 +8,11 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -47,6 +50,16 @@ void writeU32(std::ofstream& output, std::uint32_t value) {
 void runFixtureProbe() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus-map-config-probe");
+    const std::filesystem::path statusLogPath = root / "diagnostics.log";
+    const std::string statusLogPathText = statusLogPath.string();
+#ifdef _WIN32
+    if (_putenv_s("OPENBUS_LOG_FILE", statusLogPathText.c_str()) != 0) {
+#else
+    if (setenv("OPENBUS_LOG_FILE", statusLogPathText.c_str(), 1) != 0) {
+#endif
+        openbus::probe::removeProbeDirectory(root);
+        throw std::runtime_error("could not configure map diagnostic log path");
+    }
     std::filesystem::create_directories(root);
     try {
         const std::filesystem::path groundTextureDirectory = root / "texture" / "map";
@@ -1466,6 +1479,24 @@ void runFixtureProbe() {
             malformedWaterRejected = true;
         }
         require(malformedWaterRejected, "truncated water sidecar is rejected");
+        Logger::Flush();
+        std::ifstream statusLogInput(statusLogPath);
+        const std::string statusLog((std::istreambuf_iterator<char>(statusLogInput)),
+                                    std::istreambuf_iterator<char>());
+        require(statusLogInput.is_open() &&
+                    statusLog.find("Configuration tag [map] recognized and active") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [backgroundimage] recognized but ignored") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [unknown_global] unknown") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [version] recognized and active") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [variable_terrain] recognized but ignored") !=
+                        std::string::npos &&
+                    statusLog.find("Configuration tag [unknown_future_section] unknown") !=
+                        std::string::npos,
+                "global.cfg and map tile records log active, ignored, and unknown statuses");
     } catch (...) {
         openbus::probe::removeProbeDirectory(root);
         throw;

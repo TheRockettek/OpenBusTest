@@ -1,8 +1,13 @@
 #include "map/MapSplineProfile.h"
+#include "core/Logger.h"
+#include "ProbeTempDirectory.h"
 
 #include <array>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -237,13 +242,59 @@ void runInstalledProfileSmoke(const std::filesystem::path& path) {
 int main(int argc, char** argv) {
     try {
         if (argc == 4 && std::string(argv[1]) != "--inspect") {
-            runProbe(argv[1]);
-            runExplicitCantWidthProbe(argv[2]);
-            runNoCollisionProbe(argv[3]);
-            runMixedCaseAndDisabledProbe(
-                std::filesystem::path(argv[1]).parent_path() / "map_spline_profile_mixed_case.sli");
-            runMalformedProfileProbe(
-                std::filesystem::path(argv[1]).parent_path() / "map_spline_profile_malformed.sli");
+            const std::filesystem::path diagnosticsDirectory =
+                openbus::probe::makeProbeDirectory("openbus-map-spline-profile-probe");
+            try {
+                const std::filesystem::path logPath = diagnosticsDirectory / "diagnostics.log";
+                const std::string logPathText = logPath.string();
+#ifdef _WIN32
+                if (_putenv_s("OPENBUS_LOG_FILE", logPathText.c_str()) != 0) {
+#else
+                if (setenv("OPENBUS_LOG_FILE", logPathText.c_str(), 1) != 0) {
+#endif
+                    throw std::runtime_error("could not configure spline-profile diagnostic log");
+                }
+
+                runProbe(argv[1]);
+                runExplicitCantWidthProbe(argv[2]);
+                runNoCollisionProbe(argv[3]);
+                runMixedCaseAndDisabledProbe(
+                    std::filesystem::path(argv[1]).parent_path() / "map_spline_profile_mixed_case.sli");
+                runMalformedProfileProbe(
+                    std::filesystem::path(argv[1]).parent_path() / "map_spline_profile_malformed.sli");
+
+                const std::filesystem::path statusPath = diagnosticsDirectory / "status.sli";
+                {
+                    std::ofstream statusFile(statusPath);
+                    statusFile << "[profilepnt]\n0\n0\n0\n0\n"
+                                  "[onlyeditor]\n[nocollision]\n"
+                                  "[texture]\nroad.bmp\n[matl_alpha]\n1\n"
+                                  "[scaletexbylength]\n[profile]\n0\n"
+                                  "[profilepnt]\n-1\n0\n0\n0\n"
+                                  "[unknown_spline_profile]\n";
+                }
+                static_cast<void>(openbus::map::loadMapSplineProfile(statusPath));
+                Logger::Flush();
+                std::ifstream logInput(logPath);
+                const std::string log((std::istreambuf_iterator<char>(logInput)),
+                                      std::istreambuf_iterator<char>());
+                require(logInput.is_open() &&
+                            log.find("Configuration tag [onlyeditor] recognized and active") !=
+                                std::string::npos &&
+                            log.find("Configuration tag [matl_alpha] recognized and active") !=
+                                std::string::npos &&
+                            log.find("Configuration tag [profilepnt] recognized but ignored") !=
+                                std::string::npos &&
+                            log.find("Configuration tag [profilepnt] recognized and active") !=
+                                std::string::npos &&
+                            log.find("Configuration tag [unknown_spline_profile] unknown") !=
+                                std::string::npos,
+                        "spline-profile records report active, ignored, and unknown statuses");
+            } catch (...) {
+                openbus::probe::removeProbeDirectory(diagnosticsDirectory);
+                throw;
+            }
+            openbus::probe::removeProbeDirectory(diagnosticsDirectory);
         } else if (argc == 3 && std::string(argv[1]) == "--inspect") {
             runInstalledProfileSmoke(argv[2]);
         } else if (argc == 3 && std::string(argv[1]) == "--malformed") {

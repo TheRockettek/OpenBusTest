@@ -135,6 +135,12 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
     std::size_t currentTextureIndex = 0;
     bool hasCurrentTexture = false;
     std::vector<bool> scaleTextureByLength;
+    const auto logStatus = [&](std::size_t line, const std::string& tag,
+                               openbus::config::ConfigurationTagStatus status,
+                               const std::string& detail) {
+        openbus::config::logConfigurationTagStatus("spline profile (.sli)", path, line, tag,
+                                                   status, detail);
+    };
 
     for (std::size_t cursor = 0; cursor < lines.size();) {
         const std::size_t sectionLine = cursor + 1;
@@ -145,22 +151,35 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 : sourceLine;
         if (section == "[onlyeditor]") {
             profile.editorOnly = true;
+            logStatus(sectionLine, "onlyeditor", openbus::config::ConfigurationTagStatus::Active,
+                      "editor-only marker has runtime handling");
         } else if (section == "[nocollision]") {
             profile.noCollision = true;
+            logStatus(sectionLine, "nocollision", openbus::config::ConfigurationTagStatus::Active,
+                      "collision marker has runtime handling");
         } else if (section == "[halfcantwidth]") {
             std::string widthText;
             double width = 0.0;
             if (!readPayload(lines, cursor, widthText) || !parseReal(widthText, width) ||
                 width < 0.0) {
+                logStatus(sectionLine, "halfcantwidth",
+                          openbus::config::ConfigurationTagStatus::Ignored,
+                          "invalid or missing non-negative width; height-profile fallback retained");
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "halfcantwidth",
                     "invalid or missing non-negative width; height-profile fallback retained");
             } else if (profile.explicitCantHalfWidth.has_value()) {
+                logStatus(sectionLine, "halfcantwidth",
+                          openbus::config::ConfigurationTagStatus::Ignored,
+                          "duplicate width ignored; first valid directive retained");
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "halfcantwidth",
                     "duplicate width ignored; first valid directive retained");
             } else {
                 profile.explicitCantHalfWidth = width;
+                logStatus(sectionLine, "halfcantwidth",
+                          openbus::config::ConfigurationTagStatus::Active,
+                          "explicit cant half-width has runtime handling");
             }
         } else if (section == "[heightprofile]") {
             MapSplineHeightProfile heightProfile;
@@ -176,6 +195,9 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             }
             heightProfile.valid = complete && numeric;
             profile.heightProfiles.push_back(std::move(heightProfile));
+            logStatus(sectionLine, "heightprofile",
+                      openbus::config::ConfigurationTagStatus::Active,
+                      "height-profile record is retained for spline geometry");
         } else if (section == "[path]") {
             MapSplinePathDefinition pathDefinition;
             bool numeric = true;
@@ -210,6 +232,8 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 }
             }
             profile.paths.push_back(std::move(pathDefinition));
+            logStatus(sectionLine, "path", openbus::config::ConfigurationTagStatus::Active,
+                      "spline path record has runtime handling");
         } else if (section == "[texture]") {
             std::string texture;
             if (readPayload(lines, cursor, texture)) {
@@ -218,12 +242,17 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 scaleTextureByLength.push_back(false);
                 currentTextureIndex = profile.textures.size() - 1;
                 hasCurrentTexture = true;
+                logStatus(sectionLine, "texture", openbus::config::ConfigurationTagStatus::Active,
+                          "texture mapping has runtime handling");
             } else {
                 hasCurrentTexture = false;
+                logStatus(sectionLine, "texture", openbus::config::ConfigurationTagStatus::Ignored,
+                          "texture mapping has no filename");
             }
         } else if (section == "[matl_alpha]" && hasCurrentTexture) {
             std::string alphaModeText;
             int alphaMode = 0;
+            bool applied = false;
             if (readPayload(lines, cursor, alphaModeText)) {
                 const char* begin = alphaModeText.data();
                 const char* end = begin + alphaModeText.size();
@@ -231,10 +260,19 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 if (parsed.ec == std::errc{} && parsed.ptr == end && alphaMode >= 0 &&
                     alphaMode <= 2) {
                     profile.textureAlphaModes[currentTextureIndex] = alphaMode;
+                    applied = true;
                 }
             }
+            logStatus(sectionLine, "matl_alpha",
+                      applied ? openbus::config::ConfigurationTagStatus::Active
+                              : openbus::config::ConfigurationTagStatus::Ignored,
+                      applied ? "texture alpha mode has runtime handling"
+                              : "invalid or missing alpha mode is ignored");
         } else if (section == "[scaletexbylength]" && hasCurrentTexture) {
             scaleTextureByLength[currentTextureIndex] = true;
+            logStatus(sectionLine, "scaletexbylength",
+                      openbus::config::ConfigurationTagStatus::Active,
+                      "texture length scaling has runtime handling");
         } else if (section == "[profile]") {
             std::string textureIndexText;
             int textureIndex = -1;
@@ -249,14 +287,23 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                         scaleTextureByLength[static_cast<std::size_t>(textureIndex)];
                     profile.sections.push_back({textureIndex, scalesByLength, {}});
                     currentSection = &profile.sections.back();
+                    logStatus(sectionLine, "profile",
+                              openbus::config::ConfigurationTagStatus::Active,
+                              "profile strip has runtime handling");
                 } else {
                     currentSection = nullptr;
+                    logStatus(sectionLine, "profile",
+                              openbus::config::ConfigurationTagStatus::Ignored,
+                              "invalid texture index; profile strip ignored");
                     openbus::config::logUnhandledConfigurationTag(
                         "spline profile (.sli)", path, sectionLine, "profile",
                         "invalid texture index; profile strip ignored");
                 }
             } else {
                 currentSection = nullptr;
+                logStatus(sectionLine, "profile",
+                          openbus::config::ConfigurationTagStatus::Ignored,
+                          "missing texture index; profile strip ignored");
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "profile",
                     "missing texture index; profile strip ignored");
@@ -265,18 +312,30 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             std::array<double, 4> values = {};
             if (readRealPayloads(lines, cursor, values)) {
                 currentSection->points.push_back({values[0], values[1], values[2], values[3]});
+                logStatus(sectionLine, "profilepnt",
+                          openbus::config::ConfigurationTagStatus::Active,
+                          "profile point has runtime handling");
             } else {
+                logStatus(sectionLine, "profilepnt",
+                          openbus::config::ConfigurationTagStatus::Ignored,
+                          "expected four finite numeric fields; profile point ignored");
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "profilepnt",
                     "expected four finite numeric fields; profile point ignored");
             }
         } else if (section == "[matl_alpha]" || section == "[profilepnt]" ||
                    section == "[scaletexbylength]") {
+            const std::string keyword = section.substr(1, section.size() - 2);
+            logStatus(sectionLine, keyword, openbus::config::ConfigurationTagStatus::Ignored,
+                      "directive has no applicable preceding texture mapping");
             openbus::config::logUnhandledConfigurationTag(
                 "spline profile (.sli)", path, sectionLine,
                 sourceLine.substr(1, sourceLine.size() - 2),
                 "directive has no applicable preceding texture mapping");
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            logStatus(sectionLine, section.substr(1, section.size() - 2),
+                      openbus::config::ConfigurationTagStatus::Unknown,
+                      "unknown spline-profile directive");
             openbus::config::logUnhandledConfigurationTag(
                 "spline profile (.sli)", path, sectionLine,
                 sourceLine.substr(1, sourceLine.size() - 2), "directive is not implemented");

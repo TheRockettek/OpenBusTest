@@ -199,6 +199,9 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
             untriggeredLoopSounds_.push_back(current);
         }
     };
+    static const std::unordered_set<std::string> activeSoundKeywords = {
+        "sound", "loopsound", "trigger", "noloop", "loop", "looped", "viewpoint", "3d",
+        "volcurve", "conditionSingle"};
     openbus::config::Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
@@ -206,9 +209,18 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
         }
         const std::string keyword = line.keyword();
         const auto reportUnhandled = [&]() {
+            openbus::config::logConfigurationTagStatus(
+                "sound.cfg", configPath, line.number, keyword,
+                openbus::config::ConfigurationTagStatus::Unknown, "unknown sound keyword");
             openbus::config::logUnhandledConfigurationTag("sound.cfg", configPath, line.number,
                                                           keyword, "unknown sound keyword");
         };
+        if (activeSoundKeywords.contains(keyword)) {
+            openbus::config::logConfigurationTagStatus(
+                "sound.cfg", configPath, line.number, keyword,
+                openbus::config::ConfigurationTagStatus::Active,
+                "sound CFG record has runtime handling");
+        }
         if (keyword == "sound" || keyword == "loopsound") {
             retainUntriggeredLoop();
             openbus::config::Line value;
@@ -322,6 +334,10 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
                     break;
                 }
                 if (line.isKeyword()) {
+                    openbus::config::logConfigurationTagStatus(
+                        "sound.cfg", configPath, line.number, line.keyword(),
+                        openbus::config::ConfigurationTagStatus::Active,
+                        "volume-curve point has runtime handling");
                     std::vector<std::string> values;
                     ConfigurationDiagnostics diagnostics;
                     if (!reader.readPayloads(2, values, diagnostics, "pnt")) {

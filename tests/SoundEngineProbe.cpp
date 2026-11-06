@@ -1,4 +1,5 @@
 #include "audio/VehicleSoundBank.h"
+#include "core/Logger.h"
 #include "core/Variables.h"
 #include "ProbeTempDirectory.h"
 
@@ -6,9 +7,11 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <system_error>
 #include <unordered_set>
@@ -875,6 +878,17 @@ bool checkMovingVehicleSources(const std::filesystem::path& root) {
 int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_sound_probe");
+    const std::filesystem::path statusLogPath = root / "diagnostics.log";
+    const std::string statusLogPathText = statusLogPath.string();
+#ifdef _WIN32
+    if (_putenv_s("OPENBUS_LOG_FILE", statusLogPathText.c_str()) != 0) {
+#else
+    if (setenv("OPENBUS_LOG_FILE", statusLogPathText.c_str(), 1) != 0) {
+#endif
+        openbus::probe::removeProbeDirectory(root);
+        std::cerr << "Could not configure sound diagnostic log path\n";
+        return 1;
+    }
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "sound.cfg";
     {
@@ -889,6 +903,16 @@ int main() {
                   "[noloop]\n"
                   "[trigger]\nev_one_shot\n";
     }
+    const std::filesystem::path statusConfigPath = root / "diagnostics.cfg";
+    {
+        std::ofstream config(statusConfigPath);
+        config << "[sound]\nDiagnostic.wav\n1\n[trigger]\nev_diagnostics\n"
+                  "[noloop]\n[viewpoint]\n1\n[3d]\n0\n0\n0\n20\n"
+                  "[volcurve]\nengine\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+                  "[conditionSingle]\nengine\n0.5\n1\n[unknown_probe_keyword]\n";
+    }
+    VehicleSoundBank statusBank;
+    statusBank.load(statusConfigPath);
 
     const std::filesystem::path ownershipConfigPath = root / "ownership.cfg";
     {
@@ -1021,13 +1045,27 @@ int main() {
     secondVehicle.stopAll(playback);
     caseSensitiveSoundBank.stopAll(caseSensitivePlayback);
 
+    Logger::Flush();
+    std::ifstream statusLogInput(statusLogPath);
+    const std::string statusLog((std::istreambuf_iterator<char>(statusLogInput)),
+                                std::istreambuf_iterator<char>());
+    const bool soundStatusesLogged =
+        statusLogInput.is_open() &&
+        statusLog.find("Configuration tag [sound] recognized and active") !=
+            std::string::npos &&
+        statusLog.find("Configuration tag [pnt] recognized and active") !=
+            std::string::npos &&
+        statusLog.find("Configuration tag [conditionSingle] recognized and active") !=
+            std::string::npos &&
+        statusLog.find("Configuration tag [unknown_probe_keyword] unknown") !=
+            std::string::npos;
     openbus::probe::removeProbeDirectory(root);
     if (!bothVehiclesStartedTheirOwnLoops || !triggerStopIsScopedToFirstVehicle ||
         !ambientStopIsScopedToFirstVehicle || !stopAllLeavesSecondVehicleLoopsAlone ||
         !triggerLookupIsLocal || !oneShotPlaybackWorks || !repeatedOneShotIsCoalesced ||
         !oneShotStateIsVehicleLocal || !extendedChecksPassed || !caseInsensitiveSoundPathResolved ||
-        !caseInsensitiveAmbientPathResolved) {
-        std::cerr << "vehicle sound source ownership, cancellation, or retrigger policy failed\n";
+        !caseInsensitiveAmbientPathResolved || !soundStatusesLogged) {
+        std::cerr << "vehicle sound behavior or configuration diagnostics failed\n";
         return 1;
     }
     return 0;

@@ -113,10 +113,23 @@ int main() {
     std::ofstream vehicleConfig(vehicleConfigPath);
     vehicleConfig << "[friendlyname]\nTest\nAI car\nDefault\n"
                      "[model]\nmodel/model.cfg\n"
+                     "[passengercabin]\nmodel/cabin.cfg\n"
+                     "[paths]\nmodel/paths.cfg\n"
                      "[cog]\n0.1\n0\n1.2\n"
                      "[rot_pnt_long]\n-2\n"
-                     "[rowdy_factor]\n0.5\n";
+                     "[rowdy_factor]\n0.5\n"
+                     "[unknown_probe_keyword]\n";
     vehicleConfig.close();
+
+    std::ofstream cabin(root / "model/cabin.cfg");
+    cabin << "[passpos]\n0\n0\n0\n0\n0\n"
+             "[linktonextveh]\n0\n";
+    cabin.close();
+    std::ofstream paths(root / "model/paths.cfg");
+    paths << "0\n[pathpnt]\n0\n0\n0\n"
+             "[stepsoundpack]\n0\n"
+             "[next_roomheight]\n1.8\n";
+    paths.close();
 
     std::ofstream modelConfig(root / "model/model.cfg");
     modelConfig << "[mesh]\ncar.o3d\n";
@@ -128,6 +141,7 @@ int main() {
     const std::shared_ptr<const SharedVehicleDefinition> definition =
         sharedVehicleDefinition(vehicleConfigPath, modelConfigPath, VehicleFileKind::Vehicle);
     const bool loaded = definition->vehicleConfiguration.friendlyVehicleName == "AI car" &&
+                        !definition->vehicleConfiguration.diagnostics.hasErrors() &&
                         definition->modelConfigPath == modelConfigPath &&
                         definition->modelRoot == root / "model" &&
                         !definition->modelConfiguration.diagnostics.hasErrors() &&
@@ -145,7 +159,23 @@ int main() {
         log.find("[rot_pnt_long]: recognized and retained but not applied to vehicle physics") !=
             std::string::npos &&
         log.find("[rowdy_factor]: recognized but unsupported: family-specific ride behavior is "
-                 "not implemented") != std::string::npos;
+                 "not implemented") != std::string::npos &&
+        log.find("Configuration tag [model] recognized and active") != std::string::npos &&
+        log.find("Configuration tag [rot_pnt_long] recognized but ignored") !=
+            std::string::npos &&
+        log.find("Configuration tag [rowdy_factor] recognized but ignored") !=
+            std::string::npos &&
+        log.find("Configuration tag [passpos] recognized and active") !=
+            std::string::npos &&
+        log.find("Configuration tag [linktonextveh] recognized but ignored") !=
+            std::string::npos &&
+        log.find("Configuration tag [pathpnt] recognized and active") !=
+            std::string::npos &&
+        log.find("Configuration tag [stepsoundpack] recognized but ignored") !=
+            std::string::npos &&
+        log.find("Configuration tag [next_roomheight] recognized but ignored") !=
+            std::string::npos &&
+        log.find("Configuration tag [unknown_probe_keyword] unknown") != std::string::npos;
     logInput.close();
     openbus::probe::removeProbeDirectory(root);
 

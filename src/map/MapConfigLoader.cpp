@@ -1685,6 +1685,34 @@ MapChronoSelectorEdits parseMapChronoSelectorEdits(
         if (section.empty()) {
             continue;
         }
+        if (isSectionHeaderLine(section)) {
+            const std::string keyword = section.substr(1, section.size() - 2);
+            openbus::config::ConfigurationTagStatus status =
+                openbus::config::ConfigurationTagStatus::Unknown;
+            std::string detail = "unknown Chrono selector operation";
+            if (section == "[delete]") {
+                status = openbus::config::ConfigurationTagStatus::Active;
+                detail = "selector deletion is applied when target references permit it";
+            } else if (section == "[typ]") {
+                status = openbus::config::ConfigurationTagStatus::Active;
+                detail = "selector asset-path override has runtime handling";
+            } else if (section == "[relabel]" && selector.keyword == "selobject") {
+                status = openbus::config::ConfigurationTagStatus::Active;
+                detail = "object selector labels have runtime handling";
+            } else if (section == "[relabel]") {
+                status = openbus::config::ConfigurationTagStatus::Ignored;
+                detail = "Chrono spline relabeling is not implemented";
+            } else if ((section == "[rule]" || section == "[kill_rule]") &&
+                       selector.keyword == "selspline") {
+                status = openbus::config::ConfigurationTagStatus::Active;
+                detail = "spline selector traffic rules have runtime handling";
+            } else if (section == "[rule]" || section == "[kill_rule]") {
+                status = openbus::config::ConfigurationTagStatus::Ignored;
+                detail = "Chrono object selector rule edits are not implemented";
+            }
+            openbus::config::logConfigurationTagStatus("Chrono map tile", path, line, keyword,
+                                                       status, detail);
+        }
         if (section == "[delete]") {
             edits.deleteTarget = true;
             edits.deleteLine = line;
@@ -2069,10 +2097,62 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     };
 
     openbus::rendering::TraceScope manifestTrace("map", "MapConfigLoader.parseGlobalCfg");
+    static const std::unordered_set<std::string> knownGlobalSections = {
+        "[name]",          "[friendlyname]",       "[version]",
+        "[NextIDCode]",    "[description]",        "[worldcoordinates]",
+        "[dynhelperactive]", "[realrail]",          "[LHT]",
+        "[backgroundimage]", "[mapcam]",            "[moneysystem]",
+        "[ticketpack]",    "[repair_time_min]",    "[years]",
+        "[realyearoffset]", "[standarddepot]",     "[addseason]",
+        "[trafficdensity_road]", "[trafficdensity_passenger]", "[groundtex]",
+        "[entrypoints]",   "[map]"};
     for (; cursor < lines.size();) {
         const std::size_t sectionLine = cursor;
         const std::string section = trim(lines[cursor]);
         ++cursor;
+        if (isSectionHeader(section)) {
+            const std::string keyword = section.substr(1, section.size() - 2);
+            if (knownGlobalSections.contains(section)) {
+                const char* ignoredReason = nullptr;
+                if (section == "[version]") {
+                    ignoredReason = "map version is retained but has no runtime behavior";
+                } else if (section == "[NextIDCode]") {
+                    ignoredReason = "next object ID is retained for editor use but not applied";
+                } else if (section == "[description]") {
+                    ignoredReason = "description is retained but not displayed at runtime";
+                } else if (section == "[dynhelperactive]") {
+                    ignoredReason = "dynamic-helper activation is not implemented";
+                } else if (section == "[realrail]") {
+                    ignoredReason = "real-rail behavior is not implemented";
+                } else if (section == "[backgroundimage]") {
+                    ignoredReason = "background image settings are retained but not rendered";
+                } else if (section == "[mapcam]") {
+                    ignoredReason = "map-camera settings are retained but not applied";
+                } else if (section == "[repair_time_min]") {
+                    ignoredReason = "repair-time setting is retained but not applied";
+                } else if (section == "[years]") {
+                    ignoredReason = "map years are retained but not applied";
+                } else if (section == "[realyearoffset]") {
+                    ignoredReason = "real-year offset is retained but not applied";
+                } else if (section == "[standarddepot]") {
+                    ignoredReason = "standard depot is retained but not selected at runtime";
+                } else if (section == "[addseason]") {
+                    ignoredReason = "season metadata is retained but seasonal switching is not implemented";
+                }
+                openbus::config::logConfigurationTagStatus(
+                    "global.cfg", globalPath, sectionLine + 1, keyword,
+                    ignoredReason == nullptr
+                        ? openbus::config::ConfigurationTagStatus::Active
+                        : openbus::config::ConfigurationTagStatus::Ignored,
+                    ignoredReason == nullptr ? "global map record has runtime handling"
+                                             : ignoredReason);
+            } else {
+                openbus::config::logConfigurationTagStatus(
+                    "global.cfg", globalPath, sectionLine + 1, keyword,
+                    openbus::config::ConfigurationTagStatus::Unknown,
+                    "unknown global.cfg section");
+            }
+        }
         if (section == "[name]") {
             definition.metadata.name = readOptionalValue();
         } else if (section == "[friendlyname]") {
@@ -3311,11 +3391,45 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         }
         return tileVersion;
     };
+    static const std::unordered_set<std::string> knownTileSections = {
+        "[version]", "[terrain]", "[water]", "[variable_terrain]",
+        "[variable_terrainlightmap]", "[spline]", "[spline_h]", "[object]",
+        "[attachObj]", "[splineAttachement]", "[splineAttachement_repeater]",
+        "[varparent]", "[spline_terrain_align]", "[spline_terrain_align_2]",
+        "[rule]", "[kill_rule]", "[selobject]", "[selspline]"};
     enum class ModifierTarget { None, SceneryObject, AttachedObject, SplineAttachment, Spline };
     ModifierTarget modifierTarget = ModifierTarget::None;
     std::size_t modifierTargetIndex = 0;
     for (std::size_t cursor = 0; cursor < lines.size(); ++cursor) {
         const std::string section = trim(lines[cursor]);
+        if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            const std::string keyword = section.substr(1, section.size() - 2);
+            if (knownTileSections.contains(section)) {
+                const char* ignoredReason = nullptr;
+                if (section == "[variable_terrain]") {
+                    ignoredReason = "dynamic terrain behavior is not implemented";
+                } else if (section == "[variable_terrainlightmap]") {
+                    ignoredReason = "dynamic terrain lightmap behavior is not implemented";
+                } else if (section == "[spline_terrain_align_2]") {
+                    ignoredReason = "record is retained but its runtime behavior is not implemented";
+                } else if ((section == "[selobject]" || section == "[selspline]") &&
+                           chronoData == nullptr) {
+                    ignoredReason = "Chrono selector records are only applied to Chrono map tiles";
+                }
+                openbus::config::logConfigurationTagStatus(
+                    "map tile", tile.textPath, cursor + 1, keyword,
+                    ignoredReason == nullptr
+                        ? openbus::config::ConfigurationTagStatus::Active
+                        : openbus::config::ConfigurationTagStatus::Ignored,
+                    ignoredReason == nullptr ? "map tile record has runtime handling"
+                                             : ignoredReason);
+            } else {
+                openbus::config::logConfigurationTagStatus(
+                    "map tile", tile.textPath, cursor + 1, keyword,
+                    openbus::config::ConfigurationTagStatus::Unknown,
+                    "unknown map tile section");
+            }
+        }
         const bool isModifier = section == "[varparent]" || section == "[spline_terrain_align]" ||
                                 section == "[spline_terrain_align_2]" || section == "[rule]" ||
                                 section == "[kill_rule]";
@@ -3362,14 +3476,8 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             data.hasWaterMarker = true;
         } else if (section == "[variable_terrain]") {
             data.hasVariableTerrainMarker = true;
-            openbus::config::logUnhandledConfigurationTag(
-                "map tile", tile.textPath, cursor + 1, "variable_terrain",
-                "dynamic terrain behavior is not implemented");
         } else if (section == "[variable_terrainlightmap]") {
             data.hasVariableTerrainLightmapMarker = true;
-            openbus::config::logUnhandledConfigurationTag(
-                "map tile", tile.textPath, cursor + 1, "variable_terrainlightmap",
-                "dynamic terrain lightmap behavior is not implemented");
         } else if (section == "[spline]" || section == "[spline_h]") {
             const bool elevated = section == "[spline_h]";
             const int tileVersion = currentTileVersion();
@@ -3721,9 +3829,6 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 break;
             }
         } else if (section == "[spline_terrain_align_2]") {
-            openbus::config::logUnhandledConfigurationTag(
-                "map tile", tile.textPath, cursor + 1, "spline_terrain_align_2",
-                "record is retained but its runtime behavior is not implemented");
             if (cursor + 1 >= lines.size()) {
                 throw std::runtime_error("Truncated [spline_terrain_align_2] in " +
                                          pathToUtf8(tile.textPath));

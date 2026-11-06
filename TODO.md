@@ -404,11 +404,16 @@ recognized but incomplete semantics.
   verifies the unknown-event no-op. The listed Cotterell names and counts are
   absent from this checkout and its retained captures, so mapping them to
   configured events remains blocked on the source sound CFGs or an event trace.
-- [~] Model CFG diagnostics emit a per-source-file, per-keyword active/ignored
-  status, with reasons for retained-only behavior such as `[spotlight]`,
-  `[smoke]`, `[terrainmapping]`, and texture-change records. This is a keyword
-  summary rather than a per-occurrence audit; equivalent status coverage is
-  still needed for other parsed configuration formats.
+- [~] Model, BUS/vehicle, passenger-cabin, path, and scenery-object CFG diagnostics emit
+  per-source-file, per-keyword active/ignored summaries, with reasons for
+  retained-only behavior such as `[spotlight]`, `[smoke]`, `[terrainmapping]`,
+  cross-vehicle cabin links, step-sound/room-height path records, and SCO
+  description/editor metadata, map-light, complexity, and night-map records.
+  Inline SCO model directives are summarized by the model CFG loader. Map
+  `global.cfg` and base/Chrono tile records now have active/ignored/unknown
+  summaries, including Chrono selector subrecords and spline-profile records.
+  `sound.cfg` records also report active and unknown statuses. This is not a
+  per-occurrence audit.
 
 ### Bus features requiring further work
 

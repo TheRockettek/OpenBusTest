@@ -15,6 +15,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -72,6 +73,150 @@ bool allowsBusOnly(const std::string& keyword, VehicleFileKind kind) {
     return keyword != "add_camera_reflexion" && keyword != "add_camera_reflexion_2" &&
            keyword != "add_camera_reflexion_static" && keyword != "add_camera_reflexion_2_static" &&
            keyword != "view_schedule" && keyword != "view_ticketselling";
+}
+
+const std::unordered_set<std::string>& knownVehicleKeywords() {
+    static const std::unordered_set<std::string> keywords = {
+        "end",
+        "description",
+        "friendlyname",
+        "type",
+        "model",
+        "sound",
+        "sound_ai",
+        "paths",
+        "passengercabin",
+        "number",
+        "registration_list",
+        "registration_automatic",
+        "registration_free",
+        "script",
+        "varnamelist",
+        "stringvarnamelist",
+        "constfile",
+        "add_camera_driver",
+        "add_camera_pax",
+        "add_camera_reflexion",
+        "add_camera_reflexion_2",
+        "add_camera_reflexion_static",
+        "add_camera_reflexion_2_static",
+        "set_camera_std",
+        "set_camera_outside_center",
+        "view_schedule",
+        "view_ticketselling",
+        "newachse",
+        "mass",
+        "momentofintertia",
+        "boundingbox",
+        "openbus_wheel_half_width",
+        "openbus_articulated",
+        "cog",
+        "schwerpunkt",
+        "kmcounter_init",
+        "rollwiderstand",
+        "rot_pnt_long",
+        "inv_min_turnradius",
+        "ai_deltaheight",
+        "coupling_front",
+        "coupling_back",
+        "coupling_front_character",
+        "couple_back",
+        "fixed",
+        "scriptshare",
+        "rowdy_factor",
+        "boogies",
+        "ai_brakeperformance",
+        "ai_veh_type",
+        "sinus",
+        "couple_front_open_for_sound",
+        "control_cable_front",
+        "control_cable_back",
+        "new_attachment",
+        "contact_shoe",
+        "rail_body_osc",
+    };
+    return keywords;
+}
+
+const std::unordered_map<std::string, std::string>& unsupportedVehicleKeywords() {
+    static const std::unordered_map<std::string, std::string> keywords = {
+        {"fixed", "vehicle-level fixed behavior is not implemented"},
+        {"scriptshare", "shared vehicle script state is not implemented"},
+        {"rowdy_factor", "family-specific ride behavior is not implemented"},
+        {"boogies", "bogie behavior is not implemented"},
+        {"ai_brakeperformance", "family-specific AI braking behavior is not implemented"},
+        {"ai_veh_type", "family-specific AI vehicle categories are not implemented"},
+        {"sinus", "family-specific body oscillation is not implemented"},
+        {"couple_front_open_for_sound", "vehicle coupling sound is not implemented"},
+        {"control_cable_front", "coupled-vehicle control transfer is not implemented"},
+        {"control_cable_back", "coupled-vehicle control transfer is not implemented"},
+        {"new_attachment", "vehicle attachment behavior is not implemented"},
+        {"contact_shoe", "rail and trolley contact behavior is not implemented"},
+        {"rail_body_osc", "rail body oscillation is not implemented"},
+    };
+    return keywords;
+}
+
+std::string ignoredVehicleKeywordReason(const std::string& keyword) {
+    const auto unsupported = unsupportedVehicleKeywords().find(keyword);
+    if (unsupported != unsupportedVehicleKeywords().end()) {
+        return unsupported->second;
+    }
+    if (keyword == "openbus_articulated") {
+        return "articulated vehicle runtime behavior is not implemented";
+    }
+    if (keyword == "rot_pnt_long") {
+        return "rotation point is retained but not applied to vehicle physics";
+    }
+    if (keyword == "coupling_front" || keyword == "coupling_back" ||
+        keyword == "coupling_front_character" || keyword == "couple_back") {
+        return "articulated vehicle behavior is not implemented";
+    }
+    return {};
+}
+
+const std::unordered_set<std::string>& passengerCabinKeywords() {
+    static const std::unordered_set<std::string> keywords = {
+        "illumination_interior",
+        "passpos",
+        "drivpos",
+        "entry",
+        "exit",
+        "linktonextveh",
+        "linktoprevveh",
+        "noticketsale",
+        "stamper",
+        "ticket_sale",
+        "ticket_sale_money_point_2",
+        "ticket_sale_change_point_2",
+        "end",
+    };
+    return keywords;
+}
+
+std::string ignoredPassengerCabinKeywordReason(const std::string& keyword) {
+    if (keyword == "linktonextveh" || keyword == "linktoprevveh") {
+        return "cross-vehicle cabin traversal is not implemented";
+    }
+    return {};
+}
+
+const std::unordered_set<std::string>& passengerPathKeywords() {
+    static const std::unordered_set<std::string> keywords = {
+        "pathpnt",          "pathlink",        "pathlink_oneway",
+        "stepsoundpack",    "next_stepsound",  "next_roomheight",
+    };
+    return keywords;
+}
+
+std::string ignoredPassengerPathKeywordReason(const std::string& keyword) {
+    if (keyword == "stepsoundpack" || keyword == "next_stepsound") {
+        return "passenger step-sound playback is not implemented";
+    }
+    if (keyword == "next_roomheight") {
+        return "passenger room-height transitions are not applied";
+    }
+    return {};
 }
 
 std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,
@@ -195,6 +340,16 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
             continue;
         }
         const std::string keyword = lower(line.keyword());
+        if (passengerCabinKeywords().find(keyword) != passengerCabinKeywords().end()) {
+            const std::string ignoredReason = ignoredPassengerCabinKeywordReason(keyword);
+            openbus::config::logConfigurationTagStatus(
+                "passengercabin.cfg", source.passengerCabinConfigPath, line.number,
+                line.keyword(),
+                ignoredReason.empty() ? openbus::config::ConfigurationTagStatus::Active
+                                      : openbus::config::ConfigurationTagStatus::Ignored,
+                ignoredReason.empty() ? "passenger-cabin record has runtime handling"
+                                      : ignoredReason);
+        }
         if (keyword == "illumination_interior") {
             std::vector<std::string> values;
             if (!readValues(reader, keyword, 4, values, result.diagnostics)) {
@@ -368,6 +523,10 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
         openbus::config::logUnhandledConfigurationTag(
             "passengercabin.cfg", source.passengerCabinConfigPath, line.number, line.keyword(),
             "passenger-cabin keyword is not implemented");
+        openbus::config::logConfigurationTagStatus(
+            "passengercabin.cfg", source.passengerCabinConfigPath, line.number, line.keyword(),
+            openbus::config::ConfigurationTagStatus::Unknown,
+            "passenger-cabin keyword is not recognized");
     }
 }
 
@@ -392,6 +551,15 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
             continue;
         }
         const std::string keyword = lower(line.keyword());
+        if (passengerPathKeywords().find(keyword) != passengerPathKeywords().end()) {
+            const std::string ignoredReason = ignoredPassengerPathKeywordReason(keyword);
+            openbus::config::logConfigurationTagStatus(
+                "paths.cfg", source.pathsConfigPath, line.number, line.keyword(),
+                ignoredReason.empty() ? openbus::config::ConfigurationTagStatus::Active
+                                      : openbus::config::ConfigurationTagStatus::Ignored,
+                ignoredReason.empty() ? "passenger-path record has runtime handling"
+                                      : ignoredReason);
+        }
         if (keyword == "pathpnt") {
             std::vector<double> values;
             if (pendingPointIndex < 0 ||
@@ -462,6 +630,10 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
         openbus::config::logUnhandledConfigurationTag("paths.cfg", source.pathsConfigPath,
                                                       line.number, line.keyword(),
                                                       "passenger-path keyword is not implemented");
+        openbus::config::logConfigurationTagStatus(
+            "paths.cfg", source.pathsConfigPath, line.number, line.keyword(),
+            openbus::config::ConfigurationTagStatus::Unknown,
+            "passenger-path keyword is not recognized");
     }
 }
 
@@ -656,12 +828,23 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
     std::size_t scheduleLine = 0;
     std::size_t ticketSellingLine = 0;
     std::size_t cogLine = 0;
+    const std::string configFormat =
+        kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg";
     Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
             continue;
         }
         const std::string keyword = lower(line.keyword());
+        if (knownVehicleKeywords().find(keyword) != knownVehicleKeywords().end()) {
+            const std::string ignoredReason = ignoredVehicleKeywordReason(keyword);
+            openbus::config::logConfigurationTagStatus(
+                configFormat, configPath, line.number, line.keyword(),
+                ignoredReason.empty() ? openbus::config::ConfigurationTagStatus::Active
+                                      : openbus::config::ConfigurationTagStatus::Ignored,
+                ignoredReason.empty() ? "vehicle configuration record has runtime handling"
+                                      : ignoredReason);
+        }
         if (keyword == "end") {
             continue;
         }
@@ -1051,34 +1234,19 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             continue;
         }
 
-        static const std::unordered_map<std::string, std::string> unsupportedKeywords = {
-            {"fixed", "vehicle-level fixed behavior is not implemented"},
-            {"scriptshare", "shared vehicle script state is not implemented"},
-            {"rowdy_factor", "family-specific ride behavior is not implemented"},
-            {"boogies", "bogie behavior is not implemented"},
-            {"ai_brakeperformance", "family-specific AI braking behavior is not implemented"},
-            {"ai_veh_type", "family-specific AI vehicle categories are not implemented"},
-            {"sinus", "family-specific body oscillation is not implemented"},
-            {"couple_front_open_for_sound", "vehicle coupling sound is not implemented"},
-            {"control_cable_front", "coupled-vehicle control transfer is not implemented"},
-            {"control_cable_back", "coupled-vehicle control transfer is not implemented"},
-            {"new_attachment", "vehicle attachment behavior is not implemented"},
-            {"contact_shoe", "rail and trolley contact behavior is not implemented"},
-            {"rail_body_osc", "rail body oscillation is not implemented"},
-        };
-        const auto unsupported = unsupportedKeywords.find(keyword);
-        if (unsupported != unsupportedKeywords.end()) {
+        const auto unsupported = unsupportedVehicleKeywords().find(keyword);
+        if (unsupported != unsupportedVehicleKeywords().end()) {
             const std::string message = "recognized but unsupported: " + unsupported->second;
             result.diagnostics.warning(line.number, line.keyword(), message);
             openbus::config::logUnhandledConfigurationTag(
-                kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg", configPath, line.number,
-                line.keyword(), message);
+                configFormat, configPath, line.number, line.keyword(), message);
             continue;
         }
         result.diagnostics.warning(line.number, line.keyword(), "unknown vehicle keyword");
-        openbus::config::logUnhandledConfigurationTag(
-            kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg", configPath, line.number,
-            line.keyword(), "unknown vehicle keyword");
+        openbus::config::logConfigurationTagStatus(
+            configFormat, configPath, line.number, line.keyword(),
+            openbus::config::ConfigurationTagStatus::Unknown,
+            "vehicle configuration keyword is not recognized");
     }
 
     if (result.centerOfGravity) {
