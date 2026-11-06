@@ -332,6 +332,26 @@ void runFixtureProbe() {
                     definition.environment.unsupportedSections[0].payloadLines ==
                         std::vector<std::string>{" raw environment payload ", ""},
                 "environment sky, cloud, and start-date records are retained in authored order");
+        const std::filesystem::path invalidStartDateMap = root / "invalid-start-date";
+        const std::filesystem::path invalidEnvironmentDirectory =
+            invalidStartDateMap / "environment";
+        std::filesystem::create_directories(invalidEnvironmentDirectory);
+        writeUtf16Le(invalidStartDateMap / "global.cfg",
+                     "[map]\n0\n0\ntile_0_0.map\n");
+        writeUtf16Le(invalidStartDateMap / "tile_0_0.map", "");
+        writeUtf16Le(invalidEnvironmentDirectory / "sky.cfg", "[startdate]\n20240230\n");
+        const auto invalidStartDateDefinition =
+            openbus::map::loadMapDefinition(invalidStartDateMap);
+        bool invalidEnvironmentDateWarning = false;
+        for (const auto& diagnostic : invalidStartDateDefinition.diagnostics.entries) {
+            invalidEnvironmentDateWarning |= diagnostic.keyword == "startdate" &&
+                                             diagnostic.message.find("valid YYYYMMDD") !=
+                                                 std::string::npos;
+        }
+        require(invalidStartDateDefinition.environment.startDate.empty() &&
+                    !invalidStartDateDefinition.environment.startDateYyyyMmDd.has_value() &&
+                    invalidEnvironmentDateWarning,
+                "invalid environment start dates are rejected with a diagnostic");
         const auto ticketPack = openbus::map::loadMapTicketPackDefinition(root / "Tickets.otp");
         const auto legacyTicketPack =
             openbus::map::loadMapTicketPackDefinition(root / "LegacyTickets.otp");
