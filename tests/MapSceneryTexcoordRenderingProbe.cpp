@@ -398,6 +398,579 @@ void runLightmapProbe(const std::filesystem::path& root) {
           "Alpha scale was not clamped");
 }
 
+void runSplineLabelsProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "script");
+    std::filesystem::create_directories(root / "Splines");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeText(root / "model" / "surface.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
+    writeText(root / "sign.sco",
+              "[script]\n1\nscript\\sign.osc\n"
+              "[varnamelist]\n1\nscript\\vars.txt\n"
+              "[stringvarnamelist]\n1\nscript\\strings.txt\n"
+              "[mesh]\nsurface.x\n[matl]\nbase.tga\n0\n[matl_alpha]\n2\n"
+              "[alphascale]\nlamp_alpha\n");
+    writeText(root / "script" / "vars.txt", "instance_id\nlamp_alpha\n");
+    writeText(root / "script" / "strings.txt", "placement_id\n");
+    writeText(root / "script" / "sign.osc",
+              "{init}\n(L.$.placement_id) $StrToFloat (S.L.instance_id)\n{end}\n"
+              "{frame}\n(L.S.test_alpha) (L.L.instance_id) * (S.L.lamp_alpha)\n{end}\n");
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nbase.tga\n[profile]\n0\n[profilepnt]\n-2\n0\n0\n0\n"
+              "[profilepnt]\n2\n0\n1\n0\n");
+    writeText(root / "tile.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n1\n0\n0\n0\n0\n-5\n0\n20\n"
+              "0\n0\n0\n0\n0\n0\n0\n0\n"
+              "[splineAttachement]\n0\nsign.sco\n101\n0\n-6\n5\n5\n0\n0\n0\n0\n0\n0\n1\n1\n"
+              "[splineAttachement]\n0\nsign.sco\n102\n0\n-2\n5\n5\n0\n0\n0\n0\n0\n0\n1\n2\n"
+              "[splineAttachement_repeater]\n0\n0\n0\nsign.sco\n103\n0\n2\n5\n5\n"
+              "0\n0\n0\n0\n0\n0\n1\n1\n"
+              "[splineAttachement_repeater]\n0\n0\n0\nsign.sco\n104\n0\n6\n5\n5\n"
+              "0\n0\n0\n0\n0\n0\n1\n2\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write spline label terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.renderStats().activeSceneryObjects == 4,
+          "Spline label fixture did not load all four attachments");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, 0, -16}));
+    const auto draw = [&](float alpha) {
+        simulation.sharedVariables().set("test_alpha", alpha);
+        renderer.updateScripts();
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer.draw();
+        std::array<std::array<std::uint8_t, 4>, 4> pixels = {};
+        const std::array<int, 4> positions = {14, 26, 38, 49};
+        for (std::size_t index = 0; index < positions.size(); ++index) {
+            glReadPixels(positions[index], 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                         pixels[index].data());
+        }
+        return pixels;
+    };
+    const auto hidden = draw(0.0F);
+    const auto half = draw(0.5F);
+    const auto full = draw(1.0F);
+    bool valid = true;
+    for (std::size_t index = 0; index < half.size(); ++index) {
+        const int baseline = hidden[index][0];
+        const int intermediate = half[index][0];
+        const int opaque = full[index][0];
+        valid = valid && std::abs(opaque - baseline) > 30;
+        if (index % 2 == 0) {
+            valid = valid && std::abs(2 * intermediate - baseline - opaque) <= 3;
+        } else {
+            valid = valid && std::abs(intermediate - opaque) <= 1;
+        }
+    }
+    if (!valid) {
+        std::cerr << "Spline label samples:";
+        for (std::size_t index = 0; index < half.size(); ++index) {
+            std::cerr << ' ' << static_cast<int>(hidden[index][0]) << '/'
+                      << static_cast<int>(half[index][0]) << '/' << static_cast<int>(full[index][0]);
+        }
+        std::cerr << '\n';
+    }
+    check(valid,
+          "Spline attachment labels did not initialize independent regular and repeater scripts");
+}
+
+void runSplineTextProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "Splines");
+    std::filesystem::create_directories(root / "Fonts");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeSolidTexture(root / "Fonts" / "glyph.tga", {255, 255, 255});
+    writeText(root / "Fonts" / "spline_label.oft",
+              "[newfont]\nSplineLabelFixture\nglyph.tga\nglyph.tga\n1\n0\n"
+              "[char]\nX\n0\n1\n0\n");
+    writeText(root / "model" / "surface.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
+    writeText(root / "sign.sco",
+              "[texttexture]\n0\nSplineLabelFixture\n1\n1\n0\n255\n0\n0\n"
+              "[mesh]\nsurface.x\n[matl]\nbase.tga\n0\n[matl_alpha]\n2\n"
+              "[usetexttexture]\n0\n");
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nbase.tga\n[profile]\n0\n[profilepnt]\n-2\n0\n0\n0\n"
+              "[profilepnt]\n2\n0\n1\n0\n");
+    writeText(root / "tile.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n1\n0\n0\n0\n0\n-5\n0\n20\n"
+              "0\n0\n0\n0\n0\n0\n0\n0\n"
+              "[splineAttachement]\n0\nsign.sco\n101\n0\n-6\n5\n5\n0\n0\n0\n0\n0\n0\n1\nX\n"
+              "[splineAttachement]\n0\nsign.sco\n102\n0\n-2\n5\n5\n0\n0\n0\n0\n0\n0\n1\n\n"
+              "[splineAttachement_repeater]\n0\n0\n0\nsign.sco\n103\n0\n2\n5\n5\n"
+              "0\n0\n0\n0\n0\n0\n1\nX\n"
+              "[splineAttachement_repeater]\n0\n0\n0\nsign.sco\n104\n0\n6\n5\n5\n"
+              "0\n0\n0\n0\n0\n0\n1\n\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write spline text terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.renderStats().activeSceneryObjects == 4,
+          "Spline text fixture did not load all four attachments");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, 0, -16}));
+    renderer.updateScripts();
+    glDepthMask(GL_TRUE);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.draw();
+    std::array<std::array<std::uint8_t, 4>, 4> pixels = {};
+    const std::array<int, 4> positions = {14, 26, 38, 49};
+    for (std::size_t index = 0; index < positions.size(); ++index) {
+        glReadPixels(positions[index], 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels[index].data());
+    }
+    const auto isRed = [](const auto& pixel) {
+        return pixel[0] > 80 && pixel[1] < pixel[0] / 3 && pixel[2] < pixel[0] / 3;
+    };
+    if (!isRed(pixels[0]) || isRed(pixels[1]) || !isRed(pixels[2]) || isRed(pixels[3])) {
+        std::cerr << "Spline text samples:";
+        for (const auto& pixel : pixels) {
+            std::cerr << ' ' << static_cast<int>(pixel[0]) << ',' << static_cast<int>(pixel[1])
+                      << ',' << static_cast<int>(pixel[2]) << ',' << static_cast<int>(pixel[3]);
+        }
+        std::cerr << '\n';
+        throw std::runtime_error(
+            "Spline text textures did not reflect regular and repeater placement labels");
+    }
+}
+
+void runSplineOwnershipProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "script");
+    std::filesystem::create_directories(root / "Splines");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeSolidTexture(root / "ground.tga", {0, 0, 0});
+    writeText(root / "model" / "surface.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
+    writeText(root / "row.sco",
+              "[script]\n1\nscript\\row.osc\n"
+              "[varnamelist]\n1\nscript\\vars.txt\n"
+              "[mesh]\nsurface.x\n[matl]\nbase.tga\n0\n[matl_alpha]\n2\n"
+              "[matl_nozwrite]\n[alphascale]\nopacity\n");
+    writeText(root / "script" / "vars.txt", "opacity\n");
+    writeText(root / "script" / "row.osc", "{init}\n0.5 (S.L.opacity)\n{end}\n");
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nground.tga\n[profile]\n0\n[profilepnt]\n-2\n0\n0\n0\n"
+              "[profilepnt]\n2\n0\n1\n0\n");
+    writeText(root / "tile0.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n10\n0\n11\n0\n0\n290\n0\n10\n"
+              "0\n0\n0\n0\n0\n0\n0\n0\n"
+              "[splineAttachement]\n0\nrow.sco\n101\n0\n0\n5\n5\n0\n0\n0\n"
+              "10\n20\n0\n0\n");
+    writeText(root / "tile1.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n11\n10\n0\n0\n0\n0\n0\n20\n"
+              "0\n0\n0\n0\n0\n0\n0\n10\n"
+              "[splineAttachement_repeater]\n0\n0\n1\nrow.sco\n101\n0\n0\n5\n5\n"
+              "0\n0\n0\n10\n20\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    for (const auto& name : {"tile0.terrain", "tile1.terrain"}) {
+        std::ofstream terrainFile(root / name, std::ios::binary);
+        terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+        check(static_cast<bool>(terrainFile), "Could not write spline ownership terrain");
+    }
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"ground.tga", "", {}});
+    openbus::map::MapTileReference regularTile;
+    regularTile.textPath = root / "tile0.map";
+    regularTile.terrainPath = root / "tile0.terrain";
+    regularTile.hasTerrainFile = true;
+    map.tiles.push_back(regularTile);
+    openbus::map::MapTileReference repeaterTile;
+    repeaterTile.y = 1;
+    repeaterTile.textPath = root / "tile1.map";
+    repeaterTile.terrainPath = root / "tile1.terrain";
+    repeaterTile.hasTerrainFile = true;
+    map.tiles.push_back(repeaterTile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, -600, 0, root, simulation, assets);
+    const std::vector<std::pair<int, int>> regularWindow = {{0, 0}};
+    const std::vector<std::pair<int, int>> bothWindow = {{0, 0}, {0, 1}};
+    const std::vector<std::pair<int, int>> repeaterWindow = {{0, 1}};
+    const auto activate = [&](double y, const auto& expected) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            renderer.updateStreaming(0, y);
+            if (renderer.activeTileCoordinates() == expected) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } while (std::chrono::steady_clock::now() < deadline);
+        throw std::runtime_error("Spline ownership fixture failed to activate requested tiles");
+    };
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, -305, -16}));
+    const auto draw = [&]() {
+        renderer.updateScripts();
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer.draw();
+        std::array<std::uint8_t, 4> pixel = {};
+        glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+        return pixel;
+    };
+    activate(-600, regularWindow);
+    check(renderer.renderStats().activeSceneryObjects == 3,
+          "Regular tile should prepare three row placements");
+    const auto regular = draw();
+    activate(0, bothWindow);
+    check(renderer.renderStats().activeSceneryObjects == 5,
+          "Both source tiles should select five row placements");
+    const auto both = draw();
+    activate(900, repeaterWindow);
+    check(renderer.renderStats().activeSceneryObjects == 2,
+          "Repeater tile should select two row placements");
+    const auto repeater = draw();
+    activate(0, bothWindow);
+    const auto bothAgain = draw();
+    activate(-600, regularWindow);
+    const auto regularAgain = draw();
+    if (!(regular[0] > 30 && both[0] > regular[0] + 20 &&
+          std::abs(static_cast<int>(regular[0]) - static_cast<int>(repeater[0])) <= 2 &&
+          bothAgain == both && regularAgain == regular)) {
+        std::cerr << "Spline ownership samples (regular/both/repeater/both/regular): "
+                  << static_cast<int>(regular[0]) << '/' << static_cast<int>(both[0]) << '/'
+                  << static_cast<int>(repeater[0]) << '/' << static_cast<int>(bothAgain[0]) << '/'
+                  << static_cast<int>(regularAgain[0]) << '\n';
+        throw std::runtime_error("Spline source-tile selection did not match duplicate poses");
+    }
+}
+
+void runSplineDependencyProbe(const std::filesystem::path& root, bool duplicateId) {
+    std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "Splines");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeText(root / "model" / "surface.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
+    const std::string path = "[path]\n0\n0\n0\n0\n0\n3\n0\n0\n0\n3\n0\n0\n";
+    writeText(root / "row.sco",
+              "[new_attachment]\nmount\nattach_trans\n0\n0\n0\n" + path +
+                  "[mesh]\nsurface.x\n");
+    writeText(root / "child.sco", path + "[mesh]\nsurface.x\n");
+    writeText(root / "control.sco", "[onlyeditor]\n" + path);
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nbase.tga\n[profile]\n0\n[profilepnt]\n-2\n0\n0\n0\n"
+              "[profilepnt]\n2\n0\n1\n0\n");
+    writeText(root / "tile0.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n10\n0\n11\n0\n0\n290\n0\n10\n"
+              "0\n0\n0\n0\n0\n0\n0\n0\n"
+              "[splineAttachement]\n0\nrow.sco\n101\n0\n0\n5\n5\n0\n0\n0\n"
+              "10\n20\n0\n0\n"
+              "[attachObj]\n0\nchild.sco\n200\n101\n0\n0\n0\n0\n0\n0\n"
+              "[object]\n0\ncontrol.sco\n300\n-1000\n0\n5\n0\n0\n0\n0\n0\n");
+    writeText(root / "tile1.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\Test.sli\n11\n10\n0\n0\n0\n0\n0\n20\n"
+              "0\n0\n0\n0\n0\n0\n0\n10\n"
+              "[splineAttachement_repeater]\n0\n0\n1\nrow.sco\n" +
+                  std::string(duplicateId ? "101" : "102") +
+                  "\n0\n0\n5\n5\n0\n0\n0\n10\n20\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    for (const auto& name : {"tile0.terrain", "tile1.terrain"}) {
+        std::ofstream terrainFile(root / name, std::ios::binary);
+        terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+        check(static_cast<bool>(terrainFile), "Could not write spline dependency terrain");
+    }
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    for (int y = 0; y < 2; ++y) {
+        openbus::map::MapTileReference tile;
+        tile.y = y;
+        const std::string prefix = "tile" + std::to_string(y);
+        tile.textPath = root / (prefix + ".map");
+        tile.terrainPath = root / (prefix + ".terrain");
+        tile.hasTerrainFile = true;
+        map.tiles.push_back(tile);
+    }
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, -900, 0, root, simulation, assets);
+    const auto waitFor = [&](double y, const std::vector<std::pair<int, int>>& window,
+                             std::size_t lanes101, std::size_t lanes102) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            renderer.updateStreaming(0, y);
+            if (renderer.activeTileCoordinates() == window &&
+                renderer.lanesForTimetableEntry(300, 0).size() == 1 &&
+                renderer.lanesForTimetableEntry(101, 0).size() == lanes101 &&
+                renderer.lanesForTimetableEntry(102, 0).size() == lanes102 &&
+                renderer.lanesForTimetableEntry(200, 0).size() == (duplicateId ? 0U : 1U)) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } while (std::chrono::steady_clock::now() < deadline);
+        throw std::runtime_error(
+            "Spline dependency window or traffic lanes did not settle: 101=" +
+            std::to_string(renderer.lanesForTimetableEntry(101, 0).size()) +
+            " 102=" + std::to_string(renderer.lanesForTimetableEntry(102, 0).size()) +
+            " 200=" + std::to_string(renderer.lanesForTimetableEntry(200, 0).size()));
+    };
+    const auto debugPaths = [&]() {
+        const auto& segments = renderer.sceneryTrafficPathSegments();
+        return std::count_if(segments.begin(), segments.end(), [](const auto& segment) {
+            return segment.mapObjectId == 101 || segment.mapObjectId == 102;
+        });
+    };
+    waitFor(-900, {}, duplicateId ? 0 : 3, 0);
+    check(debugPaths() == 0, "Unloaded spline rows must not have prepared debug paths");
+    waitFor(-600, {{0, 0}}, 3, 0);
+    check(renderer.renderStats().activeSceneryObjects == (duplicateId ? 3U : 4U),
+          "Duplicate spline parent IDs should prevent the child placement");
+    check(debugPaths() == 3, "The regular rows should prepare three debug paths");
+    const auto& segments = renderer.sceneryTrafficPathSegments();
+    const auto child = std::find_if(segments.begin(), segments.end(), [](const auto& segment) {
+        return segment.mapObjectId == 200;
+    });
+    check((child == segments.end()) == duplicateId,
+          "Child path must be prepared only for a resolvable spline parent");
+    if (!duplicateId) {
+        check(!child->points.empty() && std::abs(child->points.front()[1] - 295.0) < 0.001,
+              "Child must resolve to the regular attachment's first row");
+    }
+    waitFor(0, {{0, 0}, {0, 1}}, duplicateId ? 5 : 3, duplicateId ? 0 : 2);
+    check(renderer.renderStats().activeSceneryObjects == (duplicateId ? 5U : 6U),
+          "Both source tiles should retain their rows and any resolved child");
+    check(debugPaths() == 5, "Both source tiles should prepare five debug paths");
+    std::array<std::vector<double>, 2> starts;
+    for (const auto& segment : renderer.sceneryTrafficPathSegments()) {
+        if (segment.mapObjectId == 101 || segment.mapObjectId == 102) {
+            check(segment.tileX == 0 && segment.tileY >= 0 && segment.tileY < 2 &&
+                      !segment.points.empty(),
+                  "Spline row debug path must retain its source tile and geometry");
+            starts[static_cast<std::size_t>(segment.tileY)].push_back(segment.points.front()[1]);
+        }
+    }
+    for (auto& values : starts) {
+        std::sort(values.begin(), values.end());
+    }
+    check(starts[0].size() == 3 && starts[1].size() == 2 &&
+              std::abs(starts[0][0] - 295.0) < 0.001 &&
+              std::abs(starts[0][1] - starts[1][0]) < 0.001 &&
+              std::abs(starts[0][2] - starts[1][1]) < 0.001,
+          "Traffic debug paths must expose the two overlapping cross-tile rows");
+    std::array<std::vector<double>, 2> routeStarts;
+    for (const int objectId : {101, 102}) {
+        for (const auto& lane : renderer.lanesForTimetableEntry(objectId, 0)) {
+            const auto route = renderer.buildDrivingRoute(objectId, lane.laneSelector);
+            check(route.has_value() && !route->segments.empty() &&
+                      !route->segments.front().points.empty(),
+                  "Every indexed row lane must produce a driving route");
+            const auto& segment = route->segments.front();
+            check(segment.spline.tileX == 0 && segment.spline.tileY >= 0 &&
+                      segment.spline.tileY < 2,
+                  "Driving route must retain the row's source tile");
+            routeStarts[static_cast<std::size_t>(segment.spline.tileY)].push_back(
+                segment.points.front()[1]);
+        }
+    }
+    for (auto& values : routeStarts) {
+        std::sort(values.begin(), values.end());
+    }
+    for (std::size_t tile = 0; tile < starts.size(); ++tile) {
+        check(routeStarts[tile].size() == starts[tile].size(),
+              "Driving routes must retain all prepared row paths");
+        for (std::size_t index = 0; index < starts[tile].size(); ++index) {
+            check(std::abs(routeStarts[tile][index] - starts[tile][index]) < 0.001,
+                  "Driving route and debug path starts must coincide");
+        }
+    }
+    waitFor(900, {{0, 1}}, duplicateId ? 5 : 3, duplicateId ? 0 : 2);
+    check(renderer.renderStats().activeSceneryObjects == 2,
+          "Only the repeater rows should be active in the repeater-only window");
+}
+
+void runSplineHumanDependencyProbe(const std::filesystem::path& root, bool duplicateId,
+                                   bool referenced, bool repeaterFirst) {
+    std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "Splines");
+    writeSolidTexture(root / "base.tga", {255, 255, 255});
+    writeText(root / "model" / "surface.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"base.tga\"; } } } }\n");
+    writeText(root / "row.sco",
+              "[new_attachment]\nmount\nattach_trans\n0\n0\n0\n"
+              "[path]\n0\n0\n0\n0\n0\n10\n0\n0\n1\n2\n0\n0\n"
+              "[mesh]\nsurface.x\n");
+    writeText(root / "child.sco", "[mesh]\nsurface.x\n");
+    const std::string profile =
+        "[texture]\nbase.tga\n[profile]\n0\n[profilepnt]\n-2\n0\n0\n0\n"
+        "[profilepnt]\n2\n0\n1\n0\n";
+    writeText(root / "Splines" / "host.sli", profile + "[path]\n1\n0\n0\n0\n0\n");
+    writeText(root / "Splines" / "next.sli", profile);
+    writeText(root / "tile0.map",
+              std::string("[version]\n14\n[terrain]\n"
+                          "[spline]\n0\nSplines\\host.sli\n10\n0\n11\n0\n0\n290\n0\n10\n"
+                          "0\n0\n0\n0\n0\n0\n0\n0\n"
+                          "[splineAttachement]\n0\nrow.sco\n101\n0\n0\n0\n10\n0\n0\n0\n"
+                          "0\n0\n0\n0\n") +
+                  (referenced ? "[attachObj]\n0\nchild.sco\n200\n101\n0\n0\n0\n0\n0\n0\n" : ""));
+    writeText(root / "tile1.map",
+              "[version]\n14\n[terrain]\n"
+              "[spline]\n0\nSplines\\next.sli\n11\n10\n0\n0\n0\n0\n0\n20\n"
+              "0\n0\n0\n0\n0\n0\n0\n10\n"
+              "[splineAttachement_repeater]\n0\n0\n0\nrow.sco\n" +
+                  std::string(duplicateId ? "101" : "102") +
+                  "\n0\n0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    for (const auto& name : {"tile0.terrain", "tile1.terrain"}) {
+        std::ofstream terrainFile(root / name, std::ios::binary);
+        terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+        check(static_cast<bool>(terrainFile), "Could not write pedestrian dependency terrain");
+    }
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    for (int y = 0; y < 2; ++y) {
+        openbus::map::MapTileReference tile;
+        tile.y = y;
+        const std::string prefix = "tile" + std::to_string(y);
+        tile.textPath = root / (prefix + ".map");
+        tile.terrainPath = root / (prefix + ".terrain");
+        tile.hasTerrainFile = true;
+        map.tiles.push_back(tile);
+    }
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, -900, 0, root, simulation, assets);
+    const auto activate = [&](double y, const std::vector<std::pair<int, int>>& window) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            renderer.updateStreaming(0, y);
+            if (renderer.initialWindowReady() && renderer.activeTileCoordinates() == window &&
+                renderer.humanTrafficLaneNetworkReady()) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } while (std::chrono::steady_clock::now() < deadline);
+        throw std::runtime_error("Pedestrian dependency window did not settle");
+    };
+    const auto journey = [&]() {
+        return renderer.passengerPedestrianJourneyBetween({0, 298, 0}, {0, 308, 0}, 0, 0.25, 50);
+    };
+    const auto requireJourney = [&](bool expected, int expectedSegmentId) {
+        const auto result = journey();
+        check(result.has_value() == expected,
+              "Pedestrian journey did not match the available attachment paths");
+        if (result) {
+            check(result->route && result->route->segments.size() >= 2,
+                  "Pedestrian journey must cross from the spline to the attachment path");
+            const auto& segment = result->route->segments[1];
+            check(segment.spline.placement.splineId == expectedSegmentId &&
+                      segment.spline.tileX == 0 && segment.spline.tileY == 0 &&
+                      !segment.points.empty() &&
+                      std::abs(segment.points.front()[1] - 300.0) < 0.001,
+                  "Pedestrian attachment segment has unexpected identity or position");
+        }
+        check(!renderer.passengerPedestrianJourneyBetween({0, 304, 0}, {0, 308, 0}, 0, 0.25, 50),
+              "Attachment-only pedestrian path is not a journey start candidate");
+    };
+    const auto debugRows = [&]() {
+        const auto& segments = renderer.sceneryTrafficPathSegments();
+        return std::count_if(segments.begin(), segments.end(), [](const auto& segment) {
+            return (segment.mapObjectId == 101 || segment.mapObjectId == 102) &&
+                   segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN;
+        });
+    };
+    activate(-900, {});
+    requireJourney(referenced && !duplicateId, 101);
+    check(debugRows() == 0, "Unloaded pedestrian rows must not have prepared debug paths");
+    if (repeaterFirst) {
+        activate(900, {{0, 1}});
+        requireJourney(true, 0);
+        check(debugRows() == 1, "Repeater tile must prepare its pedestrian debug path");
+        const auto& segments = renderer.sceneryTrafficPathSegments();
+        const auto repeater =
+            std::find_if(segments.begin(), segments.end(), [](const auto& segment) {
+                return segment.mapObjectId == 101 &&
+                       segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN;
+            });
+        check(repeater != segments.end() && repeater->tileX == 0 && repeater->tileY == 1,
+              "Repeater debug path must retain its actual source tile");
+    } else {
+        activate(-600, {{0, 0}});
+        requireJourney(true, referenced && !duplicateId ? 101 : 0);
+        check(debugRows() == 1, "Regular tile must prepare its pedestrian debug path");
+    }
+    activate(0, {{0, 0}, {0, 1}});
+    requireJourney(true, referenced && !duplicateId ? 101 : 0);
+    check(debugRows() == 2, "Both source tiles must prepare pedestrian debug paths");
+    std::array<bool, 2> sourceTiles = {};
+    for (const auto& segment : renderer.sceneryTrafficPathSegments()) {
+        if ((segment.mapObjectId == 101 || segment.mapObjectId == 102) &&
+            segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+            check(segment.tileX == 0 && segment.tileY >= 0 && segment.tileY < 2 &&
+                      !segment.points.empty() &&
+                      std::abs(segment.points.front()[1] - 300.0) < 0.001,
+                  "Pedestrian debug paths must coincide and retain their source tiles");
+            sourceTiles[static_cast<std::size_t>(segment.tileY)] = true;
+        }
+    }
+    check(sourceTiles[0] && sourceTiles[1],
+          "Each source tile must contribute a pedestrian debug path");
+    activate(900, {{0, 1}});
+    requireJourney(true, referenced && !duplicateId ? 101 : 0);
+}
+
 void runItemLightmapProbe(const std::filesystem::path& root) {
     std::filesystem::create_directories(root / "model");
     std::filesystem::create_directories(root / "script");
@@ -923,8 +1496,16 @@ int main(int argc, char** argv) {
     const bool itemLightmap = argc == 2 && std::string_view(argv[1]) == "--item-lightmap";
     const bool normals = argc == 2 && std::string_view(argv[1]) == "--normals";
     const bool human = argc == 2 && std::string_view(argv[1]) == "--human-skinning";
+    const bool splineLabels = argc == 2 && std::string_view(argv[1]) == "--spline-labels";
+    const bool splineText = argc == 2 && std::string_view(argv[1]) == "--spline-text";
+    const bool splineOwnership = argc == 2 && std::string_view(argv[1]) == "--spline-ownership";
+    const bool splineDependencies =
+        argc == 2 && std::string_view(argv[1]) == "--spline-dependencies";
+    const bool splineHumanDependencies =
+        argc == 2 && std::string_view(argv[1]) == "--spline-human-dependencies";
     if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap && !itemLightmap &&
-        !normals && !human) {
+        !normals && !human && !splineLabels && !splineText && !splineOwnership &&
+        !splineDependencies && !splineHumanDependencies) {
         return 2;
     }
     if (!glfwInit()) {
@@ -937,8 +1518,10 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(
-        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ? 64 : 32,
-        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ? 64 : 32,
+        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ||
+                splineLabels || splineText || splineOwnership ? 64 : 32,
+        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ||
+                splineLabels || splineText || splineOwnership ? 64 : 32,
                                           "Scenery material probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
@@ -964,6 +1547,20 @@ int main(int argc, char** argv) {
                 runNightmapProbe(root);
             } else if (itemLightmap) {
                 runItemLightmapProbe(root);
+            } else if (splineLabels) {
+                runSplineLabelsProbe(root);
+            } else if (splineText) {
+                runSplineTextProbe(root);
+            } else if (splineOwnership) {
+                runSplineOwnershipProbe(root);
+            } else if (splineDependencies) {
+                runSplineDependencyProbe(root / "unique", false);
+                runSplineDependencyProbe(root / "duplicate", true);
+            } else if (splineHumanDependencies) {
+                runSplineHumanDependencyProbe(root / "unique", false, true, false);
+                runSplineHumanDependencyProbe(root / "unreferenced", false, false, false);
+                runSplineHumanDependencyProbe(root / "duplicate", true, true, false);
+                runSplineHumanDependencyProbe(root / "repeater-first", true, true, true);
             } else {
                 runProbe(root);
             }

@@ -418,6 +418,7 @@ struct MapSplineAttachment {
     bool repeater = false;
     int repeaterMasterTileIndex = -1;
     std::size_t repeaterFirstObjectIndex = 0;
+    std::vector<std::string> labels;
     std::optional<int> variableParentId;
     bool splineTerrainAlign = false;
     std::vector<MapTileRule> rules;

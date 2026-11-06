@@ -258,6 +258,42 @@ void runProbe() {
     requireNear(eastLamp[0].x, 5.0, 1e-9, "eastbound spline sample X");
     requireNear(eastLamp[0].y, -3.0, 1e-9, "right of eastbound spline points south");
 
+    MapSplinePlacement bounded = spline(4, 0, 0, 0.0, 0.0, 0.0, 1.0);
+    const auto nearStart =
+        placeMapSplineAttachment(row(0, 0.0, 0.0, -0.0000005, 0.0, 0.0), {bounded}, 0, 0);
+    const auto nearEnd =
+        placeMapSplineAttachment(row(0, 0.0, 0.0, 1.0000005, 0.0, 0.0), {bounded}, 0, 0);
+    require(nearStart.size() == 1 && nearEnd.size() == 1,
+            "attachment offsets within endpoint tolerance are placed");
+    requireNear(nearStart[0].y, 0.0, 1e-9, "near-start offset clamps to spline start");
+    requireNear(nearEnd[0].y, 1.0, 1e-9, "near-end offset clamps to spline end");
+    require(placeMapSplineAttachment(row(0, 0.0, 0.0, -0.000002, 0.0, 0.0),
+                                     {bounded}, 0, 0)
+                .empty() &&
+                placeMapSplineAttachment(row(0, 0.0, 0.0, 1.000002, 0.0, 0.0),
+                                         {bounded}, 0, 0)
+                    .empty(),
+            "attachment offsets beyond endpoint tolerance are not placed");
+    MapSplinePlacement skipHost = spline(5, 0, 0, 0.0, 0.0, 0.0, 20.0);
+    const auto skippedRow =
+        placeMapSplineAttachment(row(0, 0.0, 0.0, -5.0, 10.0, 20.0), {skipHost}, 0, 0);
+    require(skippedRow.size() == 2, "out-of-range first row does not prevent later placements");
+    requireNear(skippedRow[0].y, 5.0, 1e-9, "first in-range row remains after skipped row");
+    requireNear(skippedRow[1].y, 15.0, 1e-9, "second in-range row remains after skipped row");
+
+    MapSplinePlacement signedHost = spline(6, 0, 0, 0.0, 0.0, 0.0, 40.0);
+    for (const auto& attachment : {row(0, 0.0, 0.0, 20.0, 10.0, -20.0),
+                                   row(0, 0.0, 0.0, 20.0, -10.0, 20.0),
+                                   row(0, 0.0, 0.0, 20.0, -10.0, -20.0)}) {
+        const auto poses = placeMapSplineAttachment(attachment, {signedHost}, 0, 0);
+        require(poses.size() == 1, "negative interval or range clamps to one placement");
+        requireNear(poses[0].y, 20.0, 1e-9, "signed row retains its authored starting position");
+    }
+    const auto positiveRow =
+        placeMapSplineAttachment(row(0, 0.0, 0.0, 20.0, 10.0, 20.0), {signedHost}, 0, 0);
+    require(positiveRow.size() == 3, "positive interval and range produce the control row");
+    requireNear(positiveRow[2].y, 40.0, 1e-9, "positive control reaches the final row");
+
     MapSplinePlacement bankedHost = spline(3, 0, 0, 0.0, 0.0, 0.0, 20.0);
     bankedHost.cantStart = bankedHost.cantEnd = 5.0;
     MapSplineAttachment bankedRow = row(0, 10.0, 0.0, 0.0, 0.0, 0.0);
@@ -283,6 +319,24 @@ void runProbe() {
     requireNear(chained[0].y, 5.0, 1e-9, "first row object lies on master spline");
     requireNear(chained[1].y, 15.0, 1e-9, "row continues on next spline");
     requireNear(chained[2].y, 25.0, 1e-9, "chain distance remains continuous");
+
+    MapSplinePlacement duplicateSecond = second;
+    duplicateSecond.localX = 50.0;
+    const auto duplicateRow = row(0, 0.0, 0.0, 15.0, 0.0, 0.0);
+    const auto firstDuplicate =
+        placeMapSplineAttachment(duplicateRow, {first, second, duplicateSecond}, 0, 0);
+    const auto reversedDuplicates =
+        placeMapSplineAttachment(duplicateRow, {first, duplicateSecond, second}, 0, 0);
+    require(firstDuplicate.size() == 1 && reversedDuplicates.size() == 1,
+            "local spline resolver places a row through a duplicate ID");
+    requireNear(firstDuplicate[0].x, 0.0, 1e-9, "local resolver uses first duplicate spline");
+    requireNear(reversedDuplicates[0].x, 50.0, 1e-9,
+                "local resolver selection follows duplicate spline order");
+    const auto duplicateParent =
+        placeMapSplineAttachmentParent(duplicateRow, {first, duplicateSecond, second}, 0, 0);
+    require(duplicateParent.has_value(), "local parent resolver finds a duplicate spline");
+    requireNear(duplicateParent->x, 50.0, 1e-9,
+                "local parent resolver also uses first duplicate spline");
 
     MapSplinePlacement boundaryStart = spline(70, 0, 71, 100.0, 290.0, 0.0, 10.0);
     MapSplinePlacement boundaryNext = spline(71, 70, 0, 100.0, 0.0, 0.0, 20.0);
@@ -314,6 +368,24 @@ void runProbe() {
                 .empty(),
             "unresolved cross-tile spline IDs do not fabricate attachment poses");
 
+    MapSplinePlacement nonreciprocalNext = boundaryNext;
+    nonreciprocalNext.previousSplineId = 0;
+    int nonreciprocalLookups = 0;
+    const MapSplineChainResolver nonreciprocalResolver =
+        [&nonreciprocalNext, &nonreciprocalLookups](
+            int splineId) -> std::optional<MapSplinePlacementReference> {
+        ++nonreciprocalLookups;
+        if (splineId != nonreciprocalNext.splineId) {
+            return std::nullopt;
+        }
+        return MapSplinePlacementReference{nonreciprocalNext, 0, 1};
+    };
+    const auto nonreciprocalRow = placeMapSplineAttachment(
+        row(0, 0.0, 0.0, 15.0, 0.0, 0.0), {boundaryStart}, 0, 0, nonreciprocalResolver);
+    require(nonreciprocalLookups == 1, "nonreciprocal spline target was resolved");
+    require(nonreciprocalRow.empty(),
+            "resolved spline without a reciprocal link does not extend an attachment row");
+
     MapSplinePlacement reverseStart = spline(20, 0, 21, 0.0, 0.0, 0.0, 10.0);
     MapSplinePlacement reverseSegment = spline(21, 22, 20, 0.0, 30.0, 180.0, 20.0);
     const auto reversed = placeMapSplineAttachment(row(0, 3.0, 0.0, 15.0, 0.0, 0.0),
@@ -335,6 +407,58 @@ void runProbe() {
     requireNear(repeated[0].y, 10.0, 1e-9, "repeater places its first object at tile-spline start");
     requireNear(repeated[1].y, 15.0, 1e-9, "repeater retains row spacing");
     requireNear(repeated[2].y, 20.0, 1e-9, "repeater remains bounded by its spline");
+    repeater.repeaterFirstObjectIndex = 3;
+    const auto lastRepeated = placeMapSplineAttachment(repeater, {repeaterSpline}, 0, 0);
+    require(lastRepeated.size() == 1, "last eligible repeater row produces one pose");
+    requireNear(lastRepeated[0].y, 20.0, 1e-9, "last eligible repeater row retains its position");
+    repeater.repeaterFirstObjectIndex = 4;
+    require(placeMapSplineAttachment(repeater, {repeaterSpline}, 0, 0).empty(),
+            "repeater starting at the exclusive bound produces no poses");
+    repeater.repeaterFirstObjectIndex = 2147483647;
+    require(placeMapSplineAttachment(repeater, {repeaterSpline}, 0, 0).empty(),
+            "large valid repeater starting row produces no poses");
+
+    MapSplineAttachment negativeMasterRow = row(0, 0.0, 0.0, 0.0, 5.0, 15.0);
+    negativeMasterRow.repeater = true;
+    negativeMasterRow.repeaterMasterTileIndex = -1;
+    negativeMasterRow.repeaterFirstObjectIndex = 2;
+    const auto negativeMasterPoses =
+        placeMapSplineAttachment(negativeMasterRow, {signedHost}, 0, 0);
+    require(negativeMasterPoses.size() == 2,
+            "negative-master repeater uses its stored first row");
+    requireNear(negativeMasterPoses[0].y, 10.0, 1e-9,
+                "negative-master repeater starts at row two");
+    negativeMasterRow.repeater = false;
+    const auto regularPoses = placeMapSplineAttachment(negativeMasterRow, {signedHost}, 0, 0);
+    require(regularPoses.size() == 4, "regular section starts from row zero");
+    requireNear(regularPoses[0].y, 0.0, 1e-9, "regular section includes the first row");
+
+    MapSplineAttachment tiltedRepeater = row(0, 10.0, 0.0, 5.0, 0.0, 0.0);
+    tiltedRepeater.repeater = true;
+    tiltedRepeater.tilt = true;
+    tiltedRepeater.repeaterMasterTileIndex = 7;
+    const auto tiltedRepeaterPoses = placeMapSplineAttachment(tiltedRepeater, {bankedHost}, 0, 0);
+    tiltedRepeater.repeaterMasterTileIndex = 999999;
+    const auto otherMasterPoses = placeMapSplineAttachment(tiltedRepeater, {bankedHost}, 0, 0);
+    require(tiltedRepeaterPoses.size() == 1 && otherMasterPoses.size() == 1,
+            "repeater placement does not require the encoded master tile");
+    requireNear(tiltedRepeaterPoses[0].rotationDegrees[2],
+                std::atan(0.05) * 180.0 / std::numbers::pi, 1e-9,
+                "repeater placement applies its own tilt flag");
+    requireNear(otherMasterPoses[0].x, tiltedRepeaterPoses[0].x, 1e-9,
+                "changing repeater master metadata preserves local placement X");
+    requireNear(otherMasterPoses[0].y, tiltedRepeaterPoses[0].y, 1e-9,
+                "changing repeater master metadata preserves local placement Y");
+    requireNear(otherMasterPoses[0].z, tiltedRepeaterPoses[0].z, 1e-9,
+                "changing repeater master metadata preserves local placement height");
+    requireNear(otherMasterPoses[0].rotationDegrees[2],
+                tiltedRepeaterPoses[0].rotationDegrees[2], 1e-9,
+                "changing repeater master metadata preserves local placement bank");
+    tiltedRepeater.tilt = false;
+    const auto flatRepeaterPoses = placeMapSplineAttachment(tiltedRepeater, {bankedHost}, 0, 0);
+    require(flatRepeaterPoses.size() == 1, "untilted repeater still places locally");
+    requireNear(flatRepeaterPoses[0].rotationDegrees[2], 0.0, 1e-9,
+                "untilted repeater does not inherit bank from another record");
 
     MapSplinePlacement ramp = spline(40, 0, 0, 0.0, 0.0, 0.0, 73.86);
     ramp.elevation = -5.79;

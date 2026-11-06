@@ -97,11 +97,13 @@ void runFixtureProbe() {
                      "object rule 3\nobject rule 4\n[kill_rule]\nkill rule 1\n"
                      "kill rule 2\nkill rule 3\nkill rule 4\n"
                      "Object Nr. 5\n[splineAttachement]\n0\nScenery\\lamp.sco\n7\n1\n"
-                     "3\n-0.2\n4\n90\n0\n0\n10\n2\n0\n0\n[varparent]\n23\n"
+                     "3\n-0.2\n4\n90\n0\n0\n10\n2\n0\n3\nsign text\n\n[object]\n"
+                     "[varparent]\n23\n"
                      "[spline_terrain_align]\n[kill_rule]\nattachment rule 1\n"
                      "attachment rule 2\nattachment rule 3\nattachment rule 4\n\n"
                      "Object Nr. 6\n[splineAttachement_repeater]\n0\n0\n1\n"
-                     "Scenery\\lamp.sco\n8\n0\n1\n0.2\n4\n0\n0\n0\n10\n20\n0\n0\n\n"
+                     "Scenery\\lamp.sco\n8\n0\n1\n0.2\n4\n0\n0\n0\n10\n20\n0\n"
+                     "3\nfirst\n\n[spline]\n\n"
                      "Object Nr. 7\n[attachObj]\n0\nScenery\\attached.sco\n17\n5\n0\n"
                      "2\n30\n4\n0\n1\nCar park B\ncustom tail\n\n[varparent]\n41\n"
                      "[spline_terrain_align]\n[rule]\nattached rule 1\nattached rule 2\n"
@@ -1191,6 +1193,8 @@ void runFixtureProbe() {
                     tile.splineAttachments[0].rotationDegrees[0] == 90.0 &&
                     tile.splineAttachments[0].interval == 10.0 &&
                     tile.splineAttachments[0].range == 2.0 &&
+                    tile.splineAttachments[0].labels ==
+                        std::vector<std::string>{"sign text", "", "[object]"} &&
                     tile.splineAttachments[0].variableParentId == 23 &&
                     tile.splineAttachments[0].splineTerrainAlign &&
                     tile.splineAttachments[0].rules.size() == 1 &&
@@ -1202,7 +1206,9 @@ void runFixtureProbe() {
                     tile.splineAttachments[1].repeaterFirstObjectIndex == 1 &&
                     tile.splineAttachments[1].splineIndex == 0 &&
                     tile.splineAttachments[1].interval == 10.0 &&
-                    tile.splineAttachments[1].range == 20.0,
+                    tile.splineAttachments[1].range == 20.0 &&
+                    tile.splineAttachments[1].labels ==
+                        std::vector<std::string>{"first", "", "[spline]"},
                 "spline repeater master and row fields decoded");
 
         const auto loadVersionedObject = [&](const std::string& version,
@@ -1244,6 +1250,83 @@ void runFixtureProbe() {
                     version12.sceneryObjects[0].rotationDegrees ==
                         std::array<double, 3>{90.0, 4.0, 5.0},
                 "version 12 object preserves x/y/z and reads heading, pitch, and bank");
+
+        const auto oldAttachment = loadVersionedObject(
+            "3", "[splineAttachement]\nScenery\\lamp.sco\n7\n0\n1\n2\n3\n90\n10\n20\n");
+        require(oldAttachment.splineAttachments.size() == 1 &&
+                    oldAttachment.splineAttachments[0].labels.empty(),
+                "version 3 attachment has no counted label field");
+        const auto signedAttachment = loadVersionedObject(
+            "14", "[splineAttachement]\n0\nScenery\\lamp.sco\n8\n0\n"
+                  "0\n0\n20\n0\n0\n0\n-10\n-20\n0\n0\n");
+        require(signedAttachment.splineAttachments.size() == 1 &&
+                    signedAttachment.splineAttachments[0].transformValid &&
+                    signedAttachment.splineAttachments[0].interval == -10.0 &&
+                    signedAttachment.splineAttachments[0].range == -20.0,
+                "version 14 spline attachment preserves signed interval and range");
+        const auto repeaterWithFirstRow = [&](const std::string& firstRow) {
+            return loadVersionedObject(
+                "14", "[splineAttachement_repeater]\n0\n0\n" + firstRow +
+                          "\nScenery\\lamp.sco\n8\n0\n"
+                          "0\n0\n20\n0\n0\n0\n10\n20\n0\n0\n");
+        };
+        for (const std::string& firstRow : {"0", "+2", "02", "2147483647"}) {
+            const auto parsedRepeater = repeaterWithFirstRow(firstRow);
+            require(parsedRepeater.splineAttachments.size() == 1 &&
+                        parsedRepeater.splineAttachments[0].repeaterFirstObjectIndex ==
+                            static_cast<std::size_t>(std::stoll(firstRow)),
+                    "nonnegative in-range repeater starting row is retained");
+        }
+        for (const std::string& firstRow :
+             {"-1", "-2147483648", "2147483648", "invalid", "0x2", "$2", "x2", "X2"}) {
+            bool rejected = false;
+            try {
+                static_cast<void>(repeaterWithFirstRow(firstRow));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string(error.what()).find("Invalid repeater index") !=
+                           std::string::npos;
+            }
+            require(rejected, "negative or invalid repeater starting row is rejected");
+        }
+        for (const std::string& masterTile : {"-1", "0", "1"}) {
+            const auto parsedRepeater = loadVersionedObject(
+                "14", "[splineAttachement_repeater]\n0\n" + masterTile +
+                          "\n2\nScenery\\lamp.sco\n8\n0\n"
+                          "0\n0\n0\n0\n0\n0\n5\n15\n0\n0\n");
+            require(parsedRepeater.splineAttachments.size() == 1 &&
+                        parsedRepeater.splineRepeaterCount == 1 &&
+                        parsedRepeater.splineAttachments[0].repeater &&
+                        parsedRepeater.splineAttachments[0].repeaterMasterTileIndex ==
+                            std::stoi(masterTile) &&
+                        parsedRepeater.splineAttachments[0].repeaterFirstObjectIndex == 2,
+                    "repeater section retains master sign and first row");
+        }
+        for (const std::string& masterTile : {"0x2", "$2", "x2", "X2"}) {
+            bool rejected = false;
+            try {
+                static_cast<void>(loadVersionedObject(
+                    "14", "[splineAttachement_repeater]\n0\n" + masterTile +
+                              "\n2\nScenery\\lamp.sco\n8\n0\n"
+                              "0\n0\n0\n0\n0\n0\n5\n15\n0\n0\n"));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string(error.what()).find("Invalid repeater index") !=
+                           std::string::npos;
+            }
+            require(rejected, "hexadecimal repeater master is rejected");
+        }
+        for (const std::string& countAndPayload : {"-1\n", "4097\n", "2\nonly one"}) {
+            bool rejected = false;
+            try {
+                static_cast<void>(loadVersionedObject(
+                    "14", "[splineAttachement_repeater]\n0\n0\n0\nScenery\\lamp.sco\n8\n0\n"
+                          "1\n2\n3\n0\n0\n0\n10\n20\n0\n" +
+                              countAndPayload));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string(error.what()).find("Invalid label count") !=
+                           std::string::npos;
+            }
+            require(rejected, "invalid and truncated spline attachment label counts are rejected");
+        }
 
         const auto loadVersionedSpline = [&](const std::string& version,
                                              const std::string& record) {
@@ -1329,6 +1412,26 @@ void runFixtureProbe() {
                     version14Spline.splines[0].chainOffsetValid &&
                     version14Spline.splines[0].chainOffset == 77.0,
                 "version 14 reads raw cant as percentage points before skew and chain fields");
+
+        const std::string alignmentSpline =
+            "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0.5\n45\n50\n"
+            "-30\n0\n0\n-50\n50\n11.25\n22.5\n77\n";
+        for (const std::string& value : {"0", "1", "255", "256", "-1", "invalid"}) {
+            const auto alignedSpline = loadVersionedSpline(
+                "14", alignmentSpline + "[spline_terrain_align_2]\n" + value + "\n");
+            require(alignedSpline.splines.size() == 1 &&
+                        alignedSpline.splines[0].splineTerrainAlign2 == value,
+                    "spline alignment payload remains raw without numeric validation");
+        }
+        const auto splineMarker =
+            loadVersionedSpline("14", alignmentSpline + "[spline_terrain_align]\n");
+        require(splineMarker.splines.size() == 1 &&
+                    !splineMarker.splines[0].splineTerrainAlign2.has_value() &&
+                    std::ranges::any_of(splineMarker.diagnostics.entries, [](const auto& entry) {
+                        return entry.keyword == "spline_terrain_align" &&
+                               entry.message == "marker has no supported preceding object record";
+                    }),
+                "marker after spline is not applied and produces a warning");
 
         const openbus::map::TerrainGrid terrain =
             openbus::map::loadTerrainGrid(definition.tiles[0].terrainPath);

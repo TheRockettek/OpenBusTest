@@ -97,6 +97,24 @@ int main(int argc, char** argv) {
         std::cerr << "SCO description contents were interpreted as model directives\n";
         return 1;
     }
+    const std::filesystem::path terrainHolePath = root / "terrain_hole.sco";
+    std::ofstream terrainHole(terrainHolePath);
+    terrainHole << "[mesh]\ndisplay.obj\n[terrainhole]\nhole.o3d\n"
+                   "[mesh]\ndisplay.obj\n";
+    terrainHole.close();
+    const ModelConfig terrainHoleModel =
+        loadModelConfig(terrainHolePath, root, ModelConfigKind::SceneryObject, variables);
+    const bool terrainHoleWarned = std::any_of(
+        terrainHoleModel.diagnostics.entries.begin(), terrainHoleModel.diagnostics.entries.end(),
+        [](const ConfigurationDiagnostic& diagnostic) {
+            return diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
+                   diagnostic.keyword == "terrainhole" && diagnostic.message == "unknown keyword";
+        });
+    if (!terrainHoleWarned || terrainHoleModel.diagnostics.hasErrors() ||
+        terrainHoleModel.parts.size() != 2) {
+        std::cerr << "unsupported terrainhole did not warn while preserving following mesh\n";
+        return 1;
+    }
     const std::filesystem::path unterminatedDescriptionPath = root / "unterminated_description.sco";
     std::ofstream unterminatedDescription(unterminatedDescriptionPath);
     unterminatedDescription << "[description]\n[mesh]\ndisplay.obj\n";

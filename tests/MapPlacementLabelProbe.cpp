@@ -3,6 +3,7 @@
 #include "config/SceneryObjectConfigLoader.h"
 #include "scripting/ScriptRuntime.h"
 #include "core/Variables.h"
+#include "map/MapConfigLoader.h"
 #include "ProbeTempDirectory.h"
 
 #include <array>
@@ -108,13 +109,29 @@ int main() {
     }
 
     VehicleConfig configuration = sceneryConfiguration.scriptConfiguration;
+    std::ofstream tileFile(root / "tile.map", std::ios::binary);
+    tileFile << "[version]\n14\n[terrain]\n"
+                "[splineAttachement]\n0\nlabel_sign.sco\n1\n0\n0\n0\n0\n"
+                "0\n0\n0\n0\n0\n0\n3\n90\n\n[object]\n"
+                "[splineAttachement_repeater]\n0\n0\n0\nlabel_sign.sco\n2\n0\n0\n0\n0\n"
+                "0\n0\n0\n0\n0\n0\n3\n50\n\n[spline]\n";
+    tileFile.close();
+    openbus::map::MapTileReference tileReference;
+    tileReference.textPath = root / "tile.map";
+    const auto tile = openbus::map::loadMapTile(tileReference);
+    if (tile.splineAttachments.size() != 2 ||
+        tile.splineAttachments[0].labels != std::vector<std::string>{"90", "", "[object]"} ||
+        tile.splineAttachments[1].labels != std::vector<std::string>{"50", "", "[spline]"}) {
+        std::cerr << "spline attachment labels were not preserved in order\n";
+        return 1;
+    }
     SimulationState sharedState;
     openbus::scripting::SceneryObject firstPlacement;
     openbus::scripting::SceneryObject secondPlacement;
     ScriptRuntime firstRuntime(configuration, firstPlacement, sharedState);
     ScriptRuntime secondRuntime(configuration, secondPlacement, sharedState);
-    firstRuntime.configureTextTextures(model.textTextures, {"90"});
-    secondRuntime.configureTextTextures(model.textTextures, {"50"});
+    firstRuntime.configureTextTextures(model.textTextures, tile.splineAttachments[0].labels);
+    secondRuntime.configureTextTextures(model.textTextures, tile.splineAttachments[1].labels);
     firstRuntime.initialize();
     secondRuntime.initialize();
 

@@ -214,6 +214,7 @@ foreach(probe IN ITEMS ScriptTextureRuntimeProbe MapPlacementLabelProbe ScriptIn
     openbus_add_probe(OpenBus${probe} ${probe}.cpp LIBS openbus_scripting openbus_osc)
     openbus_copy_lua_runtime(OpenBus${probe})
 endforeach()
+target_link_libraries(OpenBusMapPlacementLabelProbe PRIVATE openbus_map)
 
 # Render (header-only probes need only the include root)
 openbus_add_probe(OpenBusImGuiLayerProbe ImGuiLayerProbe.cpp LIBS openbus_imgui)
@@ -259,6 +260,16 @@ foreach(backend IN ITEMS cpu compute-indirect)
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --item-lightmap)
     add_test(NAME OpenBusMapSceneryNormalsRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --normals)
+    add_test(NAME OpenBusMapSplineLabelsRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-labels)
+    add_test(NAME OpenBusMapSplineTextRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-text)
+    add_test(NAME OpenBusMapSplineOwnershipRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-ownership)
+    add_test(NAME OpenBusMapSplineDependencyProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-dependencies)
+    add_test(NAME OpenBusMapSplineHumanDependencyProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-human-dependencies)
     set_tests_properties(OpenBusMapSceneryTexcoordRenderingProbe.${backend}
         OpenBusMapSceneryLightmapRenderingProbe.${backend}
         OpenBusMapSceneryBumpmapRenderingProbe.${backend}
@@ -266,6 +277,11 @@ foreach(backend IN ITEMS cpu compute-indirect)
         OpenBusMapSceneryNightmapRenderingProbe.${backend}
         OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
         OpenBusMapSceneryNormalsRenderingProbe.${backend}
+        OpenBusMapSplineLabelsRenderingProbe.${backend}
+        OpenBusMapSplineTextRenderingProbe.${backend}
+        OpenBusMapSplineOwnershipRenderingProbe.${backend}
+        OpenBusMapSplineDependencyProbe.${backend}
+        OpenBusMapSplineHumanDependencyProbe.${backend}
         PROPERTIES SKIP_RETURN_CODE 77
         ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=${backend};OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
 endforeach()

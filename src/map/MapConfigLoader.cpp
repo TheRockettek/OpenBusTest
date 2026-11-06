@@ -3398,7 +3398,10 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                     throw std::runtime_error("Invalid label count in " + section + " in " +
                                              pathToUtf8(tile.textPath));
                 }
-                field += stringCount;
+                attachment.labels.reserve(stringCount);
+                for (std::size_t index = 0; index < stringCount; ++index) {
+                    attachment.labels.push_back(requireField(field++));
+                }
             }
             data.splineAttachments.push_back(std::move(attachment));
             modifierTarget = ModifierTarget::SplineAttachment;

@@ -764,8 +764,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             addSceneryInstance(
                 attachment.assetPath, description, renderedPose.x, renderedPose.y, renderedPose.z,
                 0.0, renderedPose.rotationDegrees, renderedPose.rotationCount,
-                renderedPose.hasOrientationMatrix ? &renderedPose.orientationMatrix : nullptr, {},
-                &attachment.rules, attachment.id, attachment.variableParentId);
+                renderedPose.hasOrientationMatrix ? &renderedPose.orientationMatrix : nullptr,
+                attachment.labels, &attachment.rules, attachment.id, attachment.variableParentId);
         }
     }
     for (const auto& [reason, example, count] : preparedRoads.skipped) {
