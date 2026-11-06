@@ -66,6 +66,8 @@ add_test(NAME OpenBusModelLogRegressionProbe COMMAND OpenBusModelConfigProbe --l
 openbus_add_probe(OpenBusWavPcmProbe WavPcmProbe.cpp LIBS openbus_audio)
 openbus_add_probe(OpenBusVehicleConfigProbe VehicleConfigProbe.cpp
     LIBS openbus_config openbus_osc openbus_physics)
+openbus_add_probe(OpenBusVehicleControlCableProbe VehicleControlCableProbe.cpp
+    LIBS openbus_core)
 openbus_add_probe(OpenBusVehicleCatalogProbe VehicleCatalogProbe.cpp LIBS openbus_config)
 add_executable(OpenBusVehiclePreferencesProbe VehiclePreferencesProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehiclePreferences.cpp")

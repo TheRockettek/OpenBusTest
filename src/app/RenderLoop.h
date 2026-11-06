@@ -632,6 +632,7 @@ class RenderLoop {
     std::unordered_map<Vehicle*, std::vector<double>> observedPassengerCoinCounts_;
     std::mt19937 passengerTransactionRandom_{0x4f70656eU};
     std::size_t targetHumanTrafficCount_ = 0;
+    std::unordered_set<std::string> controlCablePairingWarningsLogged_;
     Vehicle* playerVehicle_ = nullptr;
     Vehicle* mapBusVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;

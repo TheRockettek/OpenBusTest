@@ -109,7 +109,7 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         std::cerr << error << '\n';
         return false;
     }
-    ScriptRuntime::prepareFontSearch(root / "drawing.bus", {"ProbeFont", "UnitFont"});
+    ScriptRuntime::prepareFontSearch(root / "drawing.bus", {"ProbeFont", "UnitFont", "GridFont"});
     for (const char* backend : {"native", "lua"}) {
         if (!setScriptBackend(backend)) {
             return false;
@@ -169,6 +169,8 @@ int main() {
     writeTestBmp(fonts / "probe_alpha.bmp", 4, 2, {255, 255, 128, 128, 255, 255, 128, 128});
     writeTestBmp(fonts / "unit.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
     writeTestBmp(fonts / "unit_alpha.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
+    writeTestBmp(fonts / "grid.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
+    writeTestBmp(fonts / "grid_alpha.bmp", 4, 2, {0, 0, 0, 0, 255, 255, 255, 255});
     std::ofstream font(fonts / "probe.oft");
     font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
             "[char]\nA\n0\n2\n0\n"
@@ -187,6 +189,10 @@ int main() {
                   "[char]\nA\n0\n1\n0\n"
                   "[char]\nc\n1\n2\n0\n";
     legacyFont.close();
+    std::ofstream gridFont(fonts / "grid.oft");
+    gridFont << "[newfont]\nGridFont\ngrid.bmp\ngrid_alpha.bmp\n2\n0\n"
+                "[char]\nA\n0\n2\n0\n";
+    gridFont.close();
     if (!checkAuthoredScriptDrawing(root)) {
         openbus::probe::removeProbeDirectory(root);
         return 1;
@@ -811,7 +817,15 @@ int main() {
          ModelTextTexture{
              11, true, {"unitreference", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
          ModelTextTexture{
-             12, true, {"legacyreference", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}}});
+             12, true, {"legacyreference", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}},
+         ModelTextTexture{
+             13, true, {"gridboxdisplay", "GridFont", "4", "6", "0", "255", "255", "255", "0", "0"}},
+         ModelTextTexture{
+             14, true, {"gridpixelsdisplay", "GridFont", "4", "6", "0", "255", "255", "255", "0", "1"}},
+         ModelTextTexture{
+             15, true, {"leftbiasdisplay", "ProbeFont", "7", "4", "0", "255", "255", "255", "4", "0"}},
+         ModelTextTexture{
+             16, true, {"rightbiasdisplay", "ProbeFont", "7", "4", "0", "255", "255", "255", "5", "0"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
@@ -830,6 +844,10 @@ int main() {
                                                      "c",
                                                      3));
     variables.setString("legacyreference", "AAAc");
+    variables.setString("gridboxdisplay", "A");
+    variables.setString("gridpixelsdisplay", "A");
+    variables.setString("leftbiasdisplay", "AB");
+    variables.setString("rightbiasdisplay", "AB");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
     ScriptRuntime::ScriptTextureSnapshot initialPlateText;
@@ -873,6 +891,10 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot expectedUnitTexture;
     ScriptRuntime::ScriptTextureSnapshot unchangedLegacyUnitTexture;
     ScriptRuntime::ScriptTextureSnapshot expectedLegacyTexture;
+    ScriptRuntime::ScriptTextureSnapshot gridBoxAlignedText;
+    ScriptRuntime::ScriptTextureSnapshot gridPixelAlignedText;
+    ScriptRuntime::ScriptTextureSnapshot leftBiasText;
+    ScriptRuntime::ScriptTextureSnapshot rightBiasText;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -893,7 +915,11 @@ int main() {
         !runtime.copyTextTexture(9, repairedUnitTexture) ||
         !runtime.copyTextTexture(10, unchangedLegacyUnitTexture) ||
         !runtime.copyTextTexture(11, expectedUnitTexture) ||
-        !runtime.copyTextTexture(12, expectedLegacyTexture)) {
+        !runtime.copyTextTexture(12, expectedLegacyTexture) ||
+        !runtime.copyTextTexture(13, gridBoxAlignedText) ||
+        !runtime.copyTextTexture(14, gridPixelAlignedText) ||
+        !runtime.copyTextTexture(15, leftBiasText) ||
+        !runtime.copyTextTexture(16, rightBiasText)) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -961,11 +987,11 @@ int main() {
     const std::size_t centeredFontPixel = (3U * 6U + 2U) * 4U;
     const std::size_t centeredBlockColorPixel = (2U * 6U + 2U) * 4U;
     const std::size_t leftAlignedPixel = (1U * 8U) * 4U;
-    const std::size_t gridCenterFirstPixel = (1U * 8U + 1U) * 4U;
+    const std::size_t gridCenterFirstPixel = (1U * 8U + 2U) * 4U;
     const std::size_t gridCenterSecondPixel = (1U * 8U + 4U) * 4U;
-    const std::size_t gridLeftSecondPixel = (1U * 8U + 3U) * 4U;
-    const std::size_t gridRightFirstPixel = (1U * 8U + 4U) * 4U;
-    const std::size_t gridRightSecondPixel = (1U * 8U + 6U) * 4U;
+    const std::size_t gridLeftSecondPixel = (1U * 8U + 4U) * 4U;
+    const std::size_t gridRightFirstPixel = (1U * 8U + 2U) * 4U;
+    const std::size_t gridRightSecondPixel = (1U * 8U + 4U) * 4U;
     int blockMinX = 6;
     int blockMinY = 6;
     int blockMaxX = -1;
@@ -999,7 +1025,15 @@ int main() {
         gridCenterTextTexture.pixels[gridCenterSecondPixel + 3] != 128 ||
         gridLeftTextTexture.pixels[gridLeftSecondPixel + 3] != 128 ||
         gridRightTextTexture.pixels[gridRightFirstPixel + 3] != 255 ||
-        gridRightTextTexture.pixels[gridRightSecondPixel + 3] != 128) {
+        gridRightTextTexture.pixels[gridRightSecondPixel + 3] != 128 ||
+        gridBoxAlignedText.pixels[(3U * 4U + 1U) * 4U + 3U] != 255 ||
+        gridBoxAlignedText.pixels[(2U * 4U + 1U) * 4U + 3U] != 0 ||
+        gridPixelAlignedText.pixels[(2U * 4U + 1U) * 4U + 3U] != 255 ||
+        gridPixelAlignedText.pixels[(3U * 4U + 1U) * 4U + 3U] != 0 ||
+        leftBiasText.pixels[(1U * 7U + 1U) * 4U + 3U] != 255 ||
+        leftBiasText.pixels[(1U * 7U + 3U) * 4U + 3U] != 128 ||
+        rightBiasText.pixels[(1U * 7U + 2U) * 4U + 3U] != 255 ||
+        rightBiasText.pixels[(1U * 7U + 4U) * 4U + 3U] != 128) {
         std::cerr << "OMSI text layout/color mismatch: centered font RGBA="
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel]) << ','
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 1]) << ','

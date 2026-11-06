@@ -13,10 +13,10 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is retained and diagnosed but does not affect vehicle physics. |
 | `[ai_deltaheight]` | Active subset | Applied as a vertical offset to AI vehicle placement, including map-route updates; player vehicles are unchanged. Native OMSI sign/unit parity still needs live validation. |
 | `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Unsupported | Recognized with explicit diagnostics; family-specific behavior is absent. |
-| BUS/vehicle `[fixed]`, `[scriptshare]`, `[new_attachment]` | Unsupported | Recognized with explicit diagnostics; their vehicle-level runtime behavior is absent. |
+| BUS/vehicle `[fixed]`, `[scriptshare]`, `[new_attachment]` | Out of scope | Recognized with explicit diagnostics; no shared-script, fixed-selection, or vehicle-attachment behavior is applied. |
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Unsupported | Recognized with explicit diagnostics; coupling and multi-vehicle behavior are absent. |
-| `[control_cable_front]`, `[control_cable_back]` | Unsupported | Recognized with explicit diagnostics; no cross-vehicle control/electrical transfer. |
-| `[contact_shoe]`, `[rail_body_osc]` | Unsupported | Recognized with explicit diagnostics; rail/trolley-specific behavior is absent. |
+| `[control_cable_front]`, `[control_cable_back]` | Partial | Records are validated and retained; uniquely referenced, already-loaded rear/front vehicle instances transfer matching active cable values between their read/write variables. Automatic coupled-vehicle spawning and physical coupling are not implemented. |
+| `[contact_shoe]`, `[rail_body_osc]` | Out of scope | Recognized with explicit diagnostics; rail/trolley contact and body-oscillation behavior are not applied. |
 | `[sound_ai]` | Partial | AI vehicle initialization selects the authored AI sound bank and falls back to `[sound]` when absent. AI ambient/spatial playback parity remains unverified. See [audio status](IMPLEMENTATION_STATUS_AUDIO.md). |
 | `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Registration selection/number seeding exist. `OPENBUS_ODOMETER_MODE` selects `global` (default, shared across all models), `vehicle` (raw distance per `.bus` path), or `vehicle-default` (per-model raw distance plus `[kmcounter_init]`). Raw counters start at zero; fleet numbers and registrations do not affect them. Version-3 persistence keeps global and model counters separately; version-2 mileage is retained, while version-1 identity-based counters reset on migration. Full OMSI selection UI parity remains incomplete. |
 
@@ -81,7 +81,7 @@ override is applied.
 | `[tex_detail_factor]` | Partial | Finite scalar is retained and serialized in model-config JSON; detail-texture rendering is not implemented. |
 | `[terrainmapping]` | Partial | Variable-length payloads are retained verbatim and serialized in model-config JSON; terrain/material rendering is not implemented. |
 | `[origin_from_mesh]` | Partial | Source transform metadata supplies the pivot when available; otherwise the parsed mesh bounds center is used. Native pivot parity remains unverified. |
-| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces and horizontal alignment/grid spacing are active; fallback font rasterization and remaining enhanced-format flags/layout/alpha details differ from OMSI. |
+| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, font-height/visible-pixel vertical alignment, and font alpha masks are active. Native spacing-aware alignment parity and fallback font rasterization remain unverified/incomplete. |
 | `[illumination_interior]`, `[interiorlight]` | Partial | Controller-driven point-light shading, mesh assignments, and distance attenuation are active. GPU coverage exercises color, zero strength, and attenuation; controller integration with representative assets and OMSI intensity parity remain unverified. |
 | `[mouseevent]` | Partial | Transformed-triangle picking, captured press/held-drag/release, and player W/A/S/D event transitions are active. Handler lookup and dispatch normalize authored punctuation consistently (including DL05 `bus_20h-switch`); drag/release handlers are optional. Configurable key maps and scenery-object mouse dispatch are not complete. |
 

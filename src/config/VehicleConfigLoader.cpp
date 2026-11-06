@@ -148,8 +148,6 @@ const std::unordered_map<std::string, std::string>& unsupportedVehicleKeywords()
         {"ai_veh_type", "family-specific AI vehicle categories are not implemented"},
         {"sinus", "family-specific body oscillation is not implemented"},
         {"couple_front_open_for_sound", "vehicle coupling sound is not implemented"},
-        {"control_cable_front", "coupled-vehicle control transfer is not implemented"},
-        {"control_cable_back", "coupled-vehicle control transfer is not implemented"},
         {"new_attachment", "vehicle attachment behavior is not implemented"},
         {"contact_shoe", "rail and trolley contact behavior is not implemented"},
         {"rail_body_osc", "rail body oscillation is not implemented"},
@@ -171,6 +169,9 @@ std::string ignoredVehicleKeywordReason(const std::string& keyword) {
     if (keyword == "coupling_front" || keyword == "coupling_back" ||
         keyword == "coupling_front_character" || keyword == "couple_back") {
         return "articulated vehicle behavior is not implemented";
+    }
+    if (keyword == "control_cable_front" || keyword == "control_cable_back") {
+        return "control-cable transfer requires an already-loaded, uniquely referenced vehicle pair";
     }
     return {};
 }
@@ -1229,6 +1230,50 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                                            "rear vehicle reference retained; articulated vehicle "
                                            "behavior is not implemented");
             }
+            continue;
+        }
+        if (keyword == "control_cable_front" || keyword == "control_cable_back") {
+            std::vector<std::string> values;
+            if (!readValues(reader, keyword, 5, values, result.diagnostics)) {
+                continue;
+            }
+            const std::string side = lower(trim(values[0]));
+            int cableNumber = 0;
+            if ((side != "l" && side != "r" && side != "c") ||
+                !parseInt(values[1], cableNumber) || cableNumber < 0 ||
+                trim(values[2]).empty() || trim(values[3]).empty() || trim(values[4]).empty()) {
+                result.diagnostics.error(
+                    line.number, keyword,
+                    "expected side L/R/C, a non-negative cable number, and three variable names");
+                continue;
+            }
+            VehicleControlCable cable;
+            cable.side = side == "l"   ? VehicleControlCableSide::Left
+                         : side == "r" ? VehicleControlCableSide::Right
+                                       : VehicleControlCableSide::Center;
+            cable.number = cableNumber;
+            cable.readVariable = trim(values[2]);
+            cable.writeVariable = trim(values[3]);
+            cable.couplingVariable = trim(values[4]);
+            std::vector<VehicleControlCable>& cables =
+                keyword == "control_cable_front" ? result.frontControlCables
+                                                  : result.rearControlCables;
+            const auto duplicate = std::find_if(
+                cables.begin(), cables.end(), [&cable](const VehicleControlCable& existing) {
+                    return existing.side == cable.side && existing.number == cable.number;
+                });
+            if (duplicate != cables.end()) {
+                result.diagnostics.error(line.number, keyword,
+                                         "duplicate side and cable number on this coupling");
+                continue;
+            }
+            cables.push_back(std::move(cable));
+            const std::string message =
+                "recognized but partially implemented: control transfer requires an already-loaded, "
+                "uniquely referenced vehicle pair";
+            result.diagnostics.warning(line.number, line.keyword(), message);
+            openbus::config::logUnhandledConfigurationTag(configFormat, configPath, line.number,
+                                                          line.keyword(), message);
             continue;
         }
 

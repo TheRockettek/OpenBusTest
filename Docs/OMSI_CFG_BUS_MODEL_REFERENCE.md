@@ -185,9 +185,13 @@ horizontally; OpenBus vertically centers the rendered line block in the surface.
 ### `[texttexture_enh]`
 
 Enhanced text texture definition. It commonly adds font style/size, colour
-channels, and formatting flags to the basic text texture record. Its horizontal
-alignment value is `0` = center, `1` = left, and `2` = right. Font-colour mode
-`0` uses the configured RGB colour; `1` preserves the font's colour image.
+channels, and formatting flags to the basic text texture record. Horizontal
+alignment values `0`–`2` are center, left, and right; values `3`–`5` are
+spacing-aware centering variants, with `4` and `5` resolving odd-pixel ties
+toward the left and right. The final grid flag selects vertical alignment using
+either the font line height (`0`) or visible font pixels (`1`).
+Font-colour mode `0` uses the configured RGB colour; `1` preserves the font's
+colour image.
 
 ### `[useTextTexture]`
 

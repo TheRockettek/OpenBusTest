@@ -1110,6 +1110,7 @@ void RenderLoop::ResetForStartupMenu() {
     trafficFleet_.worker.reset();
     trafficFleet_.vehicles.clear();
     trafficFleet_ = {};
+    controlCablePairingWarningsLogged_.clear();
     SetPlayerVehicle(nullptr);
     vehicles_.clear();
     humanTrafficActors_.clear();

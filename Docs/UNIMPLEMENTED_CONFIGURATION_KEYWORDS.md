@@ -28,7 +28,7 @@ These are the known bus-model keyword gaps:
 | `[VFDmaxmin]` | Partial | Six display bounds and the optional view-context flag are retained; they do not affect rendering. |
 | `[tex_detail_factor]` | Partial | The finite factor is retained and serialized, but detail-texture rendering does not use it. |
 | `[origin_from_mesh]` | Partial | Source transform metadata supplies the pivot when available; otherwise the parsed mesh bounds center is used. Native pivot parity remains unverified. |
-| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces work; fallback font rasterization and some format/layout/alpha behavior differ from OMSI. |
+| `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces, alignment modes 0–5, grid vertical alignment, and font alpha masks work; native spacing-aware alignment parity and fallback font rasterization remain unverified/incomplete. |
 | `[illumination_interior]`, `[interiorlight]` | Partial | Point-light shading and metadata serialization work, but controller integration and native intensity parity remain incomplete or unverified. |
 | `[mouseevent]` | Partial | Vehicle picking and basic event transitions work; configurable key maps and scenery-object dispatch are incomplete. |
 | `[terrainmapping]` | Partial | Variable-length payloads are retained verbatim and serialized; terrain/material rendering is not implemented. |
@@ -46,10 +46,10 @@ and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.
 | `[rollwiderstand]`, `[ai_deltaheight]`, `[sound_ai]` | Partial | Working subsets exist; native physics, placement, and AI audio parity remain unverified. |
 | `[rot_pnt_long]` | Parsed only | The coordinate is retained and diagnosed, but does not affect vehicle physics. |
 | `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Unsupported | Explicit diagnostics; family-specific behavior is absent. |
-| BUS/vehicle `[fixed]`, `[scriptshare]`, `[new_attachment]` | Unsupported | Explicit diagnostics; vehicle-level behavior is absent. |
+| BUS/vehicle `[fixed]`, `[scriptshare]`, `[new_attachment]` | Out of scope | Explicit diagnostics; fixed selection, shared-script, and vehicle attachment behavior are not applied. |
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Unsupported | Explicit diagnostics; coupling and articulated multi-vehicle behavior are absent. |
-| `[control_cable_front]`, `[control_cable_back]` | Unsupported | Explicit diagnostics; cross-vehicle control/electrical variable transfer is absent. |
-| `[contact_shoe]`, `[rail_body_osc]` | Unsupported | Explicit diagnostics; rail/trolley-specific behavior is absent. |
+| `[control_cable_front]`, `[control_cable_back]` | Partial | Matching active cables transfer between uniquely referenced, already-loaded vehicles; automatic coupled-vehicle spawning and physical coupling are absent. |
+| `[contact_shoe]`, `[rail_body_osc]` | Out of scope | Explicit diagnostics; rail/trolley contact and body-oscillation behavior are not applied. |
 | `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Registration selection/number seeding exist. `OPENBUS_ODOMETER_MODE` supports a global shared counter (default), raw distance per `.bus` model, or per-model distance plus `[kmcounter_init]`. Global and model counters persist separately without fleet/registration identities. Full selection UI parity remains incomplete. |
 
 The complete configurable input map and vehicle-family-specific view systems

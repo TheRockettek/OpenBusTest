@@ -389,12 +389,16 @@ common five-line record is:
 
 1. Side: `L`, `R`, or `C`
 2. Cable number
-3. Read variable identifier
-4. Write variable identifier
-5. Coupling variable identifier
+3. Local read-variable identifier (receives the connected contact's signal)
+4. Local write-variable identifier (drives the connected contact's signal)
+5. Coupling variable identifier (must be `1` for the electrical contact to be active)
 
 `L` on one vehicle connects to `R` on the other; `C` connects centre cables.
-The coupling variable determines whether the link remains active.
+Cable numbers must match. A front/back pair transfers each endpoint's write
+value to the other endpoint's read variable; inactive or unmatched contacts
+read as zero. Community documentation describes this field behavior, but the
+installed OMSI executable's current Ghidra analysis has not resolved code
+references for these keyword strings.
 
 ### `[new_attachment]`
 

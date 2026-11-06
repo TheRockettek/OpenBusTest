@@ -104,7 +104,7 @@ struct ScriptRuntime::Impl {
     bool warnedInvalidRandomSeed = false;
     std::unordered_map<int, ScriptTexture> scriptTextures;
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
-    enum class TextAlignment { Left, Center, Right };
+    enum class TextAlignment { Left, Center, Right, CenterLeftBias, CenterRightBias };
 
     struct TextTextureDefinition {
         std::string variable;
@@ -112,7 +112,7 @@ struct ScriptRuntime::Impl {
         int width = 0;
         int height = 0;
         TextAlignment alignment = TextAlignment::Center;
-        int gridSpacing = 0;
+        bool alignToFontPixels = false;
         std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
         bool useFontColor = false;
         std::string lastValue;
@@ -341,7 +341,7 @@ struct ScriptRuntime::Impl {
 
     bool drawBitmapFontText(ScriptTexture& texture, const std::string& value, int x, int y,
                             const TextTextureDefinition& definition, const FontAsset& font,
-                            bool centerVertically = true);
+                            bool centerVertically = true, int letterSpacing = 0);
 
     void updateTextTextures(bool force = false);
 

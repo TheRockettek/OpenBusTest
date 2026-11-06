@@ -103,23 +103,28 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
                 configured.useFontColor = false;
             }
         }
-        // Enhanced alignment values are two sets of the same horizontal modes:
-        // 0/3=center, 1/4=left, and 2/5=right. The following field is the
-        // additional per-character grid spacing used by enhanced displays.
+        // Modes 3-5 center using font advances; modes 4 and 5 break half-pixel
+        // ties toward the left and right respectively.
         if (definition.enhanced && definition.values.size() > 8) {
             try {
                 const int alignment = std::stoi(definition.values[8]);
                 switch (alignment) {
                 case 1:
-                case 4:
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
                     break;
                 case 2:
-                case 5:
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Right;
                     break;
                 case 0:
                 case 3:
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                    break;
+                case 4:
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::CenterLeftBias;
+                    break;
+                case 5:
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::CenterRightBias;
+                    break;
                 default:
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
                     break;
@@ -131,12 +136,13 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         if (definition.enhanced && definition.values.size() > 9) {
             try {
                 std::size_t consumed = 0;
-                const int spacing = std::stoi(definition.values[9], &consumed);
-                if (consumed == definition.values[9].size()) {
-                    configured.gridSpacing = std::clamp(spacing, 0, 64);
+                const int alignment = std::stoi(definition.values[9], &consumed);
+                if (consumed == definition.values[9].size() &&
+                    (alignment == 0 || alignment == 1)) {
+                    configured.alignToFontPixels = alignment == 1;
                 }
             } catch (const std::exception&) {
-                configured.gridSpacing = 0;
+                configured.alignToFontPixels = false;
             }
         }
         for (std::size_t channel = 0;

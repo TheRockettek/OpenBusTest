@@ -92,6 +92,16 @@ struct VehicleCouplingReference {
     bool flag = false;
 };
 
+enum class VehicleControlCableSide { Left, Right, Center };
+
+struct VehicleControlCable {
+    VehicleControlCableSide side = VehicleControlCableSide::Center;
+    int number = 0;
+    std::string readVariable;
+    std::string writeVariable;
+    std::string couplingVariable;
+};
+
 struct VehicleConfig {
     VehicleFileKind kind = VehicleFileKind::Vehicle;
     std::filesystem::path sourcePath;
@@ -123,6 +133,8 @@ struct VehicleConfig {
     std::optional<std::array<double, 3>> rearCouplingPoint;
     std::optional<VehicleCouplingCharacter> frontCouplingCharacter;
     std::optional<VehicleCouplingReference> rearCouplingReference;
+    std::vector<VehicleControlCable> frontControlCables;
+    std::vector<VehicleControlCable> rearControlCables;
     double wheelHalfWidth = 0.0;
     bool hasWheelHalfWidth = false;
     bool articulated = false;

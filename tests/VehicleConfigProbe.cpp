@@ -171,8 +171,7 @@ int main(int argc, char** argv) {
         "fixed",          "scriptshare",             "rowdy_factor",
         "boogies",        "ai_brakeperformance",    "ai_veh_type",
         "sinus",
-        "couple_front_open_for_sound",               "control_cable_front",
-        "control_cable_back",                        "new_attachment",
+        "couple_front_open_for_sound",               "new_attachment",
         "contact_shoe",   "rail_body_osc",
     };
     const std::filesystem::path unsupportedPath = root / "unsupported.bus";
@@ -180,7 +179,8 @@ int main(int argc, char** argv) {
         std::ofstream output(unsupportedPath);
         output << "[model]\nmodel.cfg\n";
         for (const std::string& keyword : unsupportedKeywords) {
-            output << '[' << keyword << "]\npayload\n";
+            output << '[' << keyword << "]\n";
+            output << "payload\n";
         }
         output << "[unknown_probe_keyword]\npayload\n[rollwiderstand]\n1250\n";
     }
@@ -218,11 +218,22 @@ int main(int argc, char** argv) {
                   "[coupling_front]\n0\n4.788\n0.501\n"
                   "[coupling_back]\n0\n-4.331\n0.315\n"
                   "[coupling_front_character]\n52.5\n-20\n20\n1\n"
-                  "[couple_back]\ntrailer.bus\nfalse\n";
+                  "[couple_back]\ntrailer.bus\nfalse\n"
+                  "[control_cable_front]\nL\n4\nfront_read\nfront_write\nfront_coupled\n"
+                  "[control_cable_back]\nR\n4\nrear_read\nrear_write\nrear_coupled\n";
     }
     const VehicleConfig couplingPoints =
         loadVehicleConfig(couplingPointsPath, VehicleFileKind::Bus, false);
+    const auto cableDiagnostic = std::find_if(
+        couplingPoints.diagnostics.entries.begin(), couplingPoints.diagnostics.entries.end(),
+        [](const ConfigurationDiagnostic& entry) {
+            return (entry.keyword == "control_cable_front" ||
+                    entry.keyword == "control_cable_back") &&
+                   entry.severity == ConfigurationDiagnostic::Severity::Warning &&
+                   entry.message.find("recognized but partially implemented:") == 0;
+        });
     if (couplingPoints.diagnostics.hasErrors() ||
+        cableDiagnostic == couplingPoints.diagnostics.entries.end() ||
         couplingPoints.frontCouplingPoint != std::array<double, 3>{0.0, 4.788, 0.501} ||
     couplingPoints.rearCouplingPoint != std::array<double, 3>{0.0, -4.331, 0.315} ||
     !couplingPoints.frontCouplingCharacter ||
@@ -232,7 +243,19 @@ int main(int argc, char** argv) {
     couplingPoints.frontCouplingCharacter->type != 1 ||
     !couplingPoints.rearCouplingReference ||
     couplingPoints.rearCouplingReference->vehicleConfigPath != root / "trailer.bus" ||
-    couplingPoints.rearCouplingReference->flag) {
+    couplingPoints.rearCouplingReference->flag ||
+    couplingPoints.frontControlCables.size() != 1 ||
+    couplingPoints.frontControlCables[0].side != VehicleControlCableSide::Left ||
+    couplingPoints.frontControlCables[0].number != 4 ||
+    couplingPoints.frontControlCables[0].readVariable != "front_read" ||
+    couplingPoints.frontControlCables[0].writeVariable != "front_write" ||
+    couplingPoints.frontControlCables[0].couplingVariable != "front_coupled" ||
+    couplingPoints.rearControlCables.size() != 1 ||
+    couplingPoints.rearControlCables[0].side != VehicleControlCableSide::Right ||
+    couplingPoints.rearControlCables[0].number != 4 ||
+    couplingPoints.rearControlCables[0].readVariable != "rear_read" ||
+    couplingPoints.rearControlCables[0].writeVariable != "rear_write" ||
+    couplingPoints.rearControlCables[0].couplingVariable != "rear_coupled") {
         std::cerr << "Vehicle coupling point records were not retained: errors="
                   << couplingPoints.diagnostics.hasErrors() << " front="
                   << couplingPoints.frontCouplingPoint.has_value() << " rear="
@@ -240,6 +263,32 @@ int main(int argc, char** argv) {
         for (const ConfigurationDiagnostic& diagnostic : couplingPoints.diagnostics.entries) {
             std::cerr << diagnostic.keyword << ": " << diagnostic.message << '\n';
         }
+        return 1;
+    }
+    const std::filesystem::path invalidControlCablePath = root / "invalid_control_cable.bus";
+    {
+        std::ofstream output(invalidControlCablePath);
+        output << "[model]\nmodel.cfg\n[control_cable_front]\nX\n-1\nread\nwrite\ncoupled\n";
+    }
+    const VehicleConfig invalidControlCable =
+        loadVehicleConfig(invalidControlCablePath, VehicleFileKind::Bus, false);
+    if (!invalidControlCable.diagnostics.hasErrors() ||
+        !invalidControlCable.frontControlCables.empty()) {
+        std::cerr << "Invalid control-cable record was accepted\n";
+        return 1;
+    }
+    const std::filesystem::path duplicateControlCablePath = root / "duplicate_control_cable.bus";
+    {
+        std::ofstream output(duplicateControlCablePath);
+        output << "[model]\nmodel.cfg\n"
+                  "[control_cable_front]\nC\n2\nread_a\nwrite_a\ncoupled_a\n"
+                  "[control_cable_front]\nC\n2\nread_b\nwrite_b\ncoupled_b\n";
+    }
+    const VehicleConfig duplicateControlCable =
+        loadVehicleConfig(duplicateControlCablePath, VehicleFileKind::Bus, false);
+    if (!duplicateControlCable.diagnostics.hasErrors() ||
+        duplicateControlCable.frontControlCables.size() != 1) {
+        std::cerr << "Duplicate control-cable contact was accepted\n";
         return 1;
     }
     const std::filesystem::path invalidCouplingReferencePath =

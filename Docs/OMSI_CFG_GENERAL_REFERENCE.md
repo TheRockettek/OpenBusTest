@@ -223,17 +223,16 @@ Enhanced text texture definition. The examples commonly contain a texture
 name, font name/size/style, dimensions, colour channels, and alignment/format
 flags.
 
-The font-colour mode has the same meaning as in `[texttexture]`. OpenBus reads
-the enhanced record's horizontal alignment after the RGB channels as `0`/`3` =
-center, `1`/`4` = left, and `2`/`5` = right; each line is measured
-independently. The next numeric field adds that many pixels between adjacent
-glyphs (clamped to 0–64) on the text grid.
-OpenBus also vertically centers the rendered line block in the text surface
-(an OpenBus layout behavior; standard OMSI texttexture records do not provide a
-vertical-alignment field). Text surfaces are refreshed after scripts run only
-when the local `Refresh_Strings` request is nonzero and the associated string
-has changed; OpenBus consumes that request after the script pass. Other trailing
-enhanced-format flags remain model-version-specific.
+The font-colour mode has the same meaning as in `[texttexture]`. Horizontal
+alignment values `0`, `1`, and `2` mean center, left, and right. Values `3`–`5`
+are spacing-aware centering modes. OpenBus centers modes `3`–`5` using font
+advances and resolves odd-pixel ties toward the left for `4` and right for `5`;
+native parity for these spacing-aware modes remains unverified. The final grid field is a `0`/`1`
+vertical pixel-alignment mode, not extra horizontal glyph spacing: `0` centers
+using the font line height, while `1` centers using the visible glyph-pixel
+bounds. Text surfaces are refreshed after scripts run only when the local
+`Refresh_Strings` request is nonzero and the associated string has changed;
+OpenBus consumes that request after the script pass.
 
 ### `[VFDmaxmin]`
 

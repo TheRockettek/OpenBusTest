@@ -2,12 +2,15 @@
 
 #include "app/RenderLoopInternal.h"
 #include "app/MapTrafficWorker.h"
+#include "app/vehicle/VehicleControlCables.h"
 #include "app/vehicle/PassengerRequestVariables.h"
 #include "core/PassengerVariables.h"
 #include "render/map/MapRenderer.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <map>
@@ -17,6 +20,69 @@
 #include <unordered_set>
 
 namespace {
+
+std::string normalizedVehicleConfigPath(const std::filesystem::path& path) {
+    if (path.empty()) {
+        return {};
+    }
+    std::string key = std::filesystem::absolute(path).lexically_normal().generic_string();
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return key;
+}
+
+std::vector<std::pair<Vehicle*, Vehicle*>> coupledVehiclePairs(
+    const std::vector<std::unique_ptr<Vehicle>>& vehicles,
+    std::vector<std::string>& pairingWarnings) {
+    std::vector<std::string> vehiclePaths;
+    vehiclePaths.reserve(vehicles.size());
+    for (const std::unique_ptr<Vehicle>& vehicle : vehicles) {
+        vehiclePaths.push_back(
+            normalizedVehicleConfigPath(vehicle->setupOptions.vehicleConfigurationPath));
+    }
+
+    std::vector<std::vector<std::size_t>> targetsByLead(vehicles.size());
+    std::vector<std::size_t> referencesToTarget(vehicles.size(), 0);
+    for (std::size_t lead = 0; lead < vehicles.size(); ++lead) {
+        const std::optional<VehicleCouplingReference>& coupling =
+            vehicles[lead]->rearCouplingReference;
+        if (!coupling) {
+            continue;
+        }
+        const std::string targetPath = normalizedVehicleConfigPath(coupling->vehicleConfigPath);
+        if (targetPath.empty()) {
+            continue;
+        }
+        for (std::size_t target = 0; target < vehicles.size(); ++target) {
+            if (target != lead && vehiclePaths[target] == targetPath) {
+                targetsByLead[lead].push_back(target);
+                ++referencesToTarget[target];
+            }
+        }
+        if (targetsByLead[lead].size() > 1) {
+            pairingWarnings.push_back(
+                "Control-cable synchronization skipped: [couple_back] target '" + targetPath +
+                "' matches multiple loaded vehicles");
+        }
+    }
+
+    std::vector<std::pair<Vehicle*, Vehicle*>> pairs;
+    for (std::size_t lead = 0; lead < targetsByLead.size(); ++lead) {
+        if (targetsByLead[lead].size() != 1) {
+            continue;
+        }
+        const std::size_t target = targetsByLead[lead].front();
+        if (referencesToTarget[target] != 1) {
+            pairingWarnings.push_back(
+                "Control-cable synchronization skipped: loaded target '" + vehiclePaths[target] +
+                "' is referenced by multiple lead vehicles");
+            continue;
+        }
+        pairs.emplace_back(vehicles[lead].get(), vehicles[target].get());
+    }
+    return pairs;
+}
 
 double mapTrafficRouteCurvatureAtRearAxle(const openbus::map::MapTrafficActor& actor,
                                           double wheelbaseMeters, double rearAxleOffsetMeters) {
@@ -1823,7 +1889,23 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
 
 void RenderLoop::updateScripts() {
     TraceScope trace("script", "RenderLoop::updateScripts");
+    std::vector<std::string> pairingWarnings;
+    const std::vector<std::pair<Vehicle*, Vehicle*>> cablePairs =
+        coupledVehiclePairs(vehicles_, pairingWarnings);
+    for (const std::string& warning : pairingWarnings) {
+        if (controlCablePairingWarningsLogged_.insert(warning).second) {
+            gameLog.Warning(warning);
+        }
+    }
+    const auto synchronizeCoupledVehicleCables = [&] {
+        for (const auto& [rearVehicle, frontVehicle] : cablePairs) {
+            openbus::app::vehicle::synchronizeControlCables(
+                rearVehicle->variables, rearVehicle->rearControlCables,
+                frontVehicle->variables, frontVehicle->frontControlCables);
+        }
+    };
     const auto updatePlayerAndMapScripts = [&] {
+        synchronizeCoupledVehicleCables();
         {
             TraceScope playerTrace("script", "RenderLoop::updateScripts.playerVehicle");
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
@@ -1880,6 +1962,7 @@ void RenderLoop::updateScripts() {
         scheduleScriptTicks(aiScriptAccumulator_, frameTimeStep_, aiScriptTimeStep);
     aiScriptAccumulator_ = aiSchedule.remainderSeconds;
     for (int tick = 0; tick < aiSchedule.ticks; ++tick) {
+        synchronizeCoupledVehicleCables();
         simulationState_.sharedVariables().set("timegap", aiScriptTimeStep);
         TraceScope aiTrace("script", "RenderLoop::updateAiVehicleScripts");
         {

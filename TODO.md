@@ -404,16 +404,16 @@ recognized but incomplete semantics.
   verifies the unknown-event no-op. The listed Cotterell names and counts are
   absent from this checkout and its retained captures, so mapping them to
   configured events remains blocked on the source sound CFGs or an event trace.
-- [~] Model, BUS/vehicle, passenger-cabin, path, and scenery-object CFG diagnostics emit
-  per-source-file, per-keyword active/ignored summaries, with reasons for
+- [x] Model, BUS/vehicle, passenger-cabin, path, and scenery-object CFG diagnostics emit
+  deduplicated per-source-file, per-keyword active/ignored summaries, with reasons for
   retained-only behavior such as `[spotlight]`, `[smoke]`, `[terrainmapping]`,
   cross-vehicle cabin links, step-sound/room-height path records, and SCO
   description/editor metadata, map-light, complexity, and night-map records.
   Inline SCO model directives are summarized by the model CFG loader. Map
   `global.cfg` and base/Chrono tile records now have active/ignored/unknown
   summaries, including Chrono selector subrecords and spline-profile records.
-  `sound.cfg` records also report active and unknown statuses. This is not a
-  per-occurrence audit.
+  `sound.cfg` records also report active and unknown statuses. Per-occurrence
+  logging is intentionally not enabled.
 
 ### Bus features requiring further work
 
@@ -507,12 +507,17 @@ for alignment is not mistaken for supporting it.
   with validation. `[couple_back]` referenced vehicle path and boolean flag are
   retained; `[couple_front_open_for_sound]` remains explicitly unsupported.
   Articulated vehicle behavior is not implemented.
-- [ ] Implement `[control_cable_front]` and `[control_cable_back]` for
-  electrical/control-variable transfer between coupled vehicles. Both are
-  diagnosed as unsupported.
-- [ ] Implement `[new_attachment]` attachment transforms and the rail/trolley
-  records `[contact_shoe]` and `[rail_body_osc]`, or explicitly scope them out
-  with diagnostics. Vehicle-level records now report unsupported behavior.
+- [~] Implement `[control_cable_front]` and `[control_cable_back]` for
+  electrical/control-variable transfer between coupled vehicles. Their
+  five-line records are validated and retained, and matching active cables
+  transfer between uniquely referenced, already-loaded front/rear instances.
+  Automatic coupled-vehicle spawning and physical coupling remain
+  unimplemented.
+- [x] Keep vehicle `[new_attachment]` and the rail/trolley records
+  `[contact_shoe]` and `[rail_body_osc]` outside the supported runtime scope.
+  BUS and vehicle files recognize these records and report explicit
+  unsupported diagnostics; no attachment, rail-contact, or rail-oscillation
+  behavior is applied.
 - [~] `[registration_free]` supports editable vehicle-number and registration
   overrides in the spawn UI, including buses with configured fleet entries.
   Automatic registrations are no longer overridden by the selected fleet-list
@@ -576,9 +581,11 @@ for alignment is not mistaken for supporting it.
   serialized in model-config JSON; terrain/material rendering remains
   unsupported.
 - [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
-  vertical/layout, and alpha semantics; horizontal alignments 0–5 and authored
-  grid spacing are supported, but the fallback font rasterizer and remaining
-  enhanced-format flags are still not fully compatible. Font-directory indexes
+  vertical/layout, and alpha semantics; basic alignment and the enhanced
+  font-height/visible-pixel grid modes are supported. Modes 3–5 center using
+  font advances, with modes 4/5 resolving odd-pixel ties left/right; native
+  spacing-aware parity and the fallback font rasterizer remain incomplete.
+  Font-directory indexes
   now refresh on directory timestamp changes and do not cache missing
   directories; regression coverage includes added and removed definitions and
   case-distinct paths. The index depends on filesystem timestamp resolution and

@@ -418,6 +418,9 @@ struct Vehicle {
     std::unordered_set<int> visibleReflectionTextureIndices;
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
+    std::optional<VehicleCouplingReference> rearCouplingReference;
+    std::vector<VehicleControlCable> frontControlCables;
+    std::vector<VehicleControlCable> rearControlCables;
     std::unique_ptr<ScriptRuntime> scripts;
     std::unique_ptr<openbus::app::vehicle::PassengerState> passengers;
     SoundEngine* soundPlayback = nullptr;
@@ -604,6 +607,9 @@ struct Vehicle {
         }
 #endif
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
+        rearCouplingReference = vehicleConfiguration.rearCouplingReference;
+        frontControlCables = vehicleConfiguration.frontControlCables;
+        rearControlCables = vehicleConfiguration.rearControlCables;
         passengers =
             openbus::app::vehicle::makePassengerState(definition, passengerServiceRequired);
         trafficAxles = vehicleConfiguration.axles;

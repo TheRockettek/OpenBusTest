@@ -592,9 +592,13 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
         const int lineWidth =
             lineLength == 0 ? 0 : static_cast<int>((lineLength - 1) * advance + 5 * scale);
         const int remainingWidth = std::max(0, texture.width - lineWidth);
-        const int horizontalOffset = alignment == TextAlignment::Center  ? remainingWidth / 2
-                                     : alignment == TextAlignment::Right ? remainingWidth
-                                                                         : 0;
+        const int horizontalOffset =
+            alignment == TextAlignment::CenterRightBias
+                ? (remainingWidth + 1) / 2
+                : alignment == TextAlignment::Center ||
+                          alignment == TextAlignment::CenterLeftBias
+                      ? remainingWidth / 2
+                      : alignment == TextAlignment::Right ? remainingWidth : 0;
         const int originX = x + horizontalOffset + columnIndex * advance;
         const int originY = y + verticalOffset + line * 8 * lineScale;
         for (int row = 0; row < 7; ++row) {
@@ -623,7 +627,8 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
 
 bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::string& value,
                                              int x, int y, const TextTextureDefinition& definition,
-                                             const FontAsset& font, bool centerVertically) {
+                                             const FontAsset& font, bool centerVertically,
+                                             int letterSpacing) {
     openbus::rendering::TraceScope trace("script", "ScriptRuntime.drawBitmapFontText");
     if (value.size() > openbus::scripting::maxScriptTextLength ||
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
@@ -673,9 +678,46 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
     }
 
     const int textBlockHeight = static_cast<int>(lines.size()) * font.height;
-    const int horizontalGap = font.horizontalGap + definition.gridSpacing;
-    const int verticalOffset =
+    const int horizontalGap = font.horizontalGap + letterSpacing;
+    int verticalOffset =
         centerVertically ? std::max(0, (texture.height - textBlockHeight) / 2) : 0;
+    if (centerVertically && definition.alignToFontPixels) {
+        int visibleTop = textBlockHeight;
+        int visibleBottom = -1;
+        for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            for (const FontGlyph* glyph : lines[lineIndex]) {
+                const int glyphWidth = glyph->right - glyph->left;
+                for (int row = 0; row < font.height; ++row) {
+                    const int sourceY = glyph->top + row;
+                    if (sourceY < 0 || sourceY >= font.alphaImage.height ||
+                        sourceY >= font.colorImage.height) {
+                        continue;
+                    }
+                    for (int column = 0; column < glyphWidth; ++column) {
+                        const int sourceX = glyph->left + column;
+                        if (sourceX < 0 || sourceX >= font.alphaImage.width ||
+                            sourceX >= font.colorImage.width) {
+                            continue;
+                        }
+                        const std::size_t sourceOffset =
+                            (static_cast<std::size_t>(sourceY) * font.alphaImage.width +
+                             sourceX) *
+                            4;
+                        if (font.alphaImage.rgba[sourceOffset] == 0) {
+                            continue;
+                        }
+                        const int pixelY = static_cast<int>(lineIndex) * font.height + row;
+                        visibleTop = std::min(visibleTop, pixelY);
+                        visibleBottom = std::max(visibleBottom, pixelY);
+                    }
+                }
+            }
+        }
+        if (visibleBottom >= visibleTop) {
+            const int visibleHeight = visibleBottom - visibleTop + 1;
+            verticalOffset = std::max(0, (texture.height - visibleHeight) / 2) - visibleTop;
+        }
+    }
     for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
         const std::vector<const FontGlyph*>& line = lines[lineIndex];
         int lineWidth = 0;
@@ -688,8 +730,11 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
         lineWidth = std::max(0, lineWidth);
         const int remainingWidth = std::max(0, texture.width - lineWidth);
         int cursorX = x;
-        if (definition.alignment == TextAlignment::Center) {
+        if (definition.alignment == TextAlignment::Center ||
+            definition.alignment == TextAlignment::CenterLeftBias) {
             cursorX += remainingWidth / 2;
+        } else if (definition.alignment == TextAlignment::CenterRightBias) {
+            cursorX += (remainingWidth + 1) / 2;
         } else if (definition.alignment == TextAlignment::Right) {
             cursorX += remainingWidth;
         }
@@ -799,7 +844,7 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
         }
         if (!bitmapFontRendered && !value.empty()) {
             openbus::rendering::TraceScope bitmapTrace("script", "updateTextTextures.drawText");
-            drawText(texture, value, 0, 0, definition.color, definition.gridSpacing, maximumScale,
+            drawText(texture, value, 0, 0, definition.color, 0, maximumScale,
                      definition.alignment, true);
         } else if (!bitmapFontRendered) {
             texture.revision = ++revisionCounter;
@@ -1083,10 +1128,10 @@ void ScriptRuntime::Impl::drawScriptText(int index, int x, int y, int fontIndex,
     ScriptTexture& texture = scriptTextures[index];
     TextTextureDefinition definition;
     definition.alignment = TextAlignment::Left;
-    definition.gridSpacing = letterSpacing;
     definition.useFontColor = fullColor;
     definition.color = {texture.color[1], texture.color[2], texture.color[3], texture.color[0]};
-    drawBitmapFontText(texture, value, x, y, definition, *scriptFonts[fontIndex], false);
+    drawBitmapFontText(texture, value, x, y, definition, *scriptFonts[fontIndex], false,
+                       letterSpacing);
 }
 
 float ScriptRuntime::Impl::scriptTextLength(int fontIndex, const std::string& value) const {
