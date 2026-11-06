@@ -127,6 +127,11 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
     }
     ScriptRuntime::prepareFontSearch(root / "drawing.bus",
                                      {"ProbeFont", "UnitFont", "GridFont", "SpacingFont"});
+    const auto otherVehicleDirectory = root / "other_vehicle";
+    std::filesystem::create_directories(otherVehicleDirectory);
+    std::filesystem::copy_file(path, otherVehicleDirectory / path.filename());
+    std::filesystem::copy_file(generatedLuaPath(path),
+                               generatedLuaPath(otherVehicleDirectory / path.filename()));
     const auto probeFontPath = root / "Fonts" / "probe.oft";
     const auto fontDirectoryTime = std::filesystem::last_write_time(root / "Fonts");
     int fontTimestampOffset = 60;
@@ -156,6 +161,11 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         if (!setScriptBackend(backend)) {
             return false;
         }
+        const bool verifyLifetime = std::string(backend) == "lua";
+        if (verifyLifetime && !rewriteProbeFont(2, 4, 1)) {
+            std::cerr << "could not edit the font between runtime lifetimes\n";
+            return false;
+        }
         VehicleConfig config;
         config.sourcePath = root / "drawing.bus";
         config.scripts.push_back(path.filename().string());
@@ -165,6 +175,10 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         runtime.configureScriptTextures({ModelScriptTexture{1, 8, 8, {}}});
         variables.setString("multiline_input", "A\r\nB");
         runtime.initialize();
+        if (verifyLifetime && !rewriteProbeFont(0, 2, 0)) {
+            std::cerr << "could not restore the font between runtime lifetimes\n";
+            return false;
+        }
         ScriptRuntime::ScriptTextureSnapshot snapshot;
         if (!runtime.valid() || !runtime.errors().empty() ||
             !runtime.copyScriptTexture(1, snapshot) || snapshot.width != 8 ||
@@ -197,15 +211,32 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         runtime.invokeEntryPoint("trigger_draw_font");
         ScriptRuntime::ScriptTextureSnapshot reloadedFontTexture;
         if (!runtime.copyScriptTexture(1, reloadedFontTexture) ||
-            reloadedFontTexture.pixels[3] != 128 || variables.get("text_width") != 5.0F ||
+            reloadedFontTexture.pixels[3] != 255 || variables.get("text_width") != 4.0F ||
             variables.get("multiline_width") != 2.0F) {
-            std::cerr << backend << ": existing script font index did not reload edited OFT data"
+            std::cerr << backend << ": cached script font changed after editing OFT data"
                       << " (alpha="
                       << (reloadedFontTexture.pixels.size() > 3
                               ? static_cast<int>(reloadedFontTexture.pixels[3])
                               : -1)
                       << ", text_width=" << variables.get("text_width") << ")\n";
             return false;
+        }
+        for (const auto& source : {root / "drawing.bus", otherVehicleDirectory / "drawing.bus"}) {
+            VehicleConfig secondConfig = config;
+            secondConfig.sourcePath = source;
+            Variables secondVariables(ScriptObjectKind::Vehicle);
+            SimulationState secondSimulation;
+            ScriptRuntime secondRuntime(secondConfig, secondVariables, secondSimulation);
+            secondRuntime.configureScriptTextures({ModelScriptTexture{1, 8, 8, {}}});
+            secondVariables.setString("multiline_input", "A\r\nB");
+            secondRuntime.initialize();
+            if (!secondRuntime.valid() || !secondRuntime.errors().empty() ||
+                secondVariables.get("text_width") != 4.0F ||
+                !secondRuntime.copyScriptTexture(1, reloadedFontTexture) ||
+                reloadedFontTexture.pixels[3] != 255) {
+                std::cerr << backend << ": another runtime did not share the cached font\n";
+                return false;
+            }
         }
         if (!rewriteProbeFont(0, 2, 0)) {
             std::cerr << backend << ": could not restore the OFT font after refresh check\n";
@@ -215,7 +246,7 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         if (!runtime.copyScriptTexture(1, reloadedFontTexture) ||
             reloadedFontTexture.pixels[3] != 255 || variables.get("text_width") != 4.0F ||
             variables.get("multiline_width") != 2.0F) {
-            std::cerr << backend << ": existing script font index did not reload restored OFT data\n";
+            std::cerr << backend << ": cached script font changed after restoring OFT data\n";
             return false;
         }
         for (int reset = 0; reset < 6; ++reset) {
@@ -229,6 +260,38 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
                 return false;
             }
         }
+    }
+    const auto distinctDirectory = root / "distinct_vehicle";
+    const auto distinctFonts = distinctDirectory / "Fonts";
+    std::filesystem::create_directories(distinctFonts);
+    std::filesystem::copy_file(path, distinctDirectory / path.filename());
+    std::ofstream distinctFont(distinctFonts / "probe.oft");
+    distinctFont << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
+                    "[char]\nA\n0\n3\n0\n[char]\nB\n2\n4\n0\n"
+                    "[char]\n?\n2\n4\n0\n";
+    distinctFont.close();
+    if (!distinctFont) {
+        std::cerr << "could not create the distinct font definition\n";
+        return false;
+    }
+    writeTestBmp(distinctFonts / "probe.bmp", 4, 2, {200, 200, 80, 80, 200, 200, 80, 80});
+    writeTestBmp(distinctFonts / "probe_alpha.bmp", 4, 2,
+                 {255, 255, 128, 128, 255, 255, 128, 128});
+    if (!setScriptBackend("native")) {
+        return false;
+    }
+    VehicleConfig distinctConfig;
+    distinctConfig.sourcePath = distinctDirectory / "drawing.bus";
+    distinctConfig.scripts.push_back(path.filename().string());
+    Variables distinctVariables(ScriptObjectKind::Vehicle);
+    SimulationState distinctSimulation;
+    ScriptRuntime distinctRuntime(distinctConfig, distinctVariables, distinctSimulation);
+    distinctRuntime.configureScriptTextures({ModelScriptTexture{1, 8, 8, {}}});
+    distinctVariables.setString("multiline_input", "A\r\nB");
+    distinctRuntime.initialize();
+    if (!distinctRuntime.valid() || distinctVariables.get("text_width") != 5.0F) {
+        std::cerr << "same-named font in a different directory was incorrectly shared\n";
+        return false;
     }
     return setScriptBackend(nullptr);
 }
@@ -879,7 +942,7 @@ int main() {
          ModelTextTexture{
              1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
          ModelTextTexture{
-             2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
+             2, true, {"centerdisplay", "pRoBeFoNt", "6", "8", "1", "10", "20", "30", "0"}},
          ModelTextTexture{
              3, true, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "1", "1", "1", "0"}},
          ModelTextTexture{
@@ -912,7 +975,7 @@ int main() {
          ModelTextTexture{
              17, true, {"fallbackdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "1", "0"}},
          ModelTextTexture{
-             18, true, {"fallbackunicodedisplay", "MissingFont", "24", "20", "0", "255", "255", "255", "1", "0"}},
+             18, true, {"fallbackunicodedisplay", "mIsSiNgFoNt", "24", "20", "0", "255", "255", "255", "1", "0"}},
          ModelTextTexture{
              19, true, {"fallbackpunctuationdisplay", "MissingFont", "40", "10", "0", "255", "255", "255", "0", "0"}},
          ModelTextTexture{
@@ -1683,10 +1746,13 @@ int main() {
     variables.set("refresh_strings", 1.0);
     runtime.update(false);
     ScriptRuntime::ScriptTextureSnapshot reloadedDigits;
+    ScriptRuntime::ScriptTextureSnapshot reloadedSharedFont;
     if (!runtime.copyTextTexture(1, reloadedDigits) ||
-        reloadedDigits.revision <= digits.revision ||
-        reloadedDigits.pixels[(1U * 6U + 2U) * 4U + 3U] != 128) {
-        std::cerr << "unchanged text texture did not reload its edited OFT glyph\n";
+        !runtime.copyTextTexture(2, reloadedSharedFont) ||
+        reloadedDigits.revision != digits.revision ||
+        reloadedSharedFont.revision != centerTextTexture.revision ||
+        reloadedDigits.pixels != digits.pixels) {
+        std::cerr << "shared text textures changed after editing their cached OFT font\n";
         return 1;
     }
     const auto rewriteFontImage = [&](const std::filesystem::path& path,
@@ -1716,9 +1782,8 @@ int main() {
     variables.set("refresh_strings", 1.0);
     runtime.update(false);
     if (!runtime.copyTextTexture(1, reloadedDigits) ||
-        reloadedDigits.revision <= beforeAlphaReload ||
-        reloadedDigits.pixels[(1U * 6U + 2U) * 4U + 3U] != 64) {
-        std::cerr << "unchanged text texture did not reload its edited font alpha image\n";
+        reloadedDigits.revision != beforeAlphaReload || reloadedDigits.pixels != digits.pixels) {
+        std::cerr << "cached text texture changed after editing its font alpha image\n";
         return 1;
     }
     ScriptRuntime::ScriptTextureSnapshot reloadedColorText;
@@ -1729,11 +1794,77 @@ int main() {
     variables.set("refresh_strings", 1.0);
     runtime.update(false);
     if (!runtime.copyTextTexture(2, reloadedColorText) ||
-        reloadedColorText.pixels[centeredFontPixel] != 200 ||
-        reloadedColorText.pixels[centeredFontPixel + 1] != 200 ||
-        reloadedColorText.pixels[centeredFontPixel + 2] != 200 ||
-        reloadedColorText.pixels[centeredFontPixel + 3] != 255) {
-        std::cerr << "unchanged text texture did not reload its edited font color image\n";
+        reloadedColorText.revision != centerTextTexture.revision ||
+        reloadedColorText.pixels != centerTextTexture.pixels) {
+        std::cerr << "cached text texture changed after editing its font color image\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot missingFirst;
+    ScriptRuntime::ScriptTextureSnapshot missingSecond;
+    if (!runtime.copyTextTexture(18, missingFirst) || !runtime.copyTextTexture(19, missingSecond)) {
+        std::cerr << "missing-font fallback textures were not available\n";
+        return 1;
+    }
+    std::ofstream lateFont(fonts / "late.oft");
+    lateFont << "[newfont]\nMissingFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
+                "[char]\n?\n0\n1\n0\n";
+    lateFont.close();
+    if (!lateFont) {
+        std::cerr << "could not create late font definition\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot loadedFirst;
+    ScriptRuntime::ScriptTextureSnapshot loadedSecond;
+    if (!runtime.copyTextTexture(18, loadedFirst) ||
+        !runtime.copyTextTexture(19, loadedSecond) ||
+        loadedFirst.revision <= missingFirst.revision ||
+        loadedSecond.revision <= missingSecond.revision) {
+        std::cerr << "newly available font was not applied to all shared text textures\n";
+        return 1;
+    }
+    std::ofstream retryFont(fonts / "retry.oft");
+    retryFont << "[newfont]\nRetryFont\nretry.bmp\nretry_alpha.bmp\n2\n0\n"
+                 "[char]\nA\n0\n1\n0\n";
+    retryFont.close();
+    if (!retryFont) {
+        std::cerr << "could not create the retry font definition\n";
+        return 1;
+    }
+    runtime.configureTextTextures(
+        {ModelTextTexture{0, false, {"retrydisplay", "RetryFont", "6", "4", "0", "255", "255", "255"}}});
+    variables.setString("retrydisplay", "A");
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot failedFont;
+    if (!runtime.copyTextTexture(0, failedFont)) {
+        std::cerr << "font failure fallback texture was not available\n";
+        return 1;
+    }
+    std::ofstream corruptImage(fonts / "retry.bmp", std::ios::binary);
+    corruptImage << "not a bitmap";
+    corruptImage.close();
+    if (!corruptImage) {
+        std::cerr << "could not create the invalid font image\n";
+        return 1;
+    }
+    writeTestBmp(fonts / "retry_alpha.bmp", 1, 2, {255, 255});
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot corruptFont;
+    if (!runtime.copyTextTexture(0, corruptFont) || corruptFont.revision != failedFont.revision) {
+        std::cerr << "invalid font image was cached as a valid font\n";
+        return 1;
+    }
+    writeTestBmp(fonts / "retry.bmp", 1, 2, {255, 255});
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot recoveredFont;
+    if (!runtime.copyTextTexture(0, recoveredFont) ||
+        recoveredFont.revision <= failedFont.revision ||
+        recoveredFont.pixels == failedFont.pixels) {
+        std::cerr << "font load failure was not retried after its images appeared\n";
         return 1;
     }
     openbus::probe::removeProbeDirectory(root);

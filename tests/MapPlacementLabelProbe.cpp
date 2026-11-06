@@ -192,7 +192,7 @@ int main() {
     std::filesystem::remove(fonts / "added.oft");
     std::filesystem::last_write_time(fonts, std::filesystem::file_time_type::clock::now() +
                                                 std::chrono::seconds(20));
-    if (!checkFontPixels(configuration, sharedState, "AddedFont", 15)) {
+    if (!checkFontPixels(configuration, sharedState, "AddedFont", 6)) {
         return 1;
     }
 
@@ -220,7 +220,7 @@ int main() {
         return 1;
     }
     if (!checkFontPixels(configuration, sharedState, "RenamedFont", 6) ||
-        !checkFontPixels(configuration, sharedState, "DelayedFont", 15)) {
+        !checkFontPixels(configuration, sharedState, "DelayedFont", 6)) {
         return 1;
     }
 

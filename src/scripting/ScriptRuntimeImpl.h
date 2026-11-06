@@ -132,15 +132,6 @@ struct ScriptRuntime::Impl {
     struct FontAsset {
         int height = 0;
         int horizontalGap = 0;
-        std::filesystem::path sourcePath;
-        std::filesystem::file_time_type sourceModified;
-        std::uintmax_t sourceSize = 0;
-        std::filesystem::path colorImagePath;
-        std::filesystem::file_time_type colorImageModified;
-        std::uintmax_t colorImageSize = 0;
-        std::filesystem::path alphaImagePath;
-        std::filesystem::file_time_type alphaImageModified;
-        std::uintmax_t alphaImageSize = 0;
         std::array<FontGlyph, 256> glyphs = {};
         openbus::rendering::Image colorImage;
         openbus::rendering::Image alphaImage;

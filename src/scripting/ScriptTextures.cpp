@@ -733,30 +733,28 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
     const auto cached = fonts.find(name);
     if (cached != fonts.end()) {
         if (cached->second != nullptr) {
-            const auto stampMatches = [](const std::filesystem::path& path,
-                                         std::filesystem::file_time_type modified,
-                                         std::uintmax_t size, std::error_code& error) {
-                FontFileStamp currentStamp;
-                return readFontFileStamp(path, currentStamp, error) &&
-                       currentStamp.modified == modified && currentStamp.size == size;
-            };
-            std::error_code stampError;
-            if (stampMatches(cached->second->sourcePath, cached->second->sourceModified,
-                             cached->second->sourceSize, stampError) &&
-                stampMatches(cached->second->colorImagePath, cached->second->colorImageModified,
-                             cached->second->colorImageSize, stampError) &&
-                stampMatches(cached->second->alphaImagePath, cached->second->alphaImageModified,
-                             cached->second->alphaImageSize, stampError)) {
-                return cached->second;
-            }
-            if (stampError && stampError != std::errc::no_such_file_or_directory &&
-                stampError != std::errc::not_a_directory) {
-                scriptRuntimeLogger.Warning("Could not validate cached font definition '" +
-                                            cached->second->sourcePath.string() +
-                                            "': " + stampError.message());
-            }
+            return cached->second;
         }
         fonts.erase(cached);
+    }
+    struct ProcessFontCache {
+        std::mutex mutex;
+        std::unordered_map<std::string, std::shared_ptr<FontAsset>> byRequest;
+        std::unordered_map<std::string, std::shared_ptr<FontAsset>> byFile;
+    };
+    static ProcessFontCache processFonts;
+    const auto cacheKey = [&name](const std::filesystem::path& path) {
+        std::string key = normalizedFontDirectoryKey(path);
+        key.push_back('\0');
+        key += name;
+        return key;
+    };
+    const std::string requestKey = cacheKey(configuration.sourcePath.parent_path());
+    std::lock_guard<std::mutex> cacheLock(processFonts.mutex);
+    const auto sharedRequest = processFonts.byRequest.find(requestKey);
+    if (sharedRequest != processFonts.byRequest.end()) {
+        fonts.emplace(name, sharedRequest->second);
+        return sharedRequest->second;
     }
     const auto trimFontLine = [](const std::string& value) {
         const std::size_t first = value.find_first_not_of(" \t\r\n");
@@ -789,18 +787,15 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
         fonts.emplace(name, nullptr);
         return nullptr;
     }
-
-    FontFileStamp sourceStamp;
-    std::error_code sourceStampError;
-    if (!readFontFileStamp(fontPath, sourceStamp, sourceStampError)) {
-        scriptRuntimeLogger.Warning("Could not read font definition metadata '" +
-                                    fontPath.string() + "': " + sourceStampError.message());
-        return nullptr;
+    const std::string fileKey = cacheKey(fontPath);
+    const auto sharedFile = processFonts.byFile.find(fileKey);
+    if (sharedFile != processFonts.byFile.end()) {
+        processFonts.byRequest.emplace(requestKey, sharedFile->second);
+        fonts.emplace(name, sharedFile->second);
+        return sharedFile->second;
     }
+
     auto font = std::make_shared<FontAsset>();
-    font->sourcePath = fontPath;
-    font->sourceModified = sourceStamp.modified;
-    font->sourceSize = sourceStamp.size;
     std::vector<std::string> lines;
     bool readSucceeded = false;
     {
@@ -810,6 +805,7 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
     if (!readSucceeded) {
         return nullptr;
     }
+    bool fontImagesLoaded = false;
     for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
         if (lines[lineIndex] != "[newfont]" && lines[lineIndex] != "[char]") {
             if (lines[lineIndex].size() > 2 && lines[lineIndex].front() == '[' &&
@@ -830,6 +826,7 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
                                         lines.begin() + lineIndex + valueCount + 1);
         lineIndex += valueCount;
         if (isNewFont) {
+            fontImagesLoaded = false;
             int height = 0;
             int horizontalGap = 0;
             if (!parseInteger(values[3], height) || !parseInteger(values[4], horizontalGap) ||
@@ -838,44 +835,43 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             }
             font->height = height;
             font->horizontalGap = horizontalGap;
-            font->colorImagePath = fontPath.parent_path() / trimFontLine(values[1]);
-            font->alphaImagePath = fontPath.parent_path() / trimFontLine(values[2]);
+            const auto colorImagePath = fontPath.parent_path() / trimFontLine(values[1]);
+            const auto alphaImagePath = fontPath.parent_path() / trimFontLine(values[2]);
             FontFileStamp colorStamp;
             FontFileStamp alphaStamp;
             std::error_code imageStampError;
-            if (!readFontFileStamp(font->colorImagePath, colorStamp, imageStampError)) {
+            if (!readFontFileStamp(colorImagePath, colorStamp, imageStampError)) {
                 scriptRuntimeLogger.Warning("Could not read font color image metadata '" +
-                                            font->colorImagePath.string() +
+                                            colorImagePath.string() +
                                             "': " + imageStampError.message());
                 continue;
             }
-            if (!readFontFileStamp(font->alphaImagePath, alphaStamp, imageStampError)) {
+            if (!readFontFileStamp(alphaImagePath, alphaStamp, imageStampError)) {
                 scriptRuntimeLogger.Warning("Could not read font alpha image metadata '" +
-                                            font->alphaImagePath.string() +
+                                            alphaImagePath.string() +
                                             "': " + imageStampError.message());
                 continue;
             }
-            font->colorImageModified = colorStamp.modified;
-            font->colorImageSize = colorStamp.size;
-            font->alphaImageModified = alphaStamp.modified;
-            font->alphaImageSize = alphaStamp.size;
             bool colorLoaded = false;
             bool alphaLoaded = false;
             {
                 openbus::rendering::TraceScope colorTrace("script",
                                                           "ScriptRuntime.loadFont.colorImage");
-                colorLoaded = openbus::rendering::TextureLoader::readImage(font->colorImagePath,
-                                                                           font->colorImage);
+                colorLoaded =
+                    openbus::rendering::TextureLoader::readImage(colorImagePath, font->colorImage);
             }
             {
                 openbus::rendering::TraceScope alphaTrace("script",
                                                           "ScriptRuntime.loadFont.alphaImage");
-                alphaLoaded = openbus::rendering::TextureLoader::readImage(font->alphaImagePath,
-                                                                           font->alphaImage);
+                alphaLoaded =
+                    openbus::rendering::TextureLoader::readImage(alphaImagePath, font->alphaImage);
             }
             if (!colorLoaded || !alphaLoaded) {
+                scriptRuntimeLogger.Warning("Could not decode font images for '" +
+                                            fontPath.string() + "'");
                 continue;
             }
+            fontImagesLoaded = true;
         } else {
             int left = 0;
             int right = 0;
@@ -902,10 +898,13 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             font->glyphs[static_cast<std::size_t>(code)] = {left, right, top, true};
         }
     }
-    if (font->height <= 0 || font->colorImage.width <= 0 || font->alphaImage.width <= 0) {
+    if (!fontImagesLoaded || font->height <= 0 || font->colorImage.width <= 0 ||
+        font->alphaImage.width <= 0) {
         fonts.emplace(name, nullptr);
         return nullptr;
     }
+    processFonts.byFile.emplace(fileKey, font);
+    processFonts.byRequest.emplace(requestKey, font);
     fonts.emplace(name, font);
     return font;
 }
@@ -1274,6 +1273,7 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
     }
     const std::string traceName = "updateTextTextures: " + vehicleName;
     openbus::rendering::TraceScope trace("script", traceName.c_str());
+    std::unordered_map<std::string, std::shared_ptr<FontAsset>> refreshFonts;
     for (auto& entry : textTextureDefinitions) {
         const int index = entry.first;
         const std::string entryTraceName = "updateTextTextures: index " + std::to_string(index);
@@ -1291,11 +1291,12 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
             continue;
         }
         const std::string value = localState.getString(definition.variable);
-        std::shared_ptr<FontAsset> font;
-        {
+        const auto [fontEntry, inserted] = refreshFonts.try_emplace(lower(definition.font));
+        if (inserted) {
             openbus::rendering::TraceScope fontTrace("script", "updateTextTextures.loadFont");
-            font = loadFont(definition.font);
+            fontEntry->second = loadFont(definition.font);
         }
+        const std::shared_ptr<FontAsset>& font = fontEntry->second;
         const bool fontChanged = definition.renderedFont != font;
         if (definition.hasRenderedValue && value == definition.lastValue && !fontChanged) {
             continue;
