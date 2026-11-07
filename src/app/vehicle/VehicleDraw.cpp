@@ -80,76 +80,84 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     const std::array<double, 3>& color = overrideColor == nullptr ? batch.color : *overrideColor;
     TraceScope phase("render", "Vehicle::drawBatch.prepareAndSubmit");
     openbus::rendering::ModelMaterial material;
-    for (std::size_t index = 0; index < 3; ++index) {
-        material.specularColor[index] = static_cast<float>(batch.specularColor[index]);
-        material.emissionColor[index] = static_cast<float>(batch.emissionColor[index]);
-    }
-    material.specularPower = static_cast<float>(batch.specularPower);
-    material.texture = materialBatch ? 0 : batch.texture;
-    material.textureArray = materialBatch ? false : batch.textureArray;
-    material.textured = materialBatch ? false : batch.textured && !forceUntextured;
-    material.textureAlphaOnly = batch.textureAlphaOnly;
-    material.textureWrapS = batch.textureWrapS;
-    material.textureWrapT = batch.textureWrapT;
-    material.lightmap = batch.lightmap.texture;
-    material.nightmap = batch.nightmap.texture;
-    material.transmap = batch.transmap.texture;
-    material.bumpmap = batch.bumpmap.texture;
-    material.freeTexture = batch.freeTexture;
-    // Text textures use their own shader sampler. They share the dynamic
-    // upload storage with script/free textures, but must not be left only
-    // in the free-texture sampler or the shader will never display them.
-    material.textTexture = batch.textTextureIndex >= 0 ? batch.freeTexture : 0;
-    material.useLightmap = !forceUntextured && material.lightmap != 0;
-    material.useNightmap = !forceUntextured && material.nightmap != 0;
-    material.useTransmap = !forceUntextured && material.transmap != 0;
-    material.useBumpmap = !forceUntextured && material.bumpmap != 0;
-    material.useFreeTexture =
-        !forceUntextured && batch.textTextureIndex < 0 && material.freeTexture != 0;
-    material.useTextTexture =
-        !forceUntextured && batch.textTextureIndex >= 0 && material.textTexture != 0;
-    if (!forceUntextured) {
-        applyInteriorLightMaterial(batch, material);
-    }
-    material.lightmapStrength = static_cast<float>(
-        batch.lightmapStrengthVariable.empty()
-            ? 1.0F
-            : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0F, 1.0F));
-    // Script-selected emissive items and [visible]-switched lamp meshes illuminate
-    // even in daytime. Ordinary base nightmaps still follow environmental lighting.
-    const float nightlight =
-        batch.selectedMaterialItem || batch.visibilitySwitched
-            ? 1.0F
-            : std::max(variables.get("nightlighta"), 1.0F - variables.get("envir_brightness"));
-    material.nightmapStrength = std::clamp(nightlight, 0.0F, 1.0F);
-    material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
-    material.texcoordOffsetX = static_cast<float>(
-        batch.texcoordTransXVariable.empty() ? 0.0 : variables.get(batch.texcoordTransXVariable));
-    material.texcoordOffsetY = static_cast<float>(
-        batch.texcoordTransYVariable.empty() ? 0.0 : variables.get(batch.texcoordTransYVariable));
-    if (!openbus::rendering::reflectionPassActive() && !materialBatch) {
-        const int reflectionIndex = openbus::rendering::reflectionTextureIndex(
-            batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
-        const unsigned int reflectionTexture =
-            openbus::rendering::reflectionTextureForIndex(reflectionIndex);
-        if (reflectionTexture != 0) {
-            material.texture = reflectionTexture;
-            material.textureArray = false;
-            material.textured = true;
-            material.flipTextureY = true;
+    {
+        TraceScope prepare("render", "Vehicle::drawBatch.prepareMaterial");
+        for (std::size_t index = 0; index < 3; ++index) {
+            material.specularColor[index] = static_cast<float>(batch.specularColor[index]);
+            material.emissionColor[index] = static_cast<float>(batch.emissionColor[index]);
+        }
+        material.specularPower = static_cast<float>(batch.specularPower);
+        material.texture = materialBatch ? 0 : batch.texture;
+        material.textureArray = materialBatch ? false : batch.textureArray;
+        material.textured = materialBatch ? false : batch.textured && !forceUntextured;
+        material.textureAlphaOnly = batch.textureAlphaOnly;
+        material.textureWrapS = batch.textureWrapS;
+        material.textureWrapT = batch.textureWrapT;
+        material.lightmap = batch.lightmap.texture;
+        material.nightmap = batch.nightmap.texture;
+        material.transmap = batch.transmap.texture;
+        material.bumpmap = batch.bumpmap.texture;
+        material.freeTexture = batch.freeTexture;
+        // Text textures use their own shader sampler. They share the dynamic
+        // upload storage with script/free textures, but must not be left only
+        // in the free-texture sampler or the shader will never display them.
+        material.textTexture = batch.textTextureIndex >= 0 ? batch.freeTexture : 0;
+        material.useLightmap = !forceUntextured && material.lightmap != 0;
+        material.useNightmap = !forceUntextured && material.nightmap != 0;
+        material.useTransmap = !forceUntextured && material.transmap != 0;
+        material.useBumpmap = !forceUntextured && material.bumpmap != 0;
+        material.useFreeTexture =
+            !forceUntextured && batch.textTextureIndex < 0 && material.freeTexture != 0;
+        material.useTextTexture =
+            !forceUntextured && batch.textTextureIndex >= 0 && material.textTexture != 0;
+        if (!forceUntextured) {
+            applyInteriorLightMaterial(batch, material);
+        }
+        material.lightmapStrength = static_cast<float>(
+            batch.lightmapStrengthVariable.empty()
+                ? 1.0F
+                : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0F, 1.0F));
+        // Script-selected emissive items and [visible]-switched lamp meshes illuminate
+        // even in daytime. Ordinary base nightmaps still follow environmental lighting.
+        const float nightlight =
+            batch.selectedMaterialItem || batch.visibilitySwitched
+                ? 1.0F
+                : std::max(variables.get("nightlighta"), 1.0F - variables.get("envir_brightness"));
+        material.nightmapStrength = std::clamp(nightlight, 0.0F, 1.0F);
+        material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
+        material.texcoordOffsetX = static_cast<float>(
+            batch.texcoordTransXVariable.empty() ? 0.0
+                                                 : variables.get(batch.texcoordTransXVariable));
+        material.texcoordOffsetY = static_cast<float>(
+            batch.texcoordTransYVariable.empty() ? 0.0
+                                                 : variables.get(batch.texcoordTransYVariable));
+        if (!openbus::rendering::reflectionPassActive() && !materialBatch) {
+            const int reflectionIndex = openbus::rendering::reflectionTextureIndex(
+                batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
+            const unsigned int reflectionTexture =
+                openbus::rendering::reflectionTextureForIndex(reflectionIndex);
+            if (reflectionTexture != 0) {
+                material.texture = reflectionTexture;
+                material.textureArray = false;
+                material.textured = true;
+                material.flipTextureY = true;
+            }
         }
     }
-    if (materialBatch) {
-        drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
-                          *materialTextureIds, batch.materialTextureFlips, transparentIndexBuffer,
-                          visibilityFade);
-    } else if (transparentIndexBuffer != 0) {
-        openbus::rendering::drawIndexedModelBatch(
-            batch.buffer, transparentIndexBuffer, batch.vertexCount, material, color, alpha,
-            forceUntextured ? 0 : alphaMode, true, visibilityFade);
-    } else {
-        drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
-                       forceUntextured ? 0 : alphaMode, true, std::nullopt, visibilityFade);
+    {
+        TraceScope submit("render", "Vehicle::drawBatch.submit");
+        if (materialBatch) {
+            drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
+                              *materialTextureIds, batch.materialTextureFlips,
+                              transparentIndexBuffer, visibilityFade);
+        } else if (transparentIndexBuffer != 0) {
+            openbus::rendering::drawIndexedModelBatch(
+                batch.buffer, transparentIndexBuffer, batch.vertexCount, material, color, alpha,
+                forceUntextured ? 0 : alphaMode, true, visibilityFade);
+        } else {
+            drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
+                           forceUntextured ? 0 : alphaMode, true, std::nullopt, visibilityFade);
+        }
     }
     if (noZcheck) {
         glEnable(GL_DEPTH_TEST);

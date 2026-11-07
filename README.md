@@ -1223,10 +1223,43 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Profiling retains at most `1,000,000` events by default. Set
   `OPENBUS_TRACE_MAX_EVENTS=250000` or another positive value to lower the
   memory ceiling. Trace events are flushed incrementally to the JSON file while
-  profiling runs, rather than being held until shutdown.
+  profiling runs, rather than being held until shutdown. The profiling helpers
+  default to `10,000,000` events but preserve an explicitly set limit.
 - Trace scopes shorter than `1` microsecond are omitted by default. Set
   `OPENBUS_TRACE_MIN_US=5` to omit scopes shorter than five microseconds; values
-  below `1` are treated as `1`.
+  below `1` are treated as `1`. The profiling helpers default to `1` microsecond
+  and preserve an explicitly set threshold. This filters saved events but does
+  not skip scope timer reads, so it reduces trace volume rather than the
+  frequency of profiling work.
+- Set `OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES=5` to record every fifth main frame
+  and its nested main-thread scopes. This reduces timer and event overhead in
+  high-frame-rate captures; the default `1` records every frame. When possible,
+  choose a stride coprime with periodic rendering intervals (for example, `5`
+  with a four-frame reflection interval); shared factors can cause samples to
+  repeatedly hit only some work phases. Scopes on worker threads and
+  interval-based profile summaries are not sampled. Because this is a frame
+  stride, samples per second still rise with frame rate; increase the stride
+  roughly in proportion to FPS to keep a similar sampling rate over time.
+  Rendering benchmarks intentionally force CPU trace sampling to every frame
+  for comparable frame-time percentiles. Raw trace files include an
+  `openbusTraceConfig` object with the main-thread frame stride, minimum scope
+  duration, and event cap used for the capture.
+- Set `OPENBUS_GPU_TIMING=1` to enable asynchronous OpenGL timer queries for
+  main-view and reflection rendering. Results are polled only after OpenGL
+  reports them available, then logged as two-second average/maximum summaries;
+  a full query ring drops new samples rather than stalling. Reflection samples
+  cover each target's clear and draw, while the main-view sample starts after
+  reflection rendering and includes subsequent main-view draws and overlays.
+  Set `OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES=5` to sample fewer frames in
+  high-FPS profiling; this setting is independent of CPU trace sampling. As
+  with CPU tracing, increase the stride roughly with FPS to keep a similar
+  samples-per-second rate.
+  Apply the same coprime-stride guidance to periodic reflection refreshes. The
+  rendering benchmark inherits both variables from its launch environment and,
+  when enabled, exports each logged interval to
+  `render_benchmark_gpu_timing.csv`. For benchmark runs, use `--gpu-timing` or
+  `--gpu-timing-sample-every-n-frames 5`; the latter also enables timing and
+  overrides the inherited GPU sample stride.
 - Set `OPENBUS_TRACE_TRAFFIC_DETAIL=1` while tracing to split individual traffic
   lookahead samples into curve/speed-limit and clearance scopes. This can
   produce many events and add profiling overhead; leave it unset for normal
@@ -1246,7 +1279,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   listener and moving-loop velocity estimates. Velocities are reset after long
   frame gaps and capped to avoid pitch spikes on camera/position teleports.
 - Model geometry is uploaded to OpenGL vertex buffer objects (VBOs) and drawn
-  with shader-backed `glDrawArrays` calls in an OpenGL 3.3 core profile.
+  with shader-backed `glDrawArrays` calls using GLSL 3.30 core shaders. The
+  application requests an OpenGL 4.3 core context, falling back to 3.3 core.
 - Window and door glass remains material-driven in the VBO path; the temporary
   flat glass fallback is no longer used for normal model materials.
 - Normal MAN DL05 wheel meshes are removed from the static model pass and
@@ -1419,6 +1453,28 @@ actor movement includes following and obstacle projection, route lookahead,
 junction admission, swept movement, and reservations. Use these nested spans in
 Perfetto to find which part dominates vehicle movement time.
 
+Vehicle batch tracing separates `Vehicle::drawBatch.prepareAndSubmit` into
+`Vehicle::drawBatch.prepareMaterial` and `Vehicle::drawBatch.submit`. These are
+high-volume scopes: use them in a short targeted capture, and raise
+`OPENBUS_TRACE_MIN_US` to reduce recorded short events when a broad overview is
+more useful. This threshold filters saved events but does not skip the timer
+reads at scope entry and exit.
+
+`RenderPrimitives::drawGround.roadFeatureMeshBuild` separates road-feature CPU
+geometry generation from surface and line draws. The existing
+`CoreRenderer::drawPrimitives.upload` scopes appear within those draw spans,
+allowing the streamed buffer uploads to be compared with the rebuild cost.
+These scopes run with the rendered ground passes; capture them briefly when
+investigating road features.
+
+Reflection tracing has separate setup, per-target visibility/resize/clear/draw,
+and restore spans. The viewport comes from the app-owned framebuffer dimensions,
+so this path does not query `GL_VIEWPORT`. To reduce mirror work and its related
+per-target trace events at higher frame rates, increase
+`OPENBUS_REFLECTION_INTERVAL` or set `OPENBUS_REFLECTION_MAX_FPS`; unlike trace
+sampling, this also makes mirror images update less often. The outer
+`ReflectionRenderer::render` scope still occurs each main frame.
+
 AI traffic uses moving occupancy rather than fixed-distance blocks: following
 targets account for leader speed, braking distance, and time headway, while
 rolling junction claims and predicted crossing reservations protect merges and
@@ -1505,6 +1561,25 @@ also included in `render_benchmark_runs.csv`. Percentiles use linear
 interpolation over the sorted frame-time samples. Skipped runs remain in the run
 and frame-time summary files with a status and reason but no timing metrics. Use
 `--require-exact-resolution` to return a failure status if any run is clamped.
+Pass `--finish-before-swap` for a separate diagnostic run: it calls `glFinish`
+before every swap, so the trace separates queued-GPU completion wait from CPU
+swap/presentation wait. This forces synchronization and changes normal pacing;
+it is not a GPU timer query or a measure of per-pass GPU execution. Benchmark
+runs always record every main frame even if
+`OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES` is set in the parent environment. The run
+and frame-time CSVs include `FinishBeforeSwap` so diagnostic runs remain
+distinguishable.
+When `OPENBUS_GPU_TIMING=1` is set, `render_benchmark_gpu_timing.csv` contains
+one row per logged GPU timing interval, with separate main-view and reflection
+sample counts, average/maximum durations, and dropped-query counts. Run, scope,
+frame, and frame-time CSVs record the GPU timing status and sample stride.
+`--gpu-timing` enables timer queries; `--gpu-timing-sample-every-n-frames N`
+also enables them and samples every N main frames (1-10,000), independently of
+the full-frame CPU trace.
+Use `--reflection-interval N`, `--texture-scale 0.5`, and
+`--no-material-batching` to compare those configurations; all settings are
+recorded in the run, frame-time, scope, and frame CSVs. Texture scale must be
+between `0.25` and `1.0`; material batching is enabled by default.
 The `*_frames.csv` file records one row per main-frame or selected
 renderer-scope event, including timestamp, inclusive duration, and self time.
 Nested calls stay separate so reflection draws are not accidentally summed into

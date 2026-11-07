@@ -114,6 +114,23 @@ int main() {
     glDisable(GL_BLEND);
     glDisable(GL_DITHER);
 
+    openbus::rendering::beginGpuTimingFrame();
+    {
+        openbus::rendering::GpuTimerScope gpuTimer(openbus::rendering::GpuTimingPass::MainView);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    {
+        openbus::rendering::GpuTimerScope gpuTimer(openbus::rendering::GpuTimingPass::Reflection);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    if (glGetError() != GL_NO_ERROR) {
+        std::cerr << "GPU timer query scope produced an OpenGL error\n";
+        shutdownCoreRenderer();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
     constexpr std::array<float, 39> vertices = {
         -2, -2, -1, 0, 0, 0, 0, 0, -1, 1, 1, 1, 1,
          2, -2, -1, 1, 0, 0, 0, 0, -1, 1, 1, 1, 1,
@@ -1689,6 +1706,12 @@ int main() {
     }
     if (glGetError() != GL_NO_ERROR) {
         std::cerr << "OpenGL material probe failed\n";
+        passed = false;
+    }
+    glFinish();
+    openbus::rendering::beginGpuTimingFrame();
+    if (glGetError() != GL_NO_ERROR) {
+        std::cerr << "GPU timer query polling produced an OpenGL error\n";
         passed = false;
     }
     const GLuint textures[] = {blue, white, mask, red, black, normalMap, inverseNormalMap,

@@ -22,7 +22,7 @@ class TraceSummaryTests(unittest.TestCase):
             "tid": thread,
         }
 
-    def test_self_time_subtracts_the_union_of_overlapping_children(self):
+    def test_trace_metadata_does_not_change_scope_summary(self):
         events = [
             self.make_event("Benchmark.measure", "benchmark", 0, 600),
             self.make_event("Benchmark.phase.baseline", "benchmark", 10, 100),
@@ -37,7 +37,19 @@ class TraceSummaryTests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             trace_path = Path(directory) / "trace.json"
-            trace_path.write_text(json.dumps({"traceEvents": events}), encoding="utf-8")
+            trace_path.write_text(
+                json.dumps(
+                    {
+                        "traceEvents": events,
+                        "openbusTraceConfig": {
+                            "mainThreadFrameStride": 5,
+                            "minimumScopeDurationUs": 1,
+                            "maxEvents": 10000000,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             summary = benchmark_rendering.summarize_trace(
                 trace_path, "1920x1080", "1920x1080", 1
             )
@@ -94,6 +106,10 @@ class TraceSummaryTests(unittest.TestCase):
                     "512",
                     "--reflection-interval",
                     "3",
+                    "--texture-scale",
+                    "0.5",
+                    "--no-material-batching",
+                    "--finish-before-swap",
                     "--output-directory",
                     str(output),
                 ]
@@ -105,6 +121,10 @@ class TraceSummaryTests(unittest.TestCase):
                 )
                 self.assertEqual(kwargs["env"]["OPENBUS_REFLECTION_SIZE"], "512")
                 self.assertEqual(kwargs["env"]["OPENBUS_REFLECTION_INTERVAL"], "3")
+                self.assertEqual(kwargs["env"]["OPENBUS_TEXTURE_SCALE"], "0.5")
+                self.assertEqual(kwargs["env"]["OPENBUS_MATERIAL_BATCHING"], "0")
+                self.assertEqual(kwargs["env"]["OPENBUS_GL_FINISH_BEFORE_SWAP"], "1")
+                self.assertEqual(kwargs["env"]["OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES"], "1")
                 self.assertNotIn("OPENBUS_REFLECTION_MAX_FPS", kwargs["env"])
                 kwargs["stdout"].write(
                     "BENCHMARK_COMPLETE=1\n"
@@ -136,6 +156,106 @@ class TraceSummaryTests(unittest.TestCase):
             self.assertEqual(timing_rows[0]["AverageFrameTimeMs"], "")
             self.assertEqual(timing_rows[0]["P90FrameTimeMs"], "")
             self.assertEqual(timing_rows[0]["P95FrameTimeMs"], "")
+            self.assertEqual(timing_rows[0]["FinishBeforeSwap"], "True")
+            self.assertEqual(timing_rows[0]["TextureScale"], "0.5")
+            self.assertEqual(timing_rows[0]["MaterialBatching"], "False")
+            with (output / "render_benchmark_runs.csv").open(
+                newline="", encoding="utf-8-sig"
+            ) as result_file:
+                run_rows = list(csv.DictReader(result_file))
+            self.assertEqual(run_rows[0]["FinishBeforeSwap"], "True")
+            self.assertEqual(run_rows[0]["TextureScale"], "0.5")
+            self.assertEqual(run_rows[0]["MaterialBatching"], "False")
+
+    def test_completed_run_exports_gpu_timing_intervals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "build"
+            build.mkdir()
+            executable = build / "OpenBus.exe"
+            executable.touch()
+            cache = build / "CMakeCache.txt"
+            cache.write_text("OPENBUS_ENABLE_PERF_TRACE:BOOL=ON\n", encoding="utf-8")
+            output = root / "results"
+            args = benchmark_rendering.build_parser().parse_args(
+                [
+                    "--resolutions",
+                    "1280x720",
+                    "--runs",
+                    "1",
+                    "--warmup-frames",
+                    "0",
+                    "--phase-frames",
+                    "1",
+                    "--phase-repeats",
+                    "1",
+                    "--gpu-timing-sample-every-n-frames",
+                    "5",
+                    "--output-directory",
+                    str(output),
+                ]
+            )
+            events = [self.make_event("Benchmark.measure", "benchmark", 0, 500_000)]
+            for index, phase in enumerate(benchmark_rendering.PHASES):
+                phase_start = 100_000 * index + 10_000
+                events.append(
+                    self.make_event(
+                        f"Benchmark.phase.{phase}", "benchmark", phase_start, 80_000
+                    )
+                )
+                events.append(
+                    self.make_event("main", "frame", phase_start + 100, 16_000)
+                )
+
+            def fake_run(command, **kwargs):
+                self.assertEqual(kwargs["env"]["OPENBUS_GPU_TIMING"], "1")
+                self.assertEqual(
+                    kwargs["env"]["OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES"], "5"
+                )
+                kwargs["stdout"].write(
+                    "BENCHMARK_COMPLETE=1\n"
+                    "BENCHMARK_WINDOW=1280x720\n"
+                    "BENCHMARK_FRAMEBUFFER=1280x720\n"
+                    "BENCHMARK_PHASE_REPEATS=1\n"
+                    "BENCHMARK_READINESS_FRAMES=0\n"
+                    "BENCHMARK_CLICK_TARGET=found\n"
+                    "GPU timer queries enabled; sampling every 5 main frame(s)\n"
+                    "GPU_TIMING interval_s=2.000 "
+                    "main_view_samples=4 main_view_avg_ms=3.250 main_view_max_ms=5.000 "
+                    "main_view_dropped=1 reflection_samples=2 reflection_avg_ms=1.500 "
+                    "reflection_max_ms=2.000 reflection_dropped=0\n"
+                )
+                Path(kwargs["env"]["OPENBUS_TRACE_FILE"]).write_text(
+                    json.dumps({"traceEvents": events}), encoding="utf-8"
+                )
+                return benchmark_rendering.subprocess.CompletedProcess(command, 0)
+
+            with patch.object(benchmark_rendering, "EXECUTABLE", executable), patch.object(
+                benchmark_rendering, "CACHE_FILE", cache
+            ), patch.object(benchmark_rendering, "BUILD_DIR", build), patch.object(
+                benchmark_rendering.subprocess, "run", side_effect=fake_run
+            ), patch.dict(
+                benchmark_rendering.os.environ,
+                {
+                    "OPENBUS_GPU_TIMING": "0",
+                    "OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES": "9",
+                },
+            ):
+                self.assertEqual(benchmark_rendering.run_benchmark(args), 0)
+
+            with (output / "render_benchmark_gpu_timing.csv").open(
+                newline="", encoding="utf-8-sig"
+            ) as result_file:
+                gpu_rows = list(csv.DictReader(result_file))
+            self.assertEqual(len(gpu_rows), 1)
+            self.assertEqual(gpu_rows[0]["GpuTimingStatus"], "enabled")
+            self.assertEqual(gpu_rows[0]["GpuTimingSampleEveryNFrames"], "5")
+            self.assertEqual(gpu_rows[0]["MainViewSamples"], "4")
+            self.assertEqual(gpu_rows[0]["MainViewAverageMs"], "3.25")
+            self.assertEqual(gpu_rows[0]["MainViewDropped"], "1")
+            self.assertEqual(gpu_rows[0]["ReflectionSamples"], "2")
+            self.assertEqual(gpu_rows[0]["ReflectionMaxMs"], "2.0")
+            self.assertEqual(gpu_rows[0]["ReflectionDropped"], "0")
 
     def test_missing_phase_marker_is_reported(self):
         events = [self.make_event("Benchmark.measure", "benchmark", 0, 600)]
@@ -238,6 +358,88 @@ class TraceSummaryTests(unittest.TestCase):
         self.assertEqual(args.phase_repeats, 2)
         self.assertEqual(args.reflection_size, 1024)
         self.assertEqual(args.reflection_interval, 1)
+        self.assertFalse(args.finish_before_swap)
+        self.assertEqual(args.texture_scale, 1.0)
+        self.assertTrue(args.material_batching)
+        self.assertFalse(args.gpu_timing)
+        self.assertIsNone(args.gpu_timing_sample_every_n_frames)
+
+    def test_finish_before_swap_flag(self):
+        args = benchmark_rendering.build_parser().parse_args(["--finish-before-swap"])
+        self.assertTrue(args.finish_before_swap)
+
+    def test_gpu_timing_cli_options(self):
+        args = benchmark_rendering.build_parser().parse_args(
+            ["--gpu-timing", "--gpu-timing-sample-every-n-frames", "5"]
+        )
+        self.assertTrue(args.gpu_timing)
+        self.assertEqual(args.gpu_timing_sample_every_n_frames, 5)
+        with self.assertRaises(SystemExit):
+            benchmark_rendering.build_parser().parse_args(
+                ["--gpu-timing-sample-every-n-frames", "0"]
+            )
+
+    def test_gpu_timing_configuration_uses_the_initialized_sample_stride(self):
+        configuration = benchmark_rendering.gpu_timing_configuration(
+            "[INFO] Game GPU timer queries enabled; sampling every 5 main frame(s)",
+            {"OPENBUS_GPU_TIMING": "1"},
+        )
+        self.assertEqual(
+            configuration,
+            {
+                "GpuTimingStatus": "enabled",
+                "GpuTimingSampleEveryNFrames": 5,
+            },
+        )
+        self.assertEqual(
+            benchmark_rendering.gpu_timing_configuration("", {}),
+            {"GpuTimingStatus": "disabled", "GpuTimingSampleEveryNFrames": ""},
+        )
+
+    def test_gpu_timing_summary_parser_reads_samples_and_dropped_counts(self):
+        log_text = (
+            "[INFO] Game GPU_TIMING interval_s=2.000 "
+            "main_view_samples=4 main_view_avg_ms=3.250 main_view_max_ms=5.000 "
+            "main_view_dropped=1 reflection_samples=2 reflection_avg_ms=1.500 "
+            "reflection_max_ms=2.000 reflection_dropped=0\n"
+            "[INFO] Game GPU_TIMING interval_s=2.100 "
+            "main_view_samples=0 main_view_dropped=0 "
+            "reflection_samples=0 reflection_dropped=2\n"
+        )
+        summaries = benchmark_rendering.parse_gpu_timing_summaries(log_text)
+        self.assertEqual(
+            summaries,
+            [
+                {
+                    "IntervalSeconds": 2.0,
+                    "MainViewSamples": 4,
+                    "MainViewAverageMs": 3.25,
+                    "MainViewMaxMs": 5.0,
+                    "MainViewDropped": 1,
+                    "ReflectionSamples": 2,
+                    "ReflectionAverageMs": 1.5,
+                    "ReflectionMaxMs": 2.0,
+                    "ReflectionDropped": 0,
+                },
+                {
+                    "IntervalSeconds": 2.1,
+                    "MainViewSamples": 0,
+                    "MainViewAverageMs": "",
+                    "MainViewMaxMs": "",
+                    "MainViewDropped": 0,
+                    "ReflectionSamples": 0,
+                    "ReflectionAverageMs": "",
+                    "ReflectionMaxMs": "",
+                    "ReflectionDropped": 2,
+                },
+            ],
+        )
+
+    def test_gpu_timing_summary_parser_rejects_malformed_values(self):
+        with self.assertRaisesRegex(ValueError, "Malformed GPU timing summary"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                "GPU_TIMING interval_s=2.000 main_view_samples=broken"
+            )
 
 
 if __name__ == "__main__":

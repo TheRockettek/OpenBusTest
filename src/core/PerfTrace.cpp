@@ -77,11 +77,15 @@ struct TraceEvent {
     std::uint64_t sequence = 0;
 };
 
+thread_local bool skipMainFrameScopes = false;
+
 class PerfTraceState {
   public:
     PerfTraceState()
         : maxEvents(parseMaxEvents(openbus::getEnvironment("OPENBUS_TRACE_MAX_EVENTS"))),
           minDurationUs(parseMinDuration(openbus::getEnvironment("OPENBUS_TRACE_MIN_US"))),
+          sampleEveryNFrames(parseSampleEveryNFrames(
+              openbus::getEnvironment("OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES"))),
           start(std::chrono::steady_clock::now()) {
         events.reserve(std::min<std::size_t>(maxEvents, 8192));
         if (parseEnabledFlag(openbus::getEnvironment("OPENBUS_TRACE"))) {
@@ -91,6 +95,24 @@ class PerfTraceState {
 
     std::uint64_t recordingId() const {
         return activeRecordingId.load(std::memory_order_acquire);
+    }
+
+    bool shouldSampleMainFrame(std::uint64_t scopeRecordingId) const {
+        if (sampleEveryNFrames == 1) {
+            return true;
+        }
+        struct FrameSampleCounter {
+            std::uint64_t recordingId = 0;
+            std::uint64_t nextFrame = 0;
+        };
+        thread_local FrameSampleCounter counter;
+        if (counter.recordingId != scopeRecordingId) {
+            counter.recordingId = scopeRecordingId;
+            counter.nextFrame = 0;
+        }
+        const bool sample = counter.nextFrame == 0;
+        counter.nextFrame = (counter.nextFrame + 1) % sampleEveryNFrames;
+        return sample;
     }
 
     bool setRecording(bool recording) {
@@ -246,7 +268,12 @@ class PerfTraceState {
     void writeTraceFooter() {
         // Overwrite this footer with the next chunk so paused captures remain valid JSON.
         traceFooterPosition = traceOutput.tellp();
-        traceOutput << "\n  ],\n  \"displayTimeUnit\": \"ms\"\n}\n";
+        traceOutput << "\n  ],\n  \"displayTimeUnit\": \"ms\",\n"
+                    << "  \"openbusTraceConfig\": {\n"
+                    << "    \"mainThreadFrameStride\": " << sampleEveryNFrames << ",\n"
+                    << "    \"minimumScopeDurationUs\": " << minDurationUs << ",\n"
+                    << "    \"maxEvents\": " << maxEvents << "\n"
+                    << "  }\n}\n";
         traceOutput.flush();
         if (!traceOutput) {
             std::cerr << "Failed to write performance trace output: " << traceOutputPath.string()
@@ -290,10 +317,23 @@ class PerfTraceState {
         return std::max<std::int64_t>(1, parsed);
     }
 
+    static std::uint64_t parseSampleEveryNFrames(const char* value) {
+        if (value == nullptr || *value == '\0' || *value == '-') {
+            return 1;
+        }
+        char* end = nullptr;
+        const unsigned long long parsed = std::strtoull(value, &end, 10);
+        if (end == value || *end != '\0' || parsed == 0) {
+            return 1;
+        }
+        return static_cast<std::uint64_t>(parsed);
+    }
+
     std::atomic<std::uint64_t> activeRecordingId = 0;
     std::uint64_t nextRecordingId = 0;
     std::size_t maxEvents = 1000000;
     std::int64_t minDurationUs = 1;
+    std::uint64_t sampleEveryNFrames = 1;
     std::chrono::steady_clock::time_point start;
     std::mutex mutex;
     std::mutex controlMutex;
@@ -345,7 +385,14 @@ bool SetRecording(bool recording) {
 
 TraceScope::TraceScope(const char* category, const char* name)
     : category_(category), name_(name), recordingId_(perfTrace().recordingId()) {
-    if (recordingId_ != 0) {
+    isMainFrameRoot_ = category != nullptr && name != nullptr &&
+                       std::string_view(category) == "frame" && std::string_view(name) == "main";
+    if (isMainFrameRoot_) {
+        skipMainFrameScopes = recordingId_ != 0 && !perfTrace().shouldSampleMainFrame(recordingId_);
+    }
+    if (skipMainFrameScopes) {
+        recordingId_ = 0;
+    } else if (recordingId_ != 0) {
         startTimestampUs_ = perfTrace().nowUs();
     }
 }
@@ -358,6 +405,10 @@ void TraceScope::finish() {
     if (recordingId_ != 0) {
         perfTrace().pushDuration(category_, name_, startTimestampUs_, recordingId_);
         recordingId_ = 0;
+    }
+    if (isMainFrameRoot_) {
+        skipMainFrameScopes = false;
+        isMainFrameRoot_ = false;
     }
 }
 #endif

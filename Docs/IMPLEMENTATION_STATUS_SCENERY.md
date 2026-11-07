@@ -5,6 +5,9 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 ## Implemented subset
 
 - `[model]` external model CFG references and inline model records can feed static scenery batches. O3D and static text, binary, and MSZIP-compressed `.x` meshes are supported; nonzero `[LOD]` model parts are selected by distance using the same threshold mapping as vehicle models. Visual OMSI parity still needs validation.
+- On Windows, `.sco` configuration paths that differ only by letter case share
+  one scenery-asset cache entry. The first normalized path remains its canonical
+  cache key; metadata caching retains its exact normalized-path identity.
 - `[tree]` produces a crossed-textured-plane preview, not the authored helper mesh/tree behavior.
 - Model geometry, including terrain, is rendered one-sided by default; terrain triangle indices are wound to match the renderer's front-face convention. SCO `[helparrow]` is recognized as metadata but does not change the global face policy.
 - O3D and explicit DirectX `.x` normals retain their authored direction when

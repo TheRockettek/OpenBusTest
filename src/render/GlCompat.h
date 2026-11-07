@@ -106,6 +106,15 @@
 #ifndef GL_DYNAMIC_DRAW
 #define GL_DYNAMIC_DRAW 0x88E8
 #endif
+#ifndef GL_TIME_ELAPSED
+#define GL_TIME_ELAPSED 0x88BF
+#endif
+#ifndef GL_QUERY_RESULT
+#define GL_QUERY_RESULT 0x8866
+#endif
+#ifndef GL_QUERY_RESULT_AVAILABLE
+#define GL_QUERY_RESULT_AVAILABLE 0x8867
+#endif
 
 namespace openbus::rendering {
 

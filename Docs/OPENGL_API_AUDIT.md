@@ -1,12 +1,17 @@
 # OpenGL API/Profile Audit
 
 Audit date: 2026-10-04
+Context creation rechecked: 2026-11-07
 
 ## Result
 
 No active OpenGL compatibility-profile or fixed-function API calls were found in the source tree. In particular, the renderer does not call `glBegin`/`glEnd`, OpenGL matrix-stack or transform functions, immediate-mode vertex/color/normal/texture-coordinate functions, client-state arrays, fixed-function lighting/material functions, or texture-environment functions.
 
-The application requests an OpenGL 3.3 **core** context in `src/app/RenderLoop.cpp` where it sets `GLFW_CONTEXT_VERSION_MAJOR`, `GLFW_CONTEXT_VERSION_MINOR`, and `GLFW_OPENGL_PROFILE` to `GLFW_OPENGL_CORE_PROFILE` before `glfwCreateWindow`. On Apple it also requests a forward-compatible context. No compatibility context is requested.
+The application first requests an OpenGL 4.3 **core** context in
+`src/app/RenderLoop.cpp`. If creation fails, it retries with a 3.3 core context
+for the CPU-culling fallback. The `GLFW_OPENGL_PROFILE` hint remains
+`GLFW_OPENGL_CORE_PROFILE` for both attempts. On Apple it also requests a
+forward-compatible context. No compatibility context is requested.
 
 ## Places that can look like compatibility API
 

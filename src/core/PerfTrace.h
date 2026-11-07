@@ -25,6 +25,7 @@ class TraceScope {
     const char* name_;
     std::int64_t startTimestampUs_ = 0;
     std::uint64_t recordingId_ = 0;
+    bool isMainFrameRoot_ = false;
 };
 #else
 inline void Flush() noexcept {}

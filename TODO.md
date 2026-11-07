@@ -1597,10 +1597,17 @@ limitations.
   Mesa software runs show fewer submitted batches but do not establish a
   hardware performance improvement; submitted triangle counts do not measure
   geometry suppressed by GPU commands or conditional rendering.
-- [ ] Re-run the focused CPU/GPU, query, traffic-light, vehicle and material
-  probes after these changes, and validate representative in-game scenes and
-  mirror views. Keep minimum-size cutoffs disabled unless explicitly set, and
-  retain conservative fallback and resource/view isolation on errors.
+- [~] Focused compute-culling GPU, map-occlusion, vehicle-material-selection,
+  material-rendering/GPU-timer, and trace-sampling probes pass in the benchmark
+  build. CPU trace JSON records its main-thread frame stride, minimum scope
+  duration, and event cap so sampled captures remain self-describing; the
+  render-benchmark parser ignores this extra metadata while reading trace events.
+  Case-insensitive `.sco` aliases now share one scenery-asset cache key
+  on Windows without changing metadata-cache identity; the traffic-light probe
+  and its conditional, CPU, and compute-indirect variants pass with the expected
+  18/17 texture lookup/resolution counts. Representative in-game scenes and
+  mirror views remain open. Keep minimum-size cutoffs disabled unless explicitly
+  set, and retain conservative fallback and resource/view isolation on errors.
 
 ### Broader performance and platform validation
 
@@ -1689,22 +1696,45 @@ limitations.
   to be validated on representative maps.
 - [~] `OpenBusVehicleIndirectReuseProbe` checks opaque/transparent list reuse,
   script-variable-driven material reclassification, and view-dependent
-  transparent sorting on CPU and compute-indirect paths. Reflection-pass
-  culling and sorting still need equivalent vehicle-level regression coverage
-  before broadening those caches.
-- [ ] Attribute `Vehicle::drawBatch.prepareAndSubmit` with finer-grained CPU
-  profiling; test same-view transmap depth-prepass reuse only if material
-  assembly is still material after the existing submission-state caches.
-- [ ] Measure road-feature mesh construction and upload separately; cache its
-  geometry only with explicit invalidation for changed `RoadBump` inputs.
-- [ ] Recheck reflection setup cost in a longer capture. If viewport querying
-  is confirmed as a bottleneck, track the app-owned viewport dimensions rather
-  than querying GL state, and verify framebuffer/context transitions.
-- [ ] Add GPU/presentation timing to reflection and draw benchmarks so CPU
-  submission time is not mistaken for GPU execution or swap/present wait.
-- [ ] Add repeatable performance captures for startup time, frame time, GPU
-  workload, reflection intervals, texture scaling, and material batching.
-- [ ] Validate Windows and Linux helper scripts from clean build directories.
+  transparent sorting on CPU and compute-indirect paths. It now also exercises
+  reflection-view culling, opaque/transparent preparation reuse, off-frustum
+  rejection, view-dependent transparent triangle ordering, and CPU/compute-
+  indirect pixel parity in a synthetic reflected view. Visual parity in
+  representative mirror views remains open before broadening those caches.
+- [~] `Vehicle::drawBatch.prepareAndSubmit` now separates CPU material
+  preparation from draw submission for trace attribution. Measure both in a
+  representative crowded scene; test same-view transmap depth-prepass reuse
+  only if material assembly remains material after the existing state caches.
+- [~] Road-feature vertex construction and surface/line draws now have separate
+  trace scopes; their nested primitive upload scopes isolate the GL buffer
+  uploads. Measure in a representative scene before caching, with invalidation
+  for any changed `RoadBump` inputs.
+- [~] Reflection trace scopes separate setup, per-target visibility, resize,
+  clear, draw, and restore. The viewport is passed from the app-owned
+  `RenderLoop::viewport_`; the reflection path does not query `GL_VIEWPORT`.
+  A longer capture is still needed to establish setup cost and verify
+  framebuffer/context transitions before considering further caching.
+- [~] Opt-in asynchronous OpenGL timer queries now measure reflection-target
+  clear/draw work and the main-view draw phase without waiting for query
+  results. Two-second average/maximum summaries are logged, and a configurable
+  frame stride reduces query overhead. The focused material-rendering probe
+  exercises both query scopes and result polling with GPU timing enabled.
+  In-game timing validation and representative captures remain outstanding.
+  The separate `--finish-before-swap` diagnostic still serializes queued work,
+  changes frame pacing, and is not a substitute for per-pass GPU timing.
+- [~] The repeatable render benchmark measures frame time and now records
+  reflection size/interval, texture scale, material batching, and the optional
+  synchronized GPU-drain diagnostic. It can inherit the opt-in GPU timing
+  settings or enable them with `--gpu-timing` and
+  `--gpu-timing-sample-every-n-frames`, export interval summaries to
+  `render_benchmark_gpu_timing.csv`, and record GPU timing status/sample stride
+  in its other CSVs. The loading benchmark covers startup. Representative
+  comparison runs remain outstanding.
+- [~] A fresh Windows Clang Release build with tracing configured and linked
+  `OpenBus` in a temporary build directory. The Linux profile helper passes
+  Bash syntax and `--help` checks under Git Bash, and the Windows render
+  benchmark wrapper's `--help` smoke check passes. Native Linux clean-build and
+  in-game helper smoke validation remain outstanding.
 - [~] Focused clang-format checks pass for changed ranges, and clang-tidy runs
   using the exported Windows compile database. The repository-wide checks still
   report existing formatting/lint warnings outside the touched ranges. Linux
@@ -1716,9 +1746,22 @@ platforms have a reproducible build-and-smoke procedure.
 ## 7. Final release gate
 
 - [ ] Run the complete screenshot matrix for MAN DL05 and E400, retaining the
-  build revision, asset revision, logs, and expected results.
-- [ ] Remove or label stale claims in README and the reference documents.
-- [ ] Review generated JSON, texture logs, crash output, and profiling output
-  for accidental repository artifacts.
+  build revision, asset revision, logs, and expected results. This remains
+  blocked in the current checkout: `OPENBUS_OMSI_ROOT` is unset, and the five
+  existing files under `screenshots/` are basic automated captures rather than
+  the paired MAN DL05/E400 comparison matrix.
+- [~] Remove or label stale claims in README and the reference documents.
+  The high-FPS profiling guidance in README has been checked against the CPU
+  trace, GPU timer, and reflection setting consumers. Context-version wording
+  was checked against window creation and corrected in README, the OpenGL API
+  audit, the compute-culling guide, and the BGFX probe's GLSL compatibility
+  note. Windows scenery-alias cache behavior is also documented in the
+  scenery-status page. The broader README and reference-document review remains
+  open.
+- [x] Review generated JSON, texture logs, crash output, and profiling output
+  for accidental repository artifacts. Removed the stale tracked crash report
+  and dump, which included a machine-local path, and ignored future crash
+  outputs. Profiling captures remain in the ignored `render-benchmark-results`
+  directory; no generated trace, benchmark, or texture-log files are tracked.
 - [ ] Mark this file complete only after every remaining item is either done or
   explicitly moved into an approved out-of-scope list.

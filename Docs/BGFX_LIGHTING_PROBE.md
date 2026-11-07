@@ -12,7 +12,7 @@ The `windows-clang-bgfx` CMake preset enables the probe in a separate `build-bgf
 
 ## Build and run
 
-Select the `windows-clang-bgfx` configure preset in CMake Tools and build `OpenBusBgfxLightingProbe`. The build compiles `shaders/bgfx/vs_lit_cube.sc` and `fs_lit_cube.sc` to Windows GLSL 1.50 shader binaries using bgfx `shaderc`, then copies them beside the executable. GLSL 1.50 is supported by the project's OpenGL 3.3 baseline.
+Select the `windows-clang-bgfx` configure preset in CMake Tools and build `OpenBusBgfxLightingProbe`. The build compiles `shaders/bgfx/vs_lit_cube.sc` and `fs_lit_cube.sc` to Windows GLSL 1.50 shader binaries using bgfx `shaderc`, then copies them beside the executable. GLSL 1.50 is supported by the project's OpenGL 3.3 core fallback.
 
 Run `build-bgfx/OpenBusBgfxLightingProbe.exe`. It opens a GLFW window with no client graphics API; bgfx owns the OpenGL context and presents frames. Close the window to exit.
 

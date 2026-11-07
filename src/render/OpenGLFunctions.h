@@ -8,6 +8,7 @@
 #endif
 
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <GL/gl.h>
 
@@ -79,6 +80,8 @@ using GenQueriesProc = void(APIENTRY*)(GLsizei, GLuint*);
 using DeleteQueriesProc = void(APIENTRY*)(GLsizei, const GLuint*);
 using BeginQueryProc = void(APIENTRY*)(GLenum, GLuint);
 using EndQueryProc = void(APIENTRY*)(GLenum);
+using GetQueryObjectuivProc = void(APIENTRY*)(GLuint, GLenum, GLuint*);
+using GetQueryObjectui64vProc = void(APIENTRY*)(GLuint, GLenum, std::uint64_t*);
 using BeginConditionalRenderProc = void(APIENTRY*)(GLuint, GLenum);
 using EndConditionalRenderProc = void(APIENTRY*)();
 
@@ -130,6 +133,8 @@ extern GenQueriesProc pglGenQueries;
 extern DeleteQueriesProc pglDeleteQueries;
 extern BeginQueryProc pglBeginQuery;
 extern EndQueryProc pglEndQuery;
+extern GetQueryObjectuivProc pglGetQueryObjectuiv;
+extern GetQueryObjectui64vProc pglGetQueryObjectui64v;
 extern BeginConditionalRenderProc pglBeginConditionalRender;
 extern EndConditionalRenderProc pglEndConditionalRender;
 

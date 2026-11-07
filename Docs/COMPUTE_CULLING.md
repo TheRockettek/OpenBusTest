@@ -20,9 +20,9 @@ warning before selecting CPU; diagnostic probes still exercise readback to
 compare GPU visibility with the CPU reference. No environment variable is
 required for normal operation.
 
-The renderer requests an OpenGL 4.3 core context, retrying OpenGL 3.3 if
-unavailable. Compute culling initializes only when the actual context version
-and optional compute/SSBO entry points satisfy the requirements **and the
+The renderer requests an OpenGL 4.3 core context, retrying an OpenGL 3.3 core
+context if unavailable. Compute culling initializes only when the actual context
+version and optional compute/SSBO entry points satisfy the requirements **and the
 experimental backend is explicitly selected**. Shader,
 allocation, or dispatch failures retain the CPU visibility implementation.
 
@@ -329,7 +329,7 @@ dispatch failures use existing current-view CPU culling, never stale commands.
 Triangle submission counters count candidate triangles, not post-culling GPU
 triangles, in indirect mode. No shader API/material behavior was removed.
 
-### Further batching roadmap (not implemented yet)
+### GPU-driven roadmap: implemented baseline and remaining work
 
 1. **Start with opaque static scenery.** Keep simulation, scripts, streaming,
   resource creation, and conservative active-tile eligibility on CPU. Store
@@ -337,18 +337,18 @@ triangles, in indirect mode. No shader API/material behavior was removed.
   rather than rebuilding/uploading every record for every view. Preserve
   camera-relative precision; world-space float conversion alone would regress
   the large-origin behavior we currently protect with double CPU transforms.
-2. **Have compute write indirect commands instead of a CPU mask.** A fixed slot
-  per candidate can contain the normal geometry range and an instance count of
-  zero when rejected (one or more when visible). Use the correctly laid-out
-  command format for arrays or indexed draws. Refresh every slot each view so
-  stale nonzero counts cannot leak into a different camera/reflection.
-3. **Consume commands on GPU.** After compute, issue
-  `glMemoryBarrier(GL_COMMAND_BARRIER_BIT)` before indirect draw consumption.
-  Add `GL_SHADER_STORAGE_BARRIER_BIT` if draw shaders also read compute-written
-  SSBO data; other consumers require their corresponding barrier bits. Use
-  `glDrawArraysIndirect()` / `glDrawElementsIndirect()` initially. The CPU can
-  bind each known batch's shader/textures and issue its indirect draw even when
-  that GPU command will draw zero instances. **No count readback is needed.**
+2. **Implemented: fixed-slot indirect command generation.** Compute writes a
+  fixed slot per candidate, with the normal geometry range and an instance
+  count of zero when rejected (one or more when visible). Each view refreshes
+  every slot so stale nonzero counts cannot leak into a different
+  camera/reflection.
+3. **Implemented: indirect command consumption.** A
+  `glMemoryBarrier(GL_COMMAND_BARRIER_BIT)` makes compute writes visible before
+  indirect draws. Draw shaders that also read compute-written SSBO data require
+  `GL_SHADER_STORAGE_BARRIER_BIT`; other consumers require their corresponding
+  barrier bits. The CPU binds each known batch's shader/textures and issues its
+  indirect draw even when that GPU command draws zero instances. **No count
+  readback is needed.**
 4. **Then batch to reduce CPU submission.** Group compatible geometry/materials
   for instancing or multi-draw indirect, with shader-readable transform/material
   tables. Multi-draw groups share GL state; unrelated textures/programs cannot
@@ -367,8 +367,8 @@ triangles, in indirect mode. No shader API/material behavior was removed.
   Later, optional depth-pyramid/Hi-Z occlusion can reject hidden objects; it is
   a separate feature with depth-production and conservative visibility rules.
 
-The fixed-slot command generation and individual indirect consumption in steps
-2–3 are implemented. GPU-resident static scene tables, instancing/multi-draw
+Fixed-slot command generation and individual indirect consumption in steps 2–3
+are implemented. GPU-resident static scene tables, instancing/multi-draw
 grouping, compaction, GPU transforms, and Hi-Z remain future work. Do not assume
 a performance gain until measured.
 
@@ -482,3 +482,8 @@ fallback, plus the default-off/explicit-opt-in policy without needing a GL conte
 context and compares GPU/reference masks, partial workgroups, camera changes, perspective
 planes, state restoration, missing entry points, and lifecycle. The GPU probe is
 marked skipped if GLFW cannot create a suitable context.
+
+`OpenBusVehicleIndirectReuseProbe` also exercises a synthetic reflected view:
+vehicle culling, opaque/transparent preparation reuse, off-frustum rejection,
+transparent triangle ordering, and CPU-versus-compute-indirect pixel parity.
+This regression does not replace representative in-game mirror captures.

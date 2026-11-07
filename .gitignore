@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 
 *.log
+game.crash
+game.crash.dmp
 *_configuration.json
 *_trace.json
 openbus_trace*.json

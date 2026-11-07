@@ -34,6 +34,7 @@ FRAME_SCOPES = (
     "RenderLoop::draw.model",
     "RenderLoop::updateScripts",
     "RenderLoop::endFrame.swapBuffers",
+    "RenderLoop::endFrame.glFinishBeforeSwap",
     "Vehicle::pickClickable",
     "Vehicle::drawBatch.prepareAndSubmit",
 )
@@ -73,6 +74,16 @@ def parse_resolution(value: str) -> tuple[int, int]:
     if not (1 <= width <= 16384 and 1 <= height <= 16384):
         raise argparse.ArgumentTypeError("resolution dimensions must be between 1 and 16384")
     return width, height
+
+
+def parse_gpu_timing_sample_stride(value: str) -> int:
+    try:
+        stride = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("GPU timing sample stride must be an integer") from error
+    if not 1 <= stride <= 10000:
+        raise argparse.ArgumentTypeError("GPU timing sample stride must be between 1 and 10000")
+    return stride
 
 
 def summarize_trace(
@@ -317,6 +328,100 @@ def parse_log_value(pattern: str, log_text: str, default: str = "") -> str:
     return match.group(1) if match else default
 
 
+def gpu_timing_configuration(log_text: str, environment: dict[str, str]) -> dict[str, Any]:
+    requested = environment.get("OPENBUS_GPU_TIMING") in ("1", "true")
+    if not requested:
+        return {
+            "GpuTimingStatus": "disabled",
+            "GpuTimingSampleEveryNFrames": "",
+        }
+
+    sample_stride = parse_log_value(
+        r"GPU timer queries enabled; sampling every (\d+) main frame\(s\)", log_text
+    )
+    if not sample_stride:
+        return {
+            "GpuTimingStatus": "unavailable",
+            "GpuTimingSampleEveryNFrames": "",
+        }
+    return {
+        "GpuTimingStatus": "enabled",
+        "GpuTimingSampleEveryNFrames": int(sample_stride),
+    }
+
+
+def parse_gpu_timing_summaries(log_text: str) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for line_number, line in enumerate(log_text.splitlines(), start=1):
+        marker = line.find("GPU_TIMING ")
+        if marker < 0:
+            continue
+        values = {}
+        for token in line[marker + len("GPU_TIMING ") :].split():
+            key, separator, value = token.partition("=")
+            if separator:
+                values[key] = value
+        try:
+            interval_seconds = float(values["interval_s"])
+            main_samples = int(values["main_view_samples"])
+            main_dropped = int(values["main_view_dropped"])
+            reflection_samples = int(values["reflection_samples"])
+            reflection_dropped = int(values["reflection_dropped"])
+            main_average = (
+                float(values["main_view_avg_ms"]) if main_samples > 0 else ""
+            )
+            main_maximum = (
+                float(values["main_view_max_ms"]) if main_samples > 0 else ""
+            )
+            reflection_average = (
+                float(values["reflection_avg_ms"]) if reflection_samples > 0 else ""
+            )
+            reflection_maximum = (
+                float(values["reflection_max_ms"]) if reflection_samples > 0 else ""
+            )
+        except (KeyError, ValueError) as error:
+            raise ValueError(
+                f"Malformed GPU timing summary on application log line {line_number}"
+            ) from error
+
+        numeric_values = (
+            interval_seconds,
+            *(
+                value
+                for value in (
+                    main_average,
+                    main_maximum,
+                    reflection_average,
+                    reflection_maximum,
+                )
+                if value != ""
+            ),
+        )
+        if (
+            not all(math.isfinite(value) and value >= 0.0 for value in numeric_values)
+            or interval_seconds <= 0.0
+            or min(main_samples, main_dropped, reflection_samples, reflection_dropped) < 0
+        ):
+            raise ValueError(
+                f"Invalid GPU timing values on application log line {line_number}"
+            )
+
+        summaries.append(
+            {
+                "IntervalSeconds": interval_seconds,
+                "MainViewSamples": main_samples,
+                "MainViewAverageMs": main_average,
+                "MainViewMaxMs": main_maximum,
+                "MainViewDropped": main_dropped,
+                "ReflectionSamples": reflection_samples,
+                "ReflectionAverageMs": reflection_average,
+                "ReflectionMaxMs": reflection_maximum,
+                "ReflectionDropped": reflection_dropped,
+            }
+        )
+    return summaries
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
     with path.open("w", newline="", encoding="utf-8-sig") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=fieldnames, extrasaction="ignore")
@@ -365,6 +470,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="return a nonzero status if any framebuffer differs from the requested size",
     )
     parser.add_argument(
+        "--finish-before-swap",
+        action="store_true",
+        help="serialize queued GPU work before presentation for a diagnostic timing run",
+    )
+    parser.add_argument(
+        "--gpu-timing",
+        action="store_true",
+        help="enable asynchronous main-view and reflection GPU timer queries",
+    )
+    parser.add_argument(
+        "--gpu-timing-sample-every-n-frames",
+        type=parse_gpu_timing_sample_stride,
+        help="sample GPU timing every N main frames (also enables GPU timing)",
+    )
+    parser.add_argument(
         "--warmup-frames",
         type=int,
         default=60,
@@ -409,6 +529,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="render reflections once every N frames",
     )
     parser.add_argument(
+        "--texture-scale",
+        type=float,
+        default=1.0,
+        help="texture upload scale from 0.25 to 1.0",
+    )
+    parser.add_argument(
+        "--no-material-batching",
+        dest="material_batching",
+        action="store_false",
+        default=True,
+        help="disable experimental vehicle material batching",
+    )
+    parser.add_argument(
         "--build-directory",
         default=None,
         help="CMake build directory containing OpenBus.exe (defaults to build-benchmark-ninja)",
@@ -429,6 +562,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         raise ValueError("--ready-timeout-seconds must be between 1 and 3600")
     if args.reflection_interval < 1:
         raise ValueError("--reflection-interval must be at least 1")
+    if not math.isfinite(args.texture_scale) or not 0.25 <= args.texture_scale <= 1.0:
+        raise ValueError("--texture-scale must be between 0.25 and 1.0")
 
     build_dir = BUILD_DIR if args.build_directory is None else Path(args.build_directory)
     if not build_dir.is_absolute():
@@ -459,6 +594,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     summary_rows: list[dict[str, Any]] = []
     frame_rows: list[dict[str, Any]] = []
     frametime_rows: list[dict[str, Any]] = []
+    gpu_timing_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
     run_cases = [
         (resolution, width, height, run_number)
@@ -498,14 +634,24 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "OPENBUS_TRACE_FILE": str(trace_path),
                 "OPENBUS_TRACE_MAX_EVENTS": str(TRACE_MAX_EVENTS),
                 "OPENBUS_TRACE_MIN_US": "1",
+                "OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES": "1",
                 "OPENBUS_VSYNC": "off",
+                "OPENBUS_GL_FINISH_BEFORE_SWAP": "1" if args.finish_before_swap else "0",
                 "OPENBUS_SCRIPT_HZ": "60",
                 "OPENBUS_REFLECTION_TRANSPARENT": "0",
                 "OPENBUS_REFLECTION_INTERVAL": str(args.reflection_interval),
                 "OPENBUS_REFLECTION_SIZE": str(args.reflection_size),
-                "OPENBUS_MATERIAL_BATCHING": "1",
+                "OPENBUS_TEXTURE_SCALE": str(args.texture_scale),
+                "OPENBUS_MATERIAL_BATCHING": "1" if args.material_batching else "0",
             }
         )
+        if args.gpu_timing:
+            environment["OPENBUS_GPU_TIMING"] = "1"
+        if args.gpu_timing_sample_every_n_frames is not None:
+            environment["OPENBUS_GPU_TIMING"] = "1"
+            environment["OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES"] = str(
+                args.gpu_timing_sample_every_n_frames
+            )
         environment.pop("OPENBUS_CAPTURE_VIEWS", None)
         environment.pop("OPENBUS_REFLECTION_MAX_FPS", None)
         environment.pop("OPENBUS_AI_BUS_CONFIG", None)
@@ -526,6 +672,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             )
 
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        gpu_configuration = gpu_timing_configuration(log_text, environment)
         if "BENCHMARK_COMPLETE=1" not in log_text:
             raise RuntimeError(f"Benchmark did not complete successfully; see {log_path}")
         actual_resolution = parse_log_value(r"BENCHMARK_FRAMEBUFFER=(\d+x\d+)", log_text)
@@ -583,6 +730,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FramebufferMatchesRequested": False,
                     "ReflectionSize": args.reflection_size,
                     "ReflectionInterval": args.reflection_interval,
+                    "FinishBeforeSwap": args.finish_before_swap,
+                    "TextureScale": args.texture_scale,
+                    "MaterialBatching": args.material_batching,
+                    **gpu_configuration,
                     "RunOrder": run_order,
                     "Run": run_number,
                     "Status": "Skipped",
@@ -615,6 +766,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FramebufferMatchesRequested": False,
                     "ReflectionSize": args.reflection_size,
                     "ReflectionInterval": args.reflection_interval,
+                    "FinishBeforeSwap": args.finish_before_swap,
+                    "TextureScale": args.texture_scale,
+                    "MaterialBatching": args.material_batching,
+                    **gpu_configuration,
                     "RunOrder": run_order,
                     "Run": run_number,
                     "Status": "Skipped",
@@ -671,8 +826,43 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 f"Trace reached the {TRACE_MAX_EVENTS:,}-event cap: {trace_path}",
                 stacklevel=1,
             )
+        gpu_summaries = parse_gpu_timing_summaries(log_text)
+        if gpu_configuration["GpuTimingStatus"] == "unavailable":
+            warnings.warn(
+                f"GPU timing was requested but not enabled by OpenBus; see {log_path}",
+                stacklevel=1,
+            )
+        elif gpu_configuration["GpuTimingStatus"] == "enabled" and not gpu_summaries:
+            warnings.warn(
+                f"GPU timing was enabled but produced no summary intervals; see {log_path}",
+                stacklevel=1,
+            )
         summary_rows.extend(trace_summary.rows)
         frame_rows.extend(trace_summary.frame_rows)
+        for row in (*trace_summary.rows, *trace_summary.frame_rows):
+            row["FinishBeforeSwap"] = args.finish_before_swap
+            row["TextureScale"] = args.texture_scale
+            row["MaterialBatching"] = args.material_batching
+            row.update(gpu_configuration)
+        for gpu_summary in gpu_summaries:
+            gpu_timing_rows.append(
+                {
+                    "RequestedResolution": resolution,
+                    "WindowResolution": window_resolution,
+                    "FramebufferResolution": actual_resolution,
+                    "ReflectionSize": args.reflection_size,
+                    "ReflectionInterval": args.reflection_interval,
+                    "FinishBeforeSwap": args.finish_before_swap,
+                    "TextureScale": args.texture_scale,
+                    "MaterialBatching": args.material_batching,
+                    **gpu_configuration,
+                    "RunOrder": run_order,
+                    "Run": run_number,
+                    **gpu_summary,
+                    "TraceFile": str(trace_path),
+                    "LogFile": str(log_path),
+                }
+            )
         frametime_rows.append(
             {
                 "RequestedResolution": resolution,
@@ -683,6 +873,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
                 "ReflectionSize": args.reflection_size,
                 "ReflectionInterval": args.reflection_interval,
+                "FinishBeforeSwap": args.finish_before_swap,
+                "TextureScale": args.texture_scale,
+                "MaterialBatching": args.material_batching,
+                **gpu_configuration,
                 "RunOrder": run_order,
                 "Run": run_number,
                 "Status": "Completed",
@@ -702,6 +896,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
                 "ReflectionSize": args.reflection_size,
                 "ReflectionInterval": args.reflection_interval,
+                "FinishBeforeSwap": args.finish_before_swap,
+                "TextureScale": args.texture_scale,
+                "MaterialBatching": args.material_batching,
+                **gpu_configuration,
                 "RunOrder": run_order,
                 "Run": run_number,
                 "Status": "Completed",
@@ -732,6 +930,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "ReflectionSize",
         "ReflectionInterval",
+        "FinishBeforeSwap",
+        "TextureScale",
+        "MaterialBatching",
+        "GpuTimingStatus",
+        "GpuTimingSampleEveryNFrames",
         "Run",
         "Phase",
         "PhaseRepeat",
@@ -752,6 +955,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "ReflectionSize",
         "ReflectionInterval",
+        "FinishBeforeSwap",
+        "TextureScale",
+        "MaterialBatching",
+        "GpuTimingStatus",
+        "GpuTimingSampleEveryNFrames",
         "RunOrder",
         "Run",
         "Status",
@@ -782,6 +990,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "ReflectionSize",
         "ReflectionInterval",
+        "FinishBeforeSwap",
+        "TextureScale",
+        "MaterialBatching",
+        "GpuTimingStatus",
+        "GpuTimingSampleEveryNFrames",
         "Run",
         "Phase",
         "PhaseRepeat",
@@ -801,6 +1014,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "ReflectionSize",
         "ReflectionInterval",
+        "FinishBeforeSwap",
+        "TextureScale",
+        "MaterialBatching",
+        "GpuTimingStatus",
+        "GpuTimingSampleEveryNFrames",
         "RunOrder",
         "Run",
         "Status",
@@ -810,6 +1028,31 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "P90FrameTimeMs",
         "P95FrameTimeMs",
         "TraceFile",
+    ]
+    gpu_timing_fields = [
+        "RequestedResolution",
+        "WindowResolution",
+        "FramebufferResolution",
+        "ReflectionSize",
+        "ReflectionInterval",
+        "FinishBeforeSwap",
+        "TextureScale",
+        "MaterialBatching",
+        "GpuTimingStatus",
+        "GpuTimingSampleEveryNFrames",
+        "RunOrder",
+        "Run",
+        "IntervalSeconds",
+        "MainViewSamples",
+        "MainViewAverageMs",
+        "MainViewMaxMs",
+        "MainViewDropped",
+        "ReflectionSamples",
+        "ReflectionAverageMs",
+        "ReflectionMaxMs",
+        "ReflectionDropped",
+        "TraceFile",
+        "LogFile",
     ]
     summary_rows.sort(
         key=lambda row: (
@@ -836,10 +1079,15 @@ def run_benchmark(args: argparse.Namespace) -> int:
     write_csv(output_path / "render_benchmark_frames.csv", frame_rows, frame_fields)
     frametime_rows.sort(key=lambda row: (row["RequestedResolution"], row["Run"]))
     write_csv(output_path / "render_benchmark_frametimes.csv", frametime_rows, frametime_fields)
+    gpu_timing_rows.sort(
+        key=lambda row: (row["RequestedResolution"], row["Run"], row["IntervalSeconds"])
+    )
+    write_csv(output_path / "render_benchmark_gpu_timing.csv", gpu_timing_rows, gpu_timing_fields)
     print(f"Scope summary: {output_path / 'render_benchmark_scopes.csv'}")
     print(f"Run summary:   {output_path / 'render_benchmark_runs.csv'}")
     print(f"Frame timings: {output_path / 'render_benchmark_frames.csv'}")
     print(f"Run frame stats: {output_path / 'render_benchmark_frametimes.csv'}")
+    print(f"GPU timings:  {output_path / 'render_benchmark_gpu_timing.csv'}")
     for row in run_rows:
         print(
             f"{row['RequestedResolution']:>9} window {row['WindowResolution']:>9} "

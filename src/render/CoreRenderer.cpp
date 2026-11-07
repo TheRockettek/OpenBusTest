@@ -9,10 +9,16 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace openbus::rendering {
@@ -24,6 +30,192 @@ constexpr std::size_t MAX_TEXTURE_UNITS = 16;
 std::size_t submittedFrameTriangleCount = 0;
 std::size_t submittedReflectionTriangleCount = 0;
 bool reflectionTrianglePass = false;
+
+constexpr std::size_t kGpuTimerQueriesPerPass = 32;
+constexpr std::size_t kGpuTimerPassCount = 2;
+constexpr std::size_t kGpuTimerQueryCount = kGpuTimerQueriesPerPass * kGpuTimerPassCount;
+constexpr auto kGpuTimerPollInterval = std::chrono::milliseconds(100);
+constexpr auto kGpuTimerSummaryInterval = std::chrono::seconds(2);
+
+struct GpuTimerPassState {
+    std::array<bool, kGpuTimerQueriesPerPass> pending = {};
+    std::size_t nextQuery = 0;
+    std::uint64_t completed = 0;
+    std::uint64_t totalNanoseconds = 0;
+    std::uint64_t maximumNanoseconds = 0;
+    std::uint64_t dropped = 0;
+};
+
+struct GpuTimerState {
+    bool enabled = false;
+    bool frameSampled = false;
+    bool scopeActive = false;
+    std::uint64_t frameCount = 0;
+    int sampleEveryNFrames = 1;
+    std::array<GLuint, kGpuTimerQueryCount> queries = {};
+    std::array<GpuTimerPassState, kGpuTimerPassCount> passes = {};
+    std::size_t activePass = 0;
+    std::size_t activeQuery = 0;
+    std::chrono::steady_clock::time_point nextPoll = {};
+    std::chrono::steady_clock::time_point lastSummary = {};
+};
+
+GpuTimerState gpuTimerState;
+
+std::size_t gpuTimerPassIndex(GpuTimingPass pass) {
+    return static_cast<std::size_t>(pass);
+}
+
+void initializeGpuTiming() {
+    const char* setting = openbus::getEnvironment("OPENBUS_GPU_TIMING");
+    const std::string_view value = setting != nullptr ? setting : "";
+    if (value != "1" && value != "true") {
+        return;
+    }
+
+    if (pglGenQueries == nullptr || pglDeleteQueries == nullptr || pglBeginQuery == nullptr ||
+        pglEndQuery == nullptr || pglGetQueryObjectuiv == nullptr ||
+        pglGetQueryObjectui64v == nullptr) {
+        gameLog.Warning("GPU timing requested, but OpenGL timer-query functions are unavailable");
+        return;
+    }
+
+    const char* sampleSetting = openbus::getEnvironment("OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES");
+    const int sampleEveryNFrames =
+        sampleSetting != nullptr ? std::clamp(std::atoi(sampleSetting), 1, 10000) : 1;
+
+    GpuTimerState nextState;
+    nextState.sampleEveryNFrames = sampleEveryNFrames;
+    pglGenQueries(static_cast<GLsizei>(nextState.queries.size()), nextState.queries.data());
+    if (std::any_of(nextState.queries.begin(), nextState.queries.end(),
+                    [](GLuint query) { return query == 0; })) {
+        if (std::any_of(nextState.queries.begin(), nextState.queries.end(),
+                        [](GLuint query) { return query != 0; })) {
+            pglDeleteQueries(static_cast<GLsizei>(nextState.queries.size()),
+                             nextState.queries.data());
+        }
+        gameLog.Warning("GPU timing requested, but OpenGL timer-query allocation failed");
+        return;
+    }
+
+    nextState.enabled = true;
+    nextState.lastSummary = std::chrono::steady_clock::now();
+    gpuTimerState = nextState;
+    gameLog.Log("GPU timer queries enabled; sampling every " + std::to_string(sampleEveryNFrames) +
+                " main frame(s)");
+}
+
+void shutdownGpuTiming() {
+    if (pglDeleteQueries != nullptr &&
+        std::any_of(gpuTimerState.queries.begin(), gpuTimerState.queries.end(),
+                    [](GLuint query) { return query != 0; })) {
+        pglDeleteQueries(static_cast<GLsizei>(gpuTimerState.queries.size()),
+                         gpuTimerState.queries.data());
+    }
+    gpuTimerState = {};
+}
+
+bool beginGpuTimerQuery(GpuTimingPass pass) {
+    GpuTimerState& state = gpuTimerState;
+    const std::size_t passIndex = gpuTimerPassIndex(pass);
+    if (!state.enabled || !state.frameSampled || state.scopeActive ||
+        passIndex >= state.passes.size()) {
+        return false;
+    }
+
+    GpuTimerPassState& passState = state.passes[passIndex];
+    for (std::size_t offset = 0; offset < passState.pending.size(); ++offset) {
+        const std::size_t slot = (passState.nextQuery + offset) % passState.pending.size();
+        if (passState.pending[slot]) {
+            continue;
+        }
+        const std::size_t queryIndex = passIndex * kGpuTimerQueriesPerPass + slot;
+        pglBeginQuery(GL_TIME_ELAPSED, state.queries[queryIndex]);
+        passState.pending[slot] = true;
+        passState.nextQuery = (slot + 1) % passState.pending.size();
+        state.scopeActive = true;
+        state.activePass = passIndex;
+        state.activeQuery = slot;
+        return true;
+    }
+
+    ++passState.dropped;
+    return false;
+}
+
+void endGpuTimerQuery() {
+    GpuTimerState& state = gpuTimerState;
+    if (!state.enabled || !state.scopeActive) {
+        return;
+    }
+    pglEndQuery(GL_TIME_ELAPSED);
+    state.scopeActive = false;
+}
+
+void appendGpuTimerSummary(std::ostringstream& summary, const char* name,
+                           GpuTimerPassState& passState) {
+    summary << ' ' << name << "_samples=" << passState.completed;
+    if (passState.completed > 0) {
+        const double averageMilliseconds = static_cast<double>(passState.totalNanoseconds) /
+                                           static_cast<double>(passState.completed) / 1'000'000.0;
+        const double maximumMilliseconds =
+            static_cast<double>(passState.maximumNanoseconds) / 1'000'000.0;
+        summary << ' ' << name << "_avg_ms=" << averageMilliseconds << ' ' << name
+                << "_max_ms=" << maximumMilliseconds;
+    }
+    summary << ' ' << name << "_dropped=" << passState.dropped;
+    passState.completed = 0;
+    passState.totalNanoseconds = 0;
+    passState.maximumNanoseconds = 0;
+    passState.dropped = 0;
+}
+
+void pollGpuTimingQueries() {
+    GpuTimerState& state = gpuTimerState;
+    if (!state.enabled) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (state.nextPoll != std::chrono::steady_clock::time_point{} && now < state.nextPoll) {
+        return;
+    }
+    state.nextPoll = now + kGpuTimerPollInterval;
+
+    for (std::size_t passIndex = 0; passIndex < state.passes.size(); ++passIndex) {
+        GpuTimerPassState& passState = state.passes[passIndex];
+        for (std::size_t slot = 0; slot < passState.pending.size(); ++slot) {
+            if (!passState.pending[slot]) {
+                continue;
+            }
+            const std::size_t queryIndex = passIndex * kGpuTimerQueriesPerPass + slot;
+            GLuint available = GL_FALSE;
+            pglGetQueryObjectuiv(state.queries[queryIndex], GL_QUERY_RESULT_AVAILABLE, &available);
+            if (available == GL_FALSE) {
+                continue;
+            }
+            std::uint64_t nanoseconds = 0;
+            pglGetQueryObjectui64v(state.queries[queryIndex], GL_QUERY_RESULT, &nanoseconds);
+            passState.pending[slot] = false;
+            ++passState.completed;
+            passState.totalNanoseconds += nanoseconds;
+            passState.maximumNanoseconds = std::max(passState.maximumNanoseconds, nanoseconds);
+        }
+    }
+
+    const double summaryElapsedSeconds =
+        std::chrono::duration<double>(now - state.lastSummary).count();
+    if (summaryElapsedSeconds < std::chrono::duration<double>(kGpuTimerSummaryInterval).count()) {
+        return;
+    }
+    std::ostringstream summary;
+    summary << std::fixed << std::setprecision(3)
+            << "GPU_TIMING interval_s=" << summaryElapsedSeconds;
+    appendGpuTimerSummary(summary, "main_view", state.passes[0]);
+    appendGpuTimerSummary(summary, "reflection", state.passes[1]);
+    gameLog.Log(summary.str());
+    state.lastSummary = now;
+}
 
 std::size_t trianglesForPrimitive(GLenum primitive, std::size_t vertexCount) {
     switch (primitive) {
@@ -1509,6 +1701,25 @@ void resetFrameTriangleCount() {
     reflectionTrianglePass = false;
 }
 
+GpuTimerScope::GpuTimerScope(GpuTimingPass pass) : active_(beginGpuTimerQuery(pass)) {}
+
+GpuTimerScope::~GpuTimerScope() {
+    if (active_) {
+        endGpuTimerQuery();
+    }
+}
+
+void beginGpuTimingFrame() {
+    pollGpuTimingQueries();
+    if (!gpuTimerState.enabled) {
+        return;
+    }
+    ++gpuTimerState.frameCount;
+    gpuTimerState.frameSampled =
+        gpuTimerState.frameCount % static_cast<std::uint64_t>(gpuTimerState.sampleEveryNFrames) ==
+        0;
+}
+
 void resetFrameReflectionTriangleCount() {
     submittedReflectionTriangleCount = 0;
 }
@@ -1640,6 +1851,7 @@ bool initializeCoreRenderer() {
         currentTextureUnit = GL_TEXTURE0;
         boundTexture2D.fill(0);
         boundTextureArray.fill(0);
+        initializeGpuTiming();
         ++rendererGeneration;
         if (rendererGeneration == 0) {
             ++rendererGeneration;
@@ -1658,6 +1870,7 @@ bool initializeCoreRenderer() {
 }
 
 void shutdownCoreRenderer() {
+    shutdownGpuTiming();
     shutdownComputeCulling();
     fogUniforms = {};
     currentProgram = 0;

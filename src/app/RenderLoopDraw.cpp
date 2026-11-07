@@ -887,6 +887,9 @@ RenderLoop::passengerQueuePose(int stopId, const openbus::app::WaitingPassenger&
 }
 
 void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
+    if (!renderingReflection_) {
+        openbus::rendering::beginGpuTimingFrame();
+    }
     TraceScope trace("frame", "RenderLoop::draw");
     const ResetMapLightsAfterFrame resetMapLights;
     openbus::rendering::setWeatherFog(
@@ -1312,6 +1315,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         TraceScope phase("render", "RenderLoop::draw.reflections");
         renderReflectionViews(simulation, world);
     }
+    openbus::rendering::GpuTimerScope mainViewGpuTimer(openbus::rendering::GpuTimingPass::MainView);
     if (!renderingReflection_) {
         openbus::rendering::setWeatherLighting(weatherVariables.environmentBrightness(), false);
     }

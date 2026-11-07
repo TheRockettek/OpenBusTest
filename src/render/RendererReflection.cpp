@@ -244,6 +244,7 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
             TraceScope phase("render", "ReflectionRenderer::render.target.resize");
             impl_->resizeTarget(target, requestedTargetSize);
         }
+        GpuTimerScope gpuTimer(GpuTimingPass::Reflection);
         {
             TraceScope phase("render", "ReflectionRenderer::render.target.clear");
             pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);

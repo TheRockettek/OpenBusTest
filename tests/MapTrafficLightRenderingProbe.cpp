@@ -414,18 +414,23 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
         std::find_if(paths.begin(), paths.end(), [](const auto& path) {
             return path.mapObjectId == 15340 && path.pathIndex == 1;
         });
-    check(controllerPath != paths.end() && otherControllerPath != paths.end() &&
-              controllerPath->trafficSignal.has_value() &&
-              controllerPath->pathIndex == 0 && controllerPath->widthMeters == 3.0 &&
-              controllerPath->trafficSignal->lightIndex == 0 &&
-              controllerPath->trafficSignal->program != nullptr &&
-              controllerPath->trafficSignal->program->controlPoints.size() ==
-                  (conditional ? 3U : 1U) &&
-              controllerPath->pathRules.groups.size() == 1 &&
-              controllerPath->pathRules.groups.front().priority == 192.0 &&
-              otherControllerPath->trafficSignal.has_value() &&
-              otherControllerPath->trafficSignal->lightIndex == 1,
-          "SCO F2 path must retain its map traffic rule and controller/stopline data");
+    check(controllerPath != paths.end() && otherControllerPath != paths.end(),
+          "SCO F2 paths must be present in the map-wide path index");
+    if (controllerPath != paths.end() && otherControllerPath != paths.end()) {
+        check(controllerPath->trafficSignal.has_value() && controllerPath->pathIndex == 0 &&
+                  controllerPath->widthMeters == 3.0 &&
+                  controllerPath->trafficSignal->lightIndex == 0 &&
+                  controllerPath->trafficSignal->program != nullptr &&
+                  controllerPath->trafficSignal->program->controlPoints.size() ==
+                      (conditional ? 3U : 1U),
+              "SCO F2 path must retain its controller and stopline data");
+        check(controllerPath->pathRules.groups.size() == 1 &&
+                  controllerPath->pathRules.groups.front().priority == 192.0,
+              "SCO F2 path must retain its map traffic rule");
+        check(otherControllerPath->trafficSignal.has_value() &&
+                  otherControllerPath->trafficSignal->lightIndex == 1,
+              "Second SCO F2 path must retain its controller data");
+    }
     const auto aiRoute = renderer.buildDrivingRoute(15340);
     check(aiRoute.has_value() && !aiRoute->segments.empty() &&
               aiRoute->segments.front().trafficSignal.has_value() &&

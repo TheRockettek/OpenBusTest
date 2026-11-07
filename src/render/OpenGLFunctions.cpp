@@ -55,6 +55,8 @@ GenQueriesProc pglGenQueries = nullptr;
 DeleteQueriesProc pglDeleteQueries = nullptr;
 BeginQueryProc pglBeginQuery = nullptr;
 EndQueryProc pglEndQuery = nullptr;
+GetQueryObjectuivProc pglGetQueryObjectuiv = nullptr;
+GetQueryObjectui64vProc pglGetQueryObjectui64v = nullptr;
 BeginConditionalRenderProc pglBeginConditionalRender = nullptr;
 EndConditionalRenderProc pglEndConditionalRender = nullptr;
 DispatchComputeProc pglDispatchCompute = nullptr;
@@ -148,6 +150,10 @@ bool loadOpenGLFunctions() {
     pglDeleteQueries = reinterpret_cast<DeleteQueriesProc>(glfwGetProcAddress("glDeleteQueries"));
     pglBeginQuery = reinterpret_cast<BeginQueryProc>(glfwGetProcAddress("glBeginQuery"));
     pglEndQuery = reinterpret_cast<EndQueryProc>(glfwGetProcAddress("glEndQuery"));
+    pglGetQueryObjectuiv =
+        reinterpret_cast<GetQueryObjectuivProc>(glfwGetProcAddress("glGetQueryObjectuiv"));
+    pglGetQueryObjectui64v =
+        reinterpret_cast<GetQueryObjectui64vProc>(glfwGetProcAddress("glGetQueryObjectui64v"));
     pglBeginConditionalRender = reinterpret_cast<BeginConditionalRenderProc>(
         glfwGetProcAddress("glBeginConditionalRender"));
     pglEndConditionalRender =

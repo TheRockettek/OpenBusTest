@@ -100,7 +100,12 @@ const SceneryObjectConfig* MapSceneLoader::loadSceneryObjectMetadata(const std::
 
 const std::vector<std::size_t>&
 MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
-    const std::string cacheKey = openbus::pathToUtf8(configPath.lexically_normal());
+    std::string cacheKey = openbus::pathToUtf8(configPath.lexically_normal());
+    const auto canonicalKey =
+        sceneryConfigKeysByIdentity.find(sceneryConfigIdentityKey(configPath));
+    if (canonicalKey != sceneryConfigKeysByIdentity.end()) {
+        cacheKey = canonicalKey->second;
+    }
     const auto cached = sceneryAssetBatches.find(cacheKey);
     if (cached != sceneryAssetBatches.end()) {
         return cached->second;

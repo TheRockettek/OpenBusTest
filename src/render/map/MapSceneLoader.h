@@ -234,6 +234,7 @@ class MapSceneLoader {
                                                                            double worldY) const;
     [[nodiscard]] std::filesystem::path
     resolveSceneryConfigPath(const std::string& assetPath) const;
+    static std::string sceneryConfigIdentityKey(const std::filesystem::path& configPath);
     const SceneryObjectConfig* loadSceneryObjectMetadata(const std::string& assetPath);
     const std::vector<std::string>& loadCarparkVehicleList(int listIndex);
     const std::vector<std::size_t>& loadSceneryAsset(const std::filesystem::path& configPath);
@@ -281,6 +282,7 @@ class MapSceneLoader {
     bool loadStarted_ = false;
     bool loadFinished_ = false;
 
+    std::unordered_map<std::string, std::string> sceneryConfigKeysByIdentity;
     std::unordered_map<std::string, std::vector<std::size_t>> sceneryAssetBatches;
     std::unordered_map<std::string, SceneryObjectConfig> sceneryObjectMetadata;
     std::unordered_map<int, std::vector<std::string>> carparkVehicleLists_;

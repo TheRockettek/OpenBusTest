@@ -38,9 +38,22 @@ std::string readTrace(const std::filesystem::path& path) {
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+std::size_t countName(const std::string& contents, const std::string& name) {
+    const std::string marker = "\"name\":\"" + name + "\"";
+    std::size_t count = 0;
+    for (auto position = contents.find(marker); position != std::string::npos;
+         position = contents.find(marker, position + marker.size())) {
+        ++count;
+    }
+    return count;
+}
+
 bool savedTrace(const std::string& contents) {
     return contents.starts_with("{\n  \"traceEvents\": [\n") &&
-           contents.ends_with("\n  ],\n  \"displayTimeUnit\": \"ms\"\n}\n");
+           contents.find("\n  ],\n  \"displayTimeUnit\": \"ms\",\n"
+                         "  \"openbusTraceConfig\": {\n"
+                         "    \"mainThreadFrameStride\": ") != std::string::npos &&
+           contents.ends_with("  }\n}\n");
 }
 
 } // namespace
@@ -48,16 +61,19 @@ bool savedTrace(const std::string& contents) {
 int main(int argc, char** argv) {
     using namespace openbus::rendering;
     const std::string mode = argc > 1 ? argv[1] : "toggle";
-    const auto path = argc > 2 ? std::filesystem::path(argv[2]) :
-                      std::filesystem::temp_directory_path() /
-                      ("openbus_trace_probe_" +
-                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                       ".json");
+    const auto path =
+        argc > 2
+            ? std::filesystem::path(argv[2])
+            : std::filesystem::temp_directory_path() /
+                  ("openbus_trace_probe_" +
+                   std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                   ".json");
     const auto outputPath = mode == "failure" ? path / "missing" / "trace.json" : path;
     if (!setEnvironment("OPENBUS_TRACE", mode == "autostart" ? "1" : "") ||
         !setEnvironment("OPENBUS_TRACE_FILE", outputPath.string()) ||
         !setEnvironment("OPENBUS_TRACE_MAX_EVENTS", mode == "cap" ? "2" : "10000") ||
-        !setEnvironment("OPENBUS_TRACE_MIN_US", "1")) {
+        !setEnvironment("OPENBUS_TRACE_MIN_US", "1") ||
+        !setEnvironment("OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES", mode == "sampling" ? "2" : "1")) {
         std::cerr << "Could not configure trace probe environment\n";
         return 1;
     }
@@ -86,6 +102,20 @@ int main(int argc, char** argv) {
             ++count;
         }
         passed = savedTrace(contents) && count == 2;
+    } else if (mode == "sampling") {
+        SetRecording(true);
+        for (int frame = 0; frame < 5; ++frame) {
+            TraceScope frameScope("frame", "main");
+            record("sampled-child");
+        }
+        record("outside-frame");
+        SetRecording(false);
+        const std::string contents = readTrace(path);
+        passed = savedTrace(contents) && countName(contents, "main") == 3 &&
+                 countName(contents, "sampled-child") == 3 &&
+                 countName(contents, "outside-frame") == 1 &&
+                 contents.find("\"mainThreadFrameStride\": 2") != std::string::npos &&
+                 contents.find("\"minimumScopeDurationUs\": 1") != std::string::npos;
     } else if (mode == "escaping") {
         SetRecording(true);
         const std::string name = "quote \" slash \\ newline\n tab\t control\x01";
@@ -96,13 +126,12 @@ int main(int argc, char** argv) {
         }
         SetRecording(false);
         const std::string contents = readTrace(path);
-        passed = savedTrace(contents) &&
-                 contents.find(
-                     "\"name\":\"quote \\\" slash \\\\ newline\\n tab\\t control\\u0001\"") !=
-                     std::string::npos &&
-                 contents.find(
-                     "\"cat\":\"category \\\" slash \\\\ newline\\n control\\u0002\"") !=
-                     std::string::npos;
+        passed =
+            savedTrace(contents) &&
+            contents.find("\"name\":\"quote \\\" slash \\\\ newline\\n tab\\t control\\u0001\"") !=
+                std::string::npos &&
+            contents.find("\"cat\":\"category \\\" slash \\\\ newline\\n control\\u0002\"") !=
+                std::string::npos;
     } else {
         passed = !IsRecording();
         record("before-start");
@@ -134,8 +163,7 @@ int main(int argc, char** argv) {
              pos = contents.find(explicitFinishMarker, pos + explicitFinishMarker.size())) {
             ++explicitFinishCount;
         }
-        passed = passed && savedTrace(contents) &&
-                 explicitFinishCount == 1 &&
+        passed = passed && savedTrace(contents) && explicitFinishCount == 1 &&
                  contents.find("\"name\":\"first\"") != std::string::npos &&
                  contents.find("\"name\":\"second\"") != std::string::npos &&
                  contents.find("\"name\":\"worker\"") != std::string::npos &&

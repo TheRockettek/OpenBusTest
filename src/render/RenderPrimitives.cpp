@@ -188,70 +188,80 @@ void drawGround(const std::vector<RoadBump>& bumps) {
 
     std::vector<PrimitiveVertex> surfaces;
     std::vector<PrimitiveVertex> lines;
-    surfaces.reserve(bumps.size() * 36);
-    lines.reserve(bumps.size() * 8);
-    const auto addBox = [&](double length, double width, double height, double centerX,
-                            double centerY, double bottomZ, const std::array<double, 3>& topColor,
-                            const std::array<double, 3>& sideColor) {
-        appendColoredBox(surfaces, length, width, height, centerX, centerY, bottomZ, topColor,
-                         sideColor);
-    };
+    {
+        TraceScope meshBuild("render", "RenderPrimitives::drawGround.roadFeatureMeshBuild");
+        surfaces.reserve(bumps.size() * 36);
+        lines.reserve(bumps.size() * 8);
+        const auto addBox = [&](double length, double width, double height, double centerX,
+                                double centerY, double bottomZ,
+                                const std::array<double, 3>& topColor,
+                                const std::array<double, 3>& sideColor) {
+            appendColoredBox(surfaces, length, width, height, centerX, centerY, bottomZ, topColor,
+                             sideColor);
+        };
 
-    for (const RoadBump& bump : bumps) {
-        if (bump.type == RoadFeatureType::Barrier) {
-            addBox(bump.length, bump.width, bump.height, bump.centerX, bump.centerY, 0.0,
-                   {0.85, 0.22, 0.08}, {0.42, 0.08, 0.03});
-            continue;
-        }
-        if (bump.type == RoadFeatureType::Bridge) {
-            const double deckLength = std::clamp(bump.flatLength, 0.0, bump.length);
-            const double rampLength = (bump.length - deckLength) * 0.5;
-            const double segmentLength = rampLength / ROAD_RAMP_SEGMENTS;
-            const double startX = bump.centerX - bump.length * 0.5;
-            const std::array<double, 3> deckColor = {0.36, 0.42, 0.48};
-            const std::array<double, 3> deckSideColor = {0.16, 0.20, 0.24};
-            for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
-                const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                addBox(segmentLength, bump.width, bump.height * phase,
-                       startX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
-                       deckSideColor);
+        for (const RoadBump& bump : bumps) {
+            if (bump.type == RoadFeatureType::Barrier) {
+                addBox(bump.length, bump.width, bump.height, bump.centerX, bump.centerY, 0.0,
+                       {0.85, 0.22, 0.08}, {0.42, 0.08, 0.03});
+                continue;
             }
-            addBox(deckLength, bump.width, bump.height, bump.centerX, bump.centerY, 0.0, deckColor,
-                   deckSideColor);
-            const double downStartX = bump.centerX + bump.length * 0.5 - rampLength;
-            for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
-                const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                addBox(segmentLength, bump.width, bump.height * (1.0 - phase),
-                       downStartX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
-                       deckSideColor);
+            if (bump.type == RoadFeatureType::Bridge) {
+                const double deckLength = std::clamp(bump.flatLength, 0.0, bump.length);
+                const double rampLength = (bump.length - deckLength) * 0.5;
+                const double segmentLength = rampLength / ROAD_RAMP_SEGMENTS;
+                const double startX = bump.centerX - bump.length * 0.5;
+                const std::array<double, 3> deckColor = {0.36, 0.42, 0.48};
+                const std::array<double, 3> deckSideColor = {0.16, 0.20, 0.24};
+                for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
+                    const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
+                    addBox(segmentLength, bump.width, bump.height * phase,
+                           startX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
+                           deckSideColor);
+                }
+                addBox(deckLength, bump.width, bump.height, bump.centerX, bump.centerY, 0.0,
+                       deckColor, deckSideColor);
+                const double downStartX = bump.centerX + bump.length * 0.5 - rampLength;
+                for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
+                    const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
+                    addBox(segmentLength, bump.width, bump.height * (1.0 - phase),
+                           downStartX + segmentLength * (segment + 0.5), bump.centerY, 0.0,
+                           deckColor, deckSideColor);
+                }
+                if (bump.railHeight > 0.0 && bump.railWidth > 0.0) {
+                    const double railY = bump.width * 0.5 - bump.railWidth * 0.5;
+                    const std::array<double, 3> railColor = {0.72, 0.76, 0.80};
+                    const std::array<double, 3> railSideColor = {0.30, 0.34, 0.38};
+                    addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
+                           bump.centerY + railY, bump.height, railColor, railSideColor);
+                    addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
+                           bump.centerY - railY, bump.height, railColor, railSideColor);
+                }
+                continue;
             }
-            if (bump.railHeight > 0.0 && bump.railWidth > 0.0) {
-                const double railY = bump.width * 0.5 - bump.railWidth * 0.5;
-                const std::array<double, 3> railColor = {0.72, 0.76, 0.80};
-                const std::array<double, 3> railSideColor = {0.30, 0.34, 0.38};
-                addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
-                       bump.centerY + railY, bump.height, railColor, railSideColor);
-                addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
-                       bump.centerY - railY, bump.height, railColor, railSideColor);
+            if (bump.type == RoadFeatureType::Incline) {
+                appendRoadIncline(surfaces, lines, bump);
+                continue;
             }
-            continue;
-        }
-        if (bump.type == RoadFeatureType::Incline) {
-            appendRoadIncline(surfaces, lines, bump);
-            continue;
-        }
-        const double halfWidth = bump.width * 0.5;
-        const double segmentLength = bump.length / ROAD_BUMP_SEGMENTS;
-        for (int segment = 0; segment < ROAD_BUMP_SEGMENTS; ++segment) {
-            const double minX = bump.centerX - bump.length * 0.5 + segment * segmentLength;
-            const double maxX = minX + segmentLength;
-            const double height = roadFeatureHeightAt(bump, (minX + maxX) * 0.5 - bump.centerX);
-            addBox(maxX - minX, halfWidth * 2.0, height, (minX + maxX) * 0.5, bump.centerY, 0.0,
-                   {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
+            const double halfWidth = bump.width * 0.5;
+            const double segmentLength = bump.length / ROAD_BUMP_SEGMENTS;
+            for (int segment = 0; segment < ROAD_BUMP_SEGMENTS; ++segment) {
+                const double minX = bump.centerX - bump.length * 0.5 + segment * segmentLength;
+                const double maxX = minX + segmentLength;
+                const double height = roadFeatureHeightAt(bump, (minX + maxX) * 0.5 - bump.centerX);
+                addBox(maxX - minX, halfWidth * 2.0, height, (minX + maxX) * 0.5, bump.centerY, 0.0,
+                       {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
+            }
         }
     }
-    drawPrimitives(surfaces, GL_TRIANGLES);
-    drawLineList(lines);
+    {
+        TraceScope surfaceDraw("render", "RenderPrimitives::drawGround.roadFeatureSurfaces");
+        drawPrimitives(surfaces, GL_TRIANGLES);
+    }
+    {
+        TraceScope lineDraw("render", "RenderPrimitives::drawGround.roadFeatureLines");
+        drawLineList(lines);
+    }
 }
 
 } // namespace openbus::rendering

@@ -5,6 +5,9 @@
 #include "config/TextureSurfaceConfigLoader.h"
 #include "core/Utf8Path.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace openbus::rendering {
 
 namespace {
@@ -32,6 +35,17 @@ double carParkChancePercent() {
 }
 
 } // namespace
+
+std::string
+MapSceneLoader::sceneryConfigIdentityKey(const std::filesystem::path& configPath) {
+    std::string key = openbus::pathToUtf8(configPath.lexically_normal());
+#if defined(_WIN32) || defined(WIN32)
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+#endif
+    return key;
+}
 
 MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
                                std::size_t centerTile, std::size_t groundTexture,
@@ -230,8 +244,12 @@ MapSceneLoader::collectTileSceneryAssets(const openbus::map::MapTileData& tile) 
             return;
         }
         const std::string key = openbus::pathToUtf8(configPath.lexically_normal());
-        if (requestedKeys.insert(key).second) {
-            assetKeys.push_back(key);
+        const std::string identityKey = sceneryConfigIdentityKey(configPath);
+        const auto [canonicalKey, inserted] =
+            sceneryConfigKeysByIdentity.try_emplace(identityKey, key);
+        (void)inserted;
+        if (requestedKeys.insert(identityKey).second) {
+            assetKeys.push_back(canonicalKey->second);
         }
     };
     const auto addParentChain = [&](int parentId) {

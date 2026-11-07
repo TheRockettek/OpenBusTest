@@ -16,6 +16,22 @@ constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
 constexpr std::size_t MAX_VEHICLE_SPOTLIGHTS = 128;
 constexpr std::size_t MAX_MAP_LIGHTS = 128;
 
+enum class GpuTimingPass : std::uint8_t { MainView, Reflection };
+
+class GpuTimerScope {
+  public:
+    explicit GpuTimerScope(GpuTimingPass pass);
+    ~GpuTimerScope();
+
+    GpuTimerScope(const GpuTimerScope&) = delete;
+    GpuTimerScope& operator=(const GpuTimerScope&) = delete;
+
+  private:
+    bool active_ = false;
+};
+
+void beginGpuTimingFrame();
+
 struct VehicleSpotlight {
     std::array<double, 3> position = {};
     std::array<double, 3> direction = {};
