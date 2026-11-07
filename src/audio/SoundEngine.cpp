@@ -4,6 +4,7 @@
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/PerfTrace.h"
+#include "core/Utf8Path.h"
 
 #include <AL/al.h>
 #include <AL/alc.h>
@@ -112,6 +113,7 @@ struct SoundEngine::Backend {
     ALCcontext* context = nullptr;
     std::mutex mutex;
     std::unordered_map<std::string, std::shared_ptr<Clip>> clips;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> failedClips;
     std::vector<ActiveSource> active;
     SoundPlaybackHandle nextHandle = 1;
     bool dopplerEnabled = false;
@@ -248,20 +250,33 @@ struct SoundEngine::Backend {
 
     std::shared_ptr<Clip> loadClipLocked(const std::filesystem::path& path) {
         openbus::rendering::TraceScope trace("sound", "Backend::loadClipLocked");
-        const std::string key = path.lexically_normal().string();
+        const std::string key = openbus::pathToUtf8(path.lexically_normal().make_preferred());
         const auto found = clips.find(key);
         if (found != clips.end()) {
             return found->second;
         }
-        auto clip = decodeWav(path);
-        if (!clip) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto failed = failedClips.find(key);
+        if (failed != failedClips.end() && now < failed->second) {
             return {};
         }
+        auto clip = decodeWav(path);
+        if (!clip) {
+            if (failed == failedClips.end()) {
+                soundLog.Warning("Unable to decode sound: " + openbus::pathToUtf8(path) +
+                                 " (retrying periodically)");
+            }
+            failedClips.insert_or_assign(key, now + std::chrono::seconds(1));
+            return {};
+        }
+        failedClips.erase(key);
         alGenBuffers(1, &clip->buffer);
         alBufferData(clip->buffer, clip->format, clip->samples.data(),
                      static_cast<ALsizei>(clip->samples.size() * sizeof(std::int16_t)), clip->rate);
         if (alGetError() != AL_NO_ERROR) {
             alDeleteBuffers(1, &clip->buffer);
+            soundLog.Warning("Unable to create OpenAL buffer for sound: " +
+                             openbus::pathToUtf8(path));
             return {};
         }
         clips.emplace(key, clip);
@@ -346,7 +361,6 @@ struct SoundEngine::Backend {
                                            const SoundPlaybackParameters& parameters) {
         const std::shared_ptr<Clip> clip = loadClipLocked(path);
         if (!clip) {
-            soundLog.Warning("Unable to decode sound: " + path.string());
             return 0;
         }
         ALuint source = 0;
@@ -371,7 +385,7 @@ struct SoundEngine::Backend {
         alSourcePlay(source);
         if (alGetError() != AL_NO_ERROR) {
             alDeleteSources(1, &source);
-            soundLog.Warning("Unable to start OpenAL sound source: " + path.string());
+            soundLog.Warning("Unable to start OpenAL sound source: " + openbus::pathToUtf8(path));
             return 0;
         }
         SoundPlaybackHandle handle = nextHandle++;
@@ -384,7 +398,8 @@ struct SoundEngine::Backend {
             const double distance = distanceBetween(parameters.position, lastListenerPosition);
             if (withinLoggingRange(distance, parameters.maxDistance)) {
                 std::ostringstream message;
-                message << "OpenAL source started: handle=" << handle << " file=" << path.string()
+                message << "OpenAL source started: handle=" << handle
+                        << " file=" << openbus::pathToUtf8(path)
                         << " loop=" << (looped ? "true" : "false")
                         << " source_world=" << formatWorldPosition(parameters.position)
                         << " gain=" << std::fixed << std::setprecision(3) << parameters.gain
@@ -396,9 +411,6 @@ struct SoundEngine::Backend {
                 soundLog.Trace(message.str());
             }
         }
-        // soundLog.Log("OpenAL playback started: file=" + path.string() + " loop=" +
-        //              (looped ? "true" : "false") + " gain=" + std::to_string(parameters.gain) +
-        //              " pitch=" + std::to_string(parameters.pitch));
         return handle;
     }
 
@@ -409,7 +421,8 @@ struct SoundEngine::Backend {
             if (!loggedUnavailableContext) {
                 soundLog.Warning(
                     "Skipping sound playback because the OpenAL context is unavailable: file=" +
-                    path.string() + " source_world=" + formatWorldPosition(parameters.position));
+                    openbus::pathToUtf8(path) +
+                    " source_world=" + formatWorldPosition(parameters.position));
                 loggedUnavailableContext = true;
             }
             return 0;
@@ -483,7 +496,7 @@ struct SoundEngine::Backend {
                 found->lastLoggedPosition = parameters.position;
                 std::ostringstream message;
                 message << "OpenAL source moved: handle=" << handle
-                        << " file=" << found->path.string()
+                        << " file=" << openbus::pathToUtf8(found->path)
                         << " source_world=" << formatWorldPosition(parameters.position)
                         << " gain=" << std::fixed << std::setprecision(3) << parameters.gain
                         << " rolloff=" << parameters.rolloffFactor

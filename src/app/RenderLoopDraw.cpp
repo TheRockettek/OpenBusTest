@@ -1133,8 +1133,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                                     mainViewMinimumObjectViewportFraction_,
                                                     &visibilityFrustum);
                 } else {
-                    applyVehiclePlacement(
-                        makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ));
+                    applyVehiclePlacement(makeModelRootPlacement(
+                        vehicle->trafficRenderPlacement.value_or(vehicle->placement),
+                        vehicle->modelOffsetZ));
                     vehicle->prepareFrameVisibility(
                         RenderViewContext::NonPlayer, framebufferWidth_, framebufferHeight_,
                         mainViewMinimumObjectViewportFraction_, &visibilityFrustum);
@@ -1337,7 +1338,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         if (vehicle.get() == playerVehicle_) {
             applyPose(chassis);
         } else {
-            VehiclePlacement placed = vehicle->placement;
+            VehiclePlacement placed = vehicle->trafficRenderPlacement.value_or(vehicle->placement);
             if (mapRenderer_ != nullptr && !vehicle->followsMapTrafficRoute) {
                 placed.position[2] =
                     mapRenderer_->terrainHeightAt(placed.position[0], placed.position[1])
@@ -1866,9 +1867,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         (vehicle.get() == playerVehicle_) != playerVehicles) {
                         continue;
                     }
-                    const std::array<double, 3>& position = vehicle.get() == playerVehicle_
-                                                                ? chassis.position
-                                                                : vehicle->placement.position;
+                    const std::array<double, 3>& position =
+                        vehicle.get() == playerVehicle_
+                            ? chassis.position
+                            : vehicle->trafficRenderPlacement.value_or(vehicle->placement).position;
                     const double dx = position[0] - eye[0];
                     const double dy = position[1] - eye[1];
                     const double dz = position[2] - eye[2];
@@ -1892,7 +1894,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 }
                 const RenderViewContext vehicleContext =
                     vehicle.get() == playerVehicle_ ? context : RenderViewContext::NonPlayer;
-                VehiclePlacement placedVehicle = vehicle->placement;
+                VehiclePlacement placedVehicle =
+                    vehicle->trafficRenderPlacement.value_or(vehicle->placement);
                 if (!vehicle->loaded || vehicle->displayLists.empty()) {
                     continue;
                 }
@@ -2149,6 +2152,13 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 throw std::runtime_error("Cannot sample a scheduled AI bus passenger pose");
             }
             busPose->position[2] += trafficVehicle.vehicle->aiDeltaHeight;
+            if (trafficVehicle.vehicle->trafficRenderPlacement) {
+                const VehiclePlacement& rendered = *trafficVehicle.vehicle->trafficRenderPlacement;
+                busPose->position = rendered.position;
+                busPose->headingRadians = (90.0 - rendered.yawDegrees) * std::numbers::pi / 180.0;
+                busPose->pitchRadians = rendered.pitchDegrees * std::numbers::pi / 180.0;
+                busPose->rollRadians = rendered.rollDegrees * std::numbers::pi / 180.0;
+            }
             const openbus::map::MapTrafficPassengerStop* boardingStop = nullptr;
             if (trafficVehicle.bus->passengerStopArrived &&
                 trafficVehicle.bus->nextPassengerStopIndex <
@@ -3842,6 +3852,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         wasRecording = recording;
     }
 #endif
+    if (!renderingReflection_ && mapRenderer_ != nullptr) {
+        mapRenderer_->finishFrame();
+    }
 }
 
 void RenderLoop::endFrame() {

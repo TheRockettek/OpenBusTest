@@ -13,7 +13,8 @@ struct MapWaterVertex {
 };
 
 // Builds the four corners of one water quad in SW, SE, NE, NW order. The
-// corner interpretation is reverse-engineered from neighboring OMSI sidecars.
+// Sidecar heights are stored SW, SE, NW, NE; the returned corners are wound
+// SW, SE, NE, NW. The interpretation is inferred from neighboring sidecars.
 std::array<MapWaterVertex, 4> buildMapWaterSurfaceVertices(int tileX, int tileY,
                                                            const WaterSurface& surface,
                                                            double tileSize = OMSI_TILE_SIZE_METERS);

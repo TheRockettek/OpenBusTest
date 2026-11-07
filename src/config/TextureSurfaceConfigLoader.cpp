@@ -53,8 +53,6 @@ loadTextureSurfaceConfiguration(const std::filesystem::path& texturePath) {
     Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
-            result.diagnostics.warning(line.number, "section",
-                                       "unexpected data outside a texture surface section");
             continue;
         }
         const std::string keyword = lower(line.keyword());

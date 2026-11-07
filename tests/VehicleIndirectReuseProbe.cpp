@@ -1147,6 +1147,7 @@ int main(int argc, char** argv) {
             ReflectionRenderer reflections;
             reflections.initialize(cameras);
             bool rendered = false;
+            std::vector<std::uint8_t> gpuReflectionPixels;
             reflections.render(
                 bus, cameras, {0, 0, 64, 64},
                 [](std::size_t) { return ReflectionRequirement{true, 64}; },
@@ -1164,11 +1165,80 @@ int main(int argc, char** argv) {
                         std::cerr << "Undersized part was submitted in a reflection pass\n";
                         passed = false;
                     }
+                    const unsigned int identityDispatchCount = dispatchCount;
                     draw(VehicleRenderPass::Opaque);
+                    const std::uint64_t identityGeneration = vehicle.viewDepthGeneration;
                     draw(VehicleRenderPass::Transparent);
+                    if (dispatchCount != identityDispatchCount + 1 ||
+                        vehicle.viewDepthGeneration != identityGeneration) {
+                        std::cerr << "Reflection opaque/transparent passes did not reuse culling "
+                                     "and sort preparation\n";
+                        passed = false;
+                    }
                     if (frameReflectionTriangleCount() == 0 ||
                         vehicle.transparentBatchesScratch.empty()) {
-                        std::cerr << "Disabled reflection cutoff did not restore vehicle draws\n";
+                        std::cerr << "Disabled reflection cutoff did not restore vehicle draws: "
+                                  << "triangles=" << frameReflectionTriangleCount()
+                                  << ", transparent batches="
+                                  << vehicle.transparentBatchesScratch.size() << '\n';
+                        passed = false;
+                    }
+                    const unsigned int reverseDispatchCount = dispatchCount;
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    resetFrameReflectionTriangleCount();
+                    setModelViewMatrix(multiplyMatrix4(translationMatrix({0, 0, -20}),
+                                                       rotationMatrix(120, 0, 1, 0)));
+                    draw(VehicleRenderPass::Opaque);
+                    const std::uint64_t reverseGeneration = vehicle.viewDepthGeneration;
+                    draw(VehicleRenderPass::Transparent);
+                    Vehicle::Batch& reflectionBatch = vehicle.displayLists[0].batches[1];
+                    const GLuint reflectionSortBuffer =
+                        vehicle.sortTransparentBatch(reflectionBatch, vehicle.displayLists[0], 1);
+                    std::array<GLuint, 6> reflectionSortedIndices = {};
+                    if (reflectionSortBuffer != 0 && pglGetBufferSubData != nullptr) {
+                        pglBindBuffer(GL_ARRAY_BUFFER, reflectionSortBuffer);
+                        pglGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(reflectionSortedIndices),
+                                            reflectionSortedIndices.data());
+                    }
+                    if (dispatchCount != reverseDispatchCount + 1 ||
+                        reverseGeneration == identityGeneration ||
+                        vehicle.viewDepthGeneration != reverseGeneration ||
+                        vehicle.transparentBatchesScratch.size() != 1 ||
+                        vehicle.transparentBatchesScratch[0].part != &vehicle.displayLists[0] ||
+                        !vehicle.displayLists[0].indirectEligible || reflectionSortBuffer == 0 ||
+                        reflectionSortedIndices != std::array<GLuint, 6>{0, 1, 2, 3, 4, 5}) {
+                        std::cerr << "Reflection view change reused stale culling or transparent "
+                                     "sorting: dispatches="
+                                  << dispatchCount - reverseDispatchCount
+                                  << ", generation=" << reverseGeneration << "->"
+                                  << vehicle.viewDepthGeneration
+                                  << " (identity=" << identityGeneration
+                                  << "), batches=" << vehicle.transparentBatchesScratch.size()
+                                  << ", eligible=" << vehicle.displayLists[0].indirectEligible
+                                  << ", sort buffer=" << reflectionSortBuffer << ", indices=";
+                        for (const GLuint index : reflectionSortedIndices) {
+                            std::cerr << index << ',';
+                        }
+                        if (!vehicle.transparentBatchesScratch.empty()) {
+                            std::cerr << ", order="
+                                      << (vehicle.transparentBatchesScratch[0].part ==
+                                          &vehicle.displayLists[0]);
+                        }
+                        std::cerr << '\n';
+                        passed = false;
+                    }
+                    gpuReflectionPixels.resize(static_cast<std::size_t>(width * height * 4));
+                    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 gpuReflectionPixels.data());
+                    setModelViewMatrix(translationMatrix({100, 0, 0}));
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    resetFrameReflectionTriangleCount();
+                    draw(VehicleRenderPass::Opaque);
+                    draw(VehicleRenderPass::Transparent);
+                    if (vehicle.displayLists[0].indirectEligible ||
+                        !vehicle.transparentBatchesScratch.empty() ||
+                        frameReflectionTriangleCount() != 0) {
+                        std::cerr << "Reflection culling retained an off-frustum vehicle part\n";
                         passed = false;
                     }
                     setFrameTriangleCountReflectionPass(false);
@@ -1176,6 +1246,31 @@ int main(int argc, char** argv) {
                 [](int width, int height) { setPerspective(width, height, 90); });
             if (!rendered) {
                 std::cerr << "Reflection fixture did not render\n";
+                passed = false;
+            }
+            initializeComputeCulling(false, false);
+            bool cpuRendered = false;
+            std::vector<std::uint8_t> cpuReflectionPixels;
+            reflections.render(
+                bus, cameras, {0, 0, 64, 64},
+                [](std::size_t) { return ReflectionRequirement{true, 64}; },
+                [&](const BusSimulation&, std::size_t, int width, int height) {
+                    cpuRendered = true;
+                    setPerspective(width, height, 90);
+                    setModelViewMatrix(multiplyMatrix4(translationMatrix({0, 0, -20}),
+                                                       rotationMatrix(120, 0, 1, 0)));
+                    setFrameTriangleCountReflectionPass(true);
+                    resetFrameReflectionTriangleCount();
+                    draw(VehicleRenderPass::Opaque);
+                    draw(VehicleRenderPass::Transparent);
+                    cpuReflectionPixels.resize(static_cast<std::size_t>(width * height * 4));
+                    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 cpuReflectionPixels.data());
+                    setFrameTriangleCountReflectionPass(false);
+                },
+                [](int width, int height) { setPerspective(width, height, 90); });
+            if (!cpuRendered || cpuReflectionPixels != gpuReflectionPixels) {
+                std::cerr << "Vehicle CPU and compute-indirect reflection renders differ\n";
                 passed = false;
             }
         }

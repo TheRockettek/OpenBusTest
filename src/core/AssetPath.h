@@ -12,6 +12,14 @@
 
 namespace openbus::assets {
 
+inline std::filesystem::path textureSubdirectoryPath(const std::filesystem::path& root,
+                                                      const std::filesystem::path& relative) {
+    if (relative.parent_path().empty()) {
+        return {};
+    }
+    return root / relative.parent_path() / "texture" / relative.filename();
+}
+
 inline std::filesystem::path
 resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
     const std::filesystem::path requested = requestedPath.lexically_normal();

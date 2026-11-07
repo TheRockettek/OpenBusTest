@@ -2,6 +2,7 @@
 #include "assets/ScreenshotWriter.h"
 #include "core/Logger.h"
 #include "core/Variables.h"
+#include "map/MapConfigLoader.h"
 #include "map/MapSplineGeometry.h"
 #include "map/MapTrafficRuntime.h"
 #include "map/MapTileWindow.h"
@@ -247,6 +248,7 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
     writeLamp(root / "model" / "red.x", "1;0;0");
     writeLamp(root / "model" / "yellow.x", "1;1;0");
     writeLamp(root / "model" / "green.x", "0;1;0");
+    writeLamp(root / "model" / "unlit.x", "0;0;0");
     writeText(root / "shared.sco", "[mesh]\nred.x\n");
     writeText(root / "retry.sco", "[tree]\nretry.tga\n10\n10\n1\n1\n");
     const std::array<std::uint8_t, 2> brokenTexture = {};
@@ -259,16 +261,20 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
     writeText(root / "head.sco",
               "[script]\n1\nscript\\traf_car.osc\n"
               "[varnamelist]\n1\nscript\\traf_car_varlist.txt\n"
+              "[mesh]\nunlit.x\n"
               "[mesh]\nred.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
-              "[visible]\nmain_red\n1\n"
+              "[alphascale]\nmain_red\n"
               "[mesh]\nyellow.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
-              "[visible]\nmain_yellow\n1\n"
+              "[alphascale]\nmain_yellow\n"
               "[mesh]\ngreen.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
-              "[visible]\nmain_green\n1\n");
+              "[alphascale]\nmain_green\n");
     writeText(root / "support.sco",
               "[new_attachment]\nhead_mount\nattach_trans\n0\n0\n0\n");
     writeText(root / "route_attachment.sco",
               "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n0\n3\n0\n0\n");
+    writeText(root / "duplicate_attachment.sco",
+              "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
+              "[mesh]\nred.x\n");
     writeText(root / "human_path_attachment.sco",
               "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n1\n3\n0\n0\n");
     writeText(root / "Script" / "traf_car_varlist.txt",
@@ -337,6 +343,10 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
                                     "[splineAttachement]\n0\nhuman_path_attachment.sco\n207\n"
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[splineAttachement]\n0\nduplicate_attachment.sco\n310\n"
+                                    "0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[splineAttachement]\n0\nduplicate_attachment.sco\n310\n"
+                                    "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
                                     "[object]\n0\nhuman_path_attachment.sco\n209\n"
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n"
                                   : "[object]\n0\nshared.sco\n" + std::to_string(200 + tileX) +
@@ -395,6 +405,8 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
               unreferencedAttachmentRoute->segments.front().spline.placement.splineId == 206 &&
               unreferencedAttachmentRoute->segments.front().sceneryPathIndex == 0,
           "Map-wide indexing must add an unreferenced attachment's road lane");
+    check(!renderer.buildDrivingRoute(310).has_value(),
+          "Duplicate spline-attachment IDs must remain ambiguous for route lookup");
     const auto unreferencedHumanJourney =
         renderer.passengerPedestrianJourneyNear({1200.0, 0.0, 20.0}, 0);
     check(unreferencedHumanJourney.has_value() &&
@@ -644,8 +656,11 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
           "Background road geometry preparation must publish both streamed tiles");
     check(streamedStats.totalWaterBatches == 3,
           "Background water sidecar preparation must publish both streamed tiles");
-    check(streamedStats.activeSceneryObjects == 3,
-          "Tiles sharing a scenery asset must both publish their placements");
+    check(streamedStats.activeSceneryObjects == 5,
+          "Duplicate spline-attachment IDs must not suppress their visual placements");
+    check(logContains(probeLog, "duplicate spline-attachment ID index entries",
+                      "visual placements processed independently; ID references ambiguous"),
+          "Duplicate spline-attachment diagnostics must distinguish references from visuals");
     check(streamedStats.totalTextures == 7,
           "Streamed road and terrain tiles must reuse shared textures and publish tile masks");
 
@@ -898,17 +913,75 @@ void runMapRoadScreenshot(const std::filesystem::path& root,
               << "VISIBLE_ROAD_PIXELS=" << visibleRoadPixels << '\n';
 }
 
+void runInstalledMapScreenshot(const std::filesystem::path& omsiRoot,
+                               const std::filesystem::path& mapPath,
+                               const std::filesystem::path& outputPath, double x, double y,
+                               int width, int height, int dayOfYear, bool snow) {
+    check(std::isfinite(x) && std::isfinite(y), "Map screenshot coordinates must be finite");
+    const auto map = openbus::map::loadMapDefinition(mapPath);
+    const int tileX = openbus::map::mapWorldTile(x, map.coordinates.tileSize);
+    const int tileY = openbus::map::mapWorldTile(y, map.coordinates.tileSize);
+    const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& candidate) {
+        return candidate.x == tileX && candidate.y == tileY;
+    });
+    check(tile != map.tiles.end(), "Map screenshot coordinates do not identify a map tile");
+    SimulationState simulation;
+    if (dayOfYear != 0) {
+        check(dayOfYear >= 1 && dayOfYear <= 366, "Screenshot day of year must be 1 through 366");
+        simulation.sharedVariables().set("dayofyear", static_cast<float>(dayOfYear));
+    }
+    if (snow) {
+        auto weather = simulation.sharedVariables().weather();
+        weather.omsiSnow = true;
+        simulation.sharedVariables().setWeather(weather);
+        simulation.sharedVariables().seedRoadWeatherFromPreset();
+    }
+    AssetRequestManager assets;
+    MapRenderer renderer(map, static_cast<std::size_t>(tile - map.tiles.begin()), x, y, 0, omsiRoot,
+                         simulation, assets);
+    check(renderer.initialWindowReady(), "Installed map window did not become ready");
+    const auto heightAtTarget = renderer.terrainHeightAt(x, y);
+    check(heightAtTarget.has_value(), "Map screenshot terrain height is unavailable");
+    glViewport(0, 0, width, height);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClearColor(0.22F, 0.38F, 0.22F, 1.0F);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    setPerspective(width, height, 48.0);
+    lookAt(x + 25.0, y - 38.0, *heightAtTarget + 35.0, x, y, *heightAtTarget + 3.0);
+    setLightingViewMatrix(modelViewMatrix());
+    renderer.draw();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    auto queue = assets.queueStats();
+    while ((queue.queuedTasks != 0 || queue.activeWorkers != 0) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        queue = assets.queueStats();
+    }
+    check(queue.queuedTasks == 0 && queue.activeWorkers == 0,
+          "Timed out waiting for screenshot texture preparation");
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.draw();
+    renderer.finishFrame();
+    glFinish();
+    check(openbus::rendering::saveFramebufferPng(outputPath, width, height),
+          "Could not save installed-map screenshot");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     const bool conditional = argc == 2 && std::string(argv[1]) == "--conditional";
-    const bool attachmentPathOnly =
-        argc == 2 && std::string(argv[1]) == "--attachment-path";
+    const bool attachmentPathOnly = argc == 2 && std::string(argv[1]) == "--attachment-path";
     const bool mapRoadScreenshot =
         argc == 3 && std::string(argv[1]) == "--map-road-screenshot";
-    if (argc > 3 || (argc > 1 && !conditional && !attachmentPathOnly && !mapRoadScreenshot)) {
+    const bool installedMapScreenshot =
+        (argc == 7 || argc == 9) && std::string(argv[1]) == "--installed-map-screenshot";
+    if (argc > 1 && !conditional && !attachmentPathOnly && !mapRoadScreenshot &&
+        !installedMapScreenshot) {
         std::cerr << "Expected no arguments, --conditional, --attachment-path, or "
-                     "--map-road-screenshot <output.png>\n";
+                     "--map-road-screenshot <output.png>, or --installed-map-screenshot "
+                     "<omsi root> <map path> <output.png> <x> <y> [<day-of-year> dry|snow]\n";
         return 1;
     }
     if (!glfwInit()) {
@@ -924,15 +997,15 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, indirect ? 4 : 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    const int width = mapRoadScreenshot ? 1024 : 32;
-    const int height = mapRoadScreenshot ? 768 : 32;
+    const int width = mapRoadScreenshot || installedMapScreenshot ? 1024 : 32;
+    const int height = mapRoadScreenshot || installedMapScreenshot ? 768 : 32;
     GLFWwindow* window = glfwCreateWindow(width, height, "Map rendering probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
         return 77;
     }
     glfwMakeContextCurrent(window);
-    const auto root = openbus::probe::makeProbeDirectory("openbus-traffic-light-rendering");
+    const auto root = openbus::probe::makeProbeDirectory("openbus-traffic-light-rendering", false);
     configureProbeLog(root / "probe.log");
     bool passed = loadOpenGLFunctions() && initializeCoreRenderer();
     bool unavailable = false;
@@ -951,6 +1024,20 @@ int main(int argc, char** argv) {
         try {
             if (mapRoadScreenshot) {
                 runMapRoadScreenshot(root, argv[2], width, height);
+            } else if (installedMapScreenshot) {
+                int dayOfYear = 0;
+                if (argc == 9) {
+                    check(std::string_view(argv[8]) == "dry" || std::string_view(argv[8]) == "snow",
+                          "Screenshot weather must be dry or snow");
+                    std::size_t parsedLength = 0;
+                    dayOfYear = std::stoi(argv[7], &parsedLength);
+                    check(parsedLength == std::string_view(argv[7]).size() &&
+                              dayOfYear >= 1 && dayOfYear <= 366,
+                          "Screenshot day of year must be an integer from 1 through 366");
+                }
+                runInstalledMapScreenshot(argv[2], argv[3], argv[4], std::stod(argv[5]),
+                                          std::stod(argv[6]), width, height, dayOfYear,
+                                          argc == 9 && std::string_view(argv[8]) == "snow");
             } else {
                 runProbe(root, conditional, attachmentPathOnly);
                 check(!queriesRequested || occlusionQueryCount > 0,

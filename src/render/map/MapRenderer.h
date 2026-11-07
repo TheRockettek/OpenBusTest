@@ -178,6 +178,8 @@ class MapRenderer {
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;
     std::optional<double> terrainHeightAt(double worldX, double worldY) const;
     void draw(bool renderTypeFourOnly = false, double minimumObjectViewportFraction = 0.0) const;
+    // Called after every view has drawn, including reflections.
+    void finishFrame() const;
 
   private:
     friend class MapSceneLoader;

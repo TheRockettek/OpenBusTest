@@ -174,6 +174,7 @@ target_sources(OpenBusMapTrafficRuntimeProbe PRIVATE
     "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTimetableController.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/traffic/ScheduledBusTiming.cpp")
 openbus_add_probe(OpenBusTrafficDebugDirectionProbe TrafficDebugDirectionProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusTrafficPresentationProbe TrafficPresentationProbe.cpp LIBS openbus_map)
 add_executable(OpenBusMapTrafficWorkerProbe MapTrafficWorkerProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/MapTrafficWorker.cpp")
 target_include_directories(OpenBusMapTrafficWorkerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
@@ -204,6 +205,12 @@ add_test(NAME OpenBusMapPassengerServiceProbe
 
 # Audio
 openbus_add_probe(OpenBusSoundEngineProbe SoundEngineProbe.cpp LIBS openbus_audio)
+set_tests_properties(OpenBusSoundEngineProbe PROPERTIES ENVIRONMENT "OPENBUS_LOG_LEVEL=INFO")
+openbus_add_probe(OpenBusAudioFailureRecoveryProbe AudioFailureRecoveryProbe.cpp
+    LIBS openbus_audio NO_TEST)
+add_test(NAME OpenBusAudioFailureRecoveryProbe COMMAND OpenBusAudioFailureRecoveryProbe)
+set_tests_properties(OpenBusAudioFailureRecoveryProbe PROPERTIES
+    ENVIRONMENT "ALSOFT_DRIVERS=null;OPENBUS_LOG_LEVEL=WARNING" SKIP_RETURN_CODE 77)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     openbus_add_probe(OpenBusAudioAvailabilityProbe AudioAvailabilityProbe.cpp
         LIBS openbus_audio NO_TEST)
@@ -283,6 +290,14 @@ foreach(backend IN ITEMS cpu compute-indirect)
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --item-lightmap)
     add_test(NAME OpenBusMapSceneryNormalsRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --normals)
+    add_test(NAME OpenBusMapSceneryCutoutRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --cutout)
+    add_test(NAME OpenBusMapTreeSeasonRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --tree-season)
+    add_test(NAME OpenBusMapScenerySeasonRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --mesh-season)
+    add_test(NAME OpenBusMapWaterCornerRenderingProbe.${backend}
+        COMMAND OpenBusMapSceneryTexcoordRenderingProbe --water-corners)
     add_test(NAME OpenBusMapSplineLabelsRenderingProbe.${backend}
         COMMAND OpenBusMapSceneryTexcoordRenderingProbe --spline-labels)
     add_test(NAME OpenBusMapRoadWeatherRenderingProbe.${backend}
@@ -304,6 +319,10 @@ foreach(backend IN ITEMS cpu compute-indirect)
         OpenBusMapSceneryNightmapRenderingProbe.${backend}
         OpenBusMapSceneryItemLightmapRenderingProbe.${backend}
         OpenBusMapSceneryNormalsRenderingProbe.${backend}
+        OpenBusMapSceneryCutoutRenderingProbe.${backend}
+        OpenBusMapTreeSeasonRenderingProbe.${backend}
+        OpenBusMapScenerySeasonRenderingProbe.${backend}
+        OpenBusMapWaterCornerRenderingProbe.${backend}
         OpenBusMapSplineLabelsRenderingProbe.${backend}
         OpenBusMapRoadWeatherRenderingProbe.${backend}
         OpenBusMapTerrainWeatherRenderingProbe.${backend}

@@ -207,7 +207,7 @@ state. Their payloads are not encoded as ordinary values in the tile text.
 OpenBus decodes `.map.water` as a little-endian 32-bit surface count followed
 by four little-endian float32 heights per surface. It currently renders each
 record as a translucent quad covering its owning 300 m tile, interpreting the
-heights as south-west, south-east, north-east, and north-west corners. This
+heights as south-west, south-east, north-west, and north-east corners. This
 corner order is an inference from shared-edge continuity in installed map
 sidecars, not a pinned merger guarantee. Water material/opacity parity,
 multi-surface semantics, and native visual parity remain unverified; water is

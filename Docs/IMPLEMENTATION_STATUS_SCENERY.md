@@ -10,6 +10,10 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
   cache key; metadata caching retains its exact normalized-path identity.
 - `[tree]` produces a crossed-textured-plane preview, not the authored helper mesh/tree behavior.
 - Model geometry, including terrain, is rendered one-sided by default; terrain triangle indices are wound to match the renderer's front-face convention. SCO `[helparrow]` is recognized as metadata but does not change the global face policy.
+- Nested texture references such as `subfolder/file.dds` can resolve to
+  `subfolder/texture/file.dds` as well as the existing local and global
+  locations. Spline rendering and road surface metadata use the same nested
+  local layout.
 - O3D and explicit DirectX `.x` normals retain their authored direction when
   converted to map axes, so upward junction surfaces receive the same
   directional lighting as upward spline surfaces. Live-map parity remains
@@ -26,6 +30,26 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[absheight]` affects scenery height placement. `[new_attachment]` transforms can be used to resolve static `[attachObj]` children.
 - `[attachObj]` translations follow the decoded scenery mesh's local X/Y basis. This keeps the London traffic-light bracket's authored CFG-Y arm offset aligned with its O3D mesh; attachment rotation parity remains provisional.
 - Repeated SCO `[matl]` overrides are associated with O3D material slots by matching texture basename and authored occurrence order when numeric slot IDs disagree. This handles the London underground entrance's repeated `Fence_3.dds` alpha modes without overwriting unrelated entrance and kerb textures.
+- Scenery cutout materials (`[matl_alpha] 1`) with zero mesh-material alpha
+  use the texture alpha rather than suppressing the entire mesh. This restores
+  the HK West Kowloon yellow junction box; other alpha modes retain their
+  material alpha. Broader native material-alpha parity remains unverified.
+- Tree previews and scenery mesh base textures use map season ranges for `Summer`, `Spring`, `Fall`, and
+  `Winter` texture subdirectories, and use `WinterSnow` when ground snow
+  exceeds 1/255. Missing variants fall back to the ordinary texture (or winter
+  for missing or invalid snow variants). Textures are loaded asynchronously
+  when first needed, and idle completed decodes are released on a time-based
+  sweep. Date-boundary and snow-threshold parity remain provisional; dynamic
+  texture overlays, terrain and splines do not yet use this seasonal selection.
+- Imported X/O3D scenery uses white ambient material separately from the
+  authored diffuse colour, consistent with the installed OMSI mesh-material
+  initialization. Authored shadow meshes and generated terrain and road
+  materials retain their existing tint behavior. The ambient/diffuse split is
+  covered by pixel and loaded-mesh probes; full environmental-lighting parity
+  remains unverified.
+- `[LightMapMapping]` remains unimplemented. It enables the tile lightmap to
+  affect an object, according to the [OMSI WebDisk object reference](https://reboot.omsi-webdisk.de/wiki/entry/8-objekt/);
+  it is distinct from a material's `[matl_lightmap]` emissive texture.
 - `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and `[constfile]` resources initialize per-placement scenery scripts. Basic `init`/`frame`, `[visible]`, and per-placement `[usescripttexture]` / `[usetexttexture]` surfaces are active. Counted map `[object]` labels feed recognized label-oriented inline SCO `[texttexture]` slots by slot index; this format/ordering is inferred from installed assets and still needs native OMSI visual comparison.
 - `[texcoordtransX]` and `[texcoordtransY]` translate material UVs using each
   placement's current script variables, as for vehicle materials. Installed-scene

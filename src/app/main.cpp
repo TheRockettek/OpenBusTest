@@ -16,6 +16,7 @@
 #include "app/RenderLoop.h"
 #include "app/SteamPresence.h"
 #include "app/vehicle/Vehicle.h"
+#include "render/CameraMath.h"
 
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -733,11 +734,6 @@ std::string formatPlacement(const VehiclePlacement& placement) {
     formatted << std::fixed << std::setprecision(3) << '(' << placement.position[0] << ", "
               << placement.position[1] << ", " << placement.position[2] << ')';
     return formatted.str();
-}
-
-VehiclePlacement placementFromPose(const BodyPose& pose) {
-    return {pose.position,
-            std::atan2(pose.rotation[0], pose.rotation[3]) * 180.0 / std::numbers::pi};
 }
 
 VehiclePlacement onFootExitPlacement(const VehiclePlacement& busPlacement, double busWidthMeters) {
@@ -2275,7 +2271,8 @@ int main() {
                         }
                         if (renderer.consumeLeaveMapBusRequest() && playerVehicle != nullptr) {
                             const VehiclePlacement busPlacement =
-                                placementFromPose(simulation->chassisPose());
+                                openbus::rendering::makeYawPlacementFromPose(
+                                    simulation->chassisPose());
                             mapBusVehicle->placement = busPlacement;
                             mapBusVehicle->odeSimulation = nullptr;
                             simulation->setFrozen(true);
@@ -2289,7 +2286,8 @@ int main() {
                             const double previousSimulationTime = simulation->simulationTime();
                             const bool wasDriving = playerVehicle != nullptr;
                             const VehiclePlacement busPlacement =
-                                wasDriving ? placementFromPose(simulation->chassisPose())
+                                wasDriving ? openbus::rendering::makeYawPlacementFromPose(
+                                                 simulation->chassisPose())
                                            : mapBusVehicle->placement;
                             const std::array<double, 3> currentPosition =
                                 renderer.streamingPosition(*simulation);

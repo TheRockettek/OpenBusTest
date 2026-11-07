@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/traffic/ScheduledBusState.h"
+#include "app/traffic/TrafficPresentation.h"
 #include "map/MapTrafficRuntime.h"
 
 #include <cstddef>
@@ -32,6 +33,7 @@ struct TrafficVehicleState {
     double debugCandidateBlockSeconds = 0.0;
     double debugBlockReasonHoldSeconds = 0.0;
     std::optional<openbus::map::MapTrafficPose> cachedPose;
+    TrafficPresentation presentation;
     double cachedPoseDistanceMeters = 0.0;
     double cachedPoseLateralOffsetMeters = 0.0;
     double cachedTravelHeadingRadians = 0.0;

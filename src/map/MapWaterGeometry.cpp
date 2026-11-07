@@ -15,8 +15,8 @@ buildMapWaterSurfaceVertices(int tileX, int tileY, const WaterSurface& surface, 
     const double north = south + tileSize;
     return {{{west, south, surface.heights[0]},
              {east, south, surface.heights[1]},
-             {east, north, surface.heights[2]},
-             {west, north, surface.heights[3]}}};
+             {east, north, surface.heights[3]},
+             {west, north, surface.heights[2]}}};
 }
 
 } // namespace openbus::map

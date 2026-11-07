@@ -442,6 +442,7 @@ struct Vehicle {
     std::shared_ptr<const SharedVehicleDefinition> deferredDefinition;
     AssetRequestManager* assets;
     VehiclePlacement placement;
+    std::optional<VehiclePlacement> trafficRenderPlacement;
     bool followsMapTrafficRoute = false;
     bool mapTrafficRouteFinished = false;
     bool mapTrafficTileActive = true;

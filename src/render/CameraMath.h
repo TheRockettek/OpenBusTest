@@ -19,6 +19,7 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
             double upX, double upY, double upZ);
 void applyPose(const BodyPose& pose);
+VehiclePlacement makeYawPlacementFromPose(const BodyPose& pose);
 // Converts a ground-referenced static placement to the model root height
 // required before Vehicle::draw applies modelOffsetZ.
 VehiclePlacement makeModelRootPlacement(const VehiclePlacement& groundPlacement,

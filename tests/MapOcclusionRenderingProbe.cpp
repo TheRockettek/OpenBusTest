@@ -592,6 +592,7 @@ void runProbe(const std::filesystem::path& root) {
     }
     auto waterMap = map;
     waterMap.coordinates.tileSize = 10;
+    waterMap.rootPath = root;
     waterMap.tiles[0].textPath = root / "water.map";
     waterMap.tiles[0].waterPath = root / "water.map.water";
     waterMap.tiles[0].hasWaterFile = true;
@@ -602,22 +603,22 @@ void runProbe(const std::filesystem::path& root) {
     setQueries(false);
     setGeometryQueries(false);
     std::vector<std::uint8_t> waterCpuPixels;
+    const auto drawWaterView = [&](MapRenderer& target, double offsetX) {
+        setModelViewMatrix(translationMatrix({offsetX, 0, -80}));
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_CULL_FACE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        indirectElementsDraws = 0;
+        target.draw();
+        std::vector<std::uint8_t> pixels(64 * 64 * 4);
+        glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        require(glGetError() == GL_NO_ERROR, "Water broad-phase draw produced a GL error");
+        return pixels;
+    };
     for (bool indirect : {false, true}) {
         initializeComputeCulling(false, indirect);
-        const auto drawWaterView = [&](double offsetX) {
-            setModelViewMatrix(translationMatrix({offsetX, 0, -80}));
-            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-            glDepthMask(GL_TRUE);
-            glDisable(GL_CULL_FACE);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            indirectElementsDraws = 0;
-            waterRenderer.draw();
-            std::vector<std::uint8_t> pixels(64 * 64 * 4);
-            glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            require(glGetError() == GL_NO_ERROR, "Water broad-phase draw produced a GL error");
-            return pixels;
-        };
-        const auto visible = drawWaterView(0);
+        const auto visible = drawWaterView(waterRenderer, 0);
         require(visible != visibleGeometryPixels[2 + static_cast<std::size_t>(indirect)],
                 "Water fixture did not rasterize");
         if (!indirect)
@@ -626,19 +627,45 @@ void runProbe(const std::filesystem::path& root) {
             require(visible == waterCpuPixels, "Indirect water changed map pixels");
             require(indirectElementsDraws >= 3, "Indirect water was not submitted");
         }
-        static_cast<void>(drawWaterView(-1000));
+        static_cast<void>(drawWaterView(waterRenderer, -1000));
         if (indirect)
             require(indirectElementsDraws == 0, "Off-screen water retained an indirect draw slot");
-        require(drawWaterView(0) == visible, "Water did not restore after changing views");
+        require(drawWaterView(waterRenderer, 0) == visible,
+                "Water did not restore after changing views");
     }
+    const std::filesystem::path waterTextureDirectory = root / "texture";
+    std::filesystem::create_directories(waterTextureDirectory);
+    std::array<std::uint8_t, 18> waterTextureHeader = {};
+    waterTextureHeader[2] = 2;
+    waterTextureHeader[12] = 1;
+    waterTextureHeader[14] = 1;
+    waterTextureHeader[16] = 32;
+    waterTextureHeader[17] = 8;
+    {
+        std::ofstream output(waterTextureDirectory / "water.tga", std::ios::binary);
+        output.write(reinterpret_cast<const char*>(waterTextureHeader.data()),
+                     static_cast<std::streamsize>(waterTextureHeader.size()));
+        constexpr std::array<std::uint8_t, 4> redWaterPixel = {0, 0, 255, 255};
+        output.write(reinterpret_cast<const char*>(redWaterPixel.data()),
+                     static_cast<std::streamsize>(redWaterPixel.size()));
+        require(static_cast<bool>(output), "Could not write authored-water texture fixture");
+    }
+    MapRenderer texturedWaterRenderer(waterMap, 0, 0, 0, 0, root, simulation, assets);
+    initializeComputeCulling(false, false);
+    const auto texturedWaterPixels = drawWaterView(texturedWaterRenderer, 0);
+    require(texturedWaterPixels != waterCpuPixels,
+            "Map-local water texture did not affect rendered water pixels");
+    initializeComputeCulling(false, true);
+    require(drawWaterView(texturedWaterRenderer, 0) == texturedWaterPixels,
+            "Indirect water rendering changed map-local texture pixels");
     GLuint reflectionFramebuffer = 0;
     std::array<GLuint, 2> reflectionTextures = {};
     glGenTextures(2, reflectionTextures.data());
     glBindTexture(GL_TEXTURE_2D, reflectionTextures[0]);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, reflectionTextures[1]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 64, 64, 0, GL_DEPTH_COMPONENT,
-                 GL_FLOAT, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 64, 64, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
+                 nullptr);
     pglGenFramebuffers(1, &reflectionFramebuffer);
     pglBindFramebuffer(GL_FRAMEBUFFER, reflectionFramebuffer);
     pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -652,11 +679,15 @@ void runProbe(const std::filesystem::path& root) {
 
     {
         std::ofstream output(root / "water-query.map.water", std::ios::binary);
-        const std::array<std::uint32_t, 9> values = {
-            2U, std::bit_cast<std::uint32_t>(1.0F), std::bit_cast<std::uint32_t>(1.0F),
-            std::bit_cast<std::uint32_t>(1.0F), std::bit_cast<std::uint32_t>(1.0F),
-            std::bit_cast<std::uint32_t>(2.0F), std::bit_cast<std::uint32_t>(2.0F),
-            std::bit_cast<std::uint32_t>(2.0F), std::bit_cast<std::uint32_t>(2.0F)};
+        const std::array<std::uint32_t, 9> values = {2U,
+                                                     std::bit_cast<std::uint32_t>(1.0F),
+                                                     std::bit_cast<std::uint32_t>(1.0F),
+                                                     std::bit_cast<std::uint32_t>(1.0F),
+                                                     std::bit_cast<std::uint32_t>(1.0F),
+                                                     std::bit_cast<std::uint32_t>(2.0F),
+                                                     std::bit_cast<std::uint32_t>(2.0F),
+                                                     std::bit_cast<std::uint32_t>(2.0F),
+                                                     std::bit_cast<std::uint32_t>(2.0F)};
         for (const std::uint32_t value : values)
             for (std::size_t byte = 0; byte < 4; ++byte)
                 output.put(static_cast<char>((value >> (byte * 8)) & 0xffU));
@@ -664,9 +695,10 @@ void runProbe(const std::filesystem::path& root) {
     }
     std::array<std::size_t, 4> uncoveredWaterPixels = {};
     for (int coverage = 0; coverage < 3; ++coverage) {
-        const std::string occluder = coverage == 0 ? "" : coverage == 1
-            ? "[object]\n0\ngeometry-large.sco\n501\n0\n0\n30\n0\n0\n0\n0\n"
-            : "[object]\n0\ngeometry-small.sco\n501\n0\n0\n30\n0\n0\n0\n0\n";
+        const std::string occluder =
+            coverage == 0   ? ""
+            : coverage == 1 ? "[object]\n0\ngeometry-large.sco\n501\n0\n0\n30\n0\n0\n0\n0\n"
+                            : "[object]\n0\ngeometry-small.sco\n501\n0\n0\n30\n0\n0\n0\n0\n";
         const auto tilePath = root / ("water-query-" + std::to_string(coverage) + ".map");
         writeText(tilePath, "[version]\n14\n[terrain]\n[water]\n" + occluder);
         auto queryMap = waterMap;

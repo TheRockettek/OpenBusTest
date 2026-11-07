@@ -30,6 +30,19 @@ std::array<double, 3> rotatePoint(const std::array<double, 9>& rotation,
 
 int main() {
     constexpr double pi = 3.14159265358979323846;
+    for (const double yawDegrees : {0.0, 37.0, 90.0, -90.0, 179.0}) {
+        const double yaw = yawDegrees * pi / 180.0;
+        const double cosine = std::cos(yaw);
+        const double sine = std::sin(yaw);
+        const BodyPose pose{{4.0, -7.0, 3.0},
+                            {cosine, -sine, 0.0, sine, cosine, 0.0, 0.0, 0.0, 1.0}};
+        const VehiclePlacement placement = openbus::rendering::makeYawPlacementFromPose(pose);
+        if (placement.position != pose.position ||
+            std::abs(placement.yawDegrees - yawDegrees) > 1.0e-9) {
+            std::cerr << "Parked vehicle placement did not preserve chassis yaw\n";
+            return 1;
+        }
+    }
     openbus::rendering::setPerspective(1280.0, 720.0, 60.0);
     const openbus::rendering::Matrix4& projection = openbus::rendering::projectionMatrix();
     if (!std::all_of(projection.begin(), projection.end(), [](double value) {

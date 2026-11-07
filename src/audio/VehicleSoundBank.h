@@ -5,6 +5,7 @@
 #include "core/Viewpoint.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -78,6 +79,7 @@ class VehicleSoundBank {
         SoundTriggerDefinition definition;
         float controlValue = 0.0F;
         SoundPlaybackParameters parameters;
+        std::chrono::steady_clock::time_point nextRetry = {};
     };
 
     static bool conditionsAllow(const SoundTriggerDefinition& definition,

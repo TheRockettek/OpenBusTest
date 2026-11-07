@@ -175,6 +175,7 @@ bool MapSceneLoader::finishLoad(bool waitForCompletion) {
         TraceScope textureLoadTrace("map", "MapSceneLoader.finishLoad.loadGroundTextures");
         loadGroundTextures();
     }
+    loadWaterTextures();
     loadFinished_ = true;
     return true;
 }
@@ -601,7 +602,9 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
     for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
         const std::filesystem::path texturePath = resolvedTexture(tree.texturePath);
         if (texturePath.empty()) {
-            prepared.treeBatches.push_back({{}, tree.texturePath, {}, {}});
+            PreparedSceneryTreeBatch batch;
+            batch.textureName = tree.texturePath;
+            prepared.treeBatches.push_back(std::move(batch));
             continue;
         }
         const double height = (tree.minimumHeight + tree.maximumHeight) * 0.5;
@@ -610,6 +613,7 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
         batch.vertices = makeTreePreview(height, height * 0.55 * ratio);
         batch.textureName = tree.texturePath;
         batch.texturePath = texturePath;
+        batch.seasonTexturePaths = textureImages.seasonalPaths(texturePath);
         batch.batch.vertexCount = batch.vertices.size();
         batch.batch.boundingRadius = vertexBoundingRadius(batch.vertices);
         batch.batch.renderType = prepared.objectConfiguration.renderType;
@@ -670,6 +674,8 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
             preparedBatch.materialIndex = materialIndex;
             preparedBatch.textureName = textureName;
             preparedBatch.texturePath = resolvedTexture(textureName);
+            preparedBatch.seasonTexturePaths =
+                textureImages.seasonalPaths(preparedBatch.texturePath);
             if (state != nullptr) {
                 preparedBatch.transmapTextureName = state->transmapTextureName;
                 preparedBatch.transmapTexturePath = resolvedTexture(state->transmapTextureName);
@@ -700,6 +706,7 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
             }
             Impl::ModelBatch& batch = preparedBatch.batch;
             batch.material.weatherLitDynamicTexture = true;
+            batch.material.whiteAmbient = !part.isShadow;
             batch.cullBackFaces = true;
             batch.vertexCount = vertices.size();
             batch.boundingRadius = vertexBoundingRadius(vertices);
@@ -746,6 +753,9 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
                 batch.alphaMode = state->alphaMode;
                 batch.noZwrite = state->noZwrite;
                 batch.noZcheck = state->noZcheck;
+            }
+            if (batch.alphaMode == 1 && batch.alpha == 0.0) {
+                batch.alpha = 1.0;
             }
             if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
                 batch.alphaMode = 2;
@@ -1678,6 +1688,41 @@ void MapSceneLoader::loadGroundTextures() {
                 " m, spawn=" + tileLabel(center.x, center.y) + ".");
 }
 
+void MapSceneLoader::loadWaterTextures() {
+    if (std::none_of(
+            map.tiles.begin(), map.tiles.end(),
+            [](const openbus::map::MapTileReference& tile) { return tile.hasWaterFile; })) {
+        return;
+    }
+
+    const auto loadWaterTexture = [&](const std::string& filename, GLuint& texture,
+                                      bool* enabled = nullptr) {
+        const std::filesystem::path configuredPath = map.rootPath / "texture" / filename;
+        const std::filesystem::path resolvedPath = findCaseInsensitiveFile(configuredPath);
+        if (resolvedPath.empty()) {
+            recordSkipped(skipped, "map water textures not found", filename);
+            return;
+        }
+        try {
+            texture = getTexture(resolvedPath);
+            if (enabled != nullptr) {
+                *enabled = texture != 0;
+            }
+        } catch (const std::exception& error) {
+            recordSkipped(skipped, "map water textures that failed to load",
+                          filename + ": " + error.what());
+        }
+    };
+
+    loadWaterTexture("water.tga", impl_->waterMaterial.texture, &impl_->waterMaterial.textured);
+    loadWaterTexture("water_bump.bmp", impl_->waterMaterial.bumpmap,
+                     &impl_->waterMaterial.useBumpmap);
+    loadWaterTexture("water_envmap.bmp", impl_->waterMaterial.environmentMap,
+                     &impl_->waterMaterial.useEnvironmentMap);
+    impl_->waterMaterial.bumpmapStrength = 0.35F;
+    impl_->waterMaterial.environmentStrength = ENVIRONMENT_MAP_OPACITY;
+}
+
 bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& tileKeys,
                                       const openbus::map::MapTileCoordinate& priorityCenter,
                                       bool waitForCompletion) {
@@ -2236,7 +2281,9 @@ void MapSceneLoader::indexMapContent() {
                 requiredSplineAttachmentIds.insert(attachment.id);
             }
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
-                recordSkipped(skipped, "map placements with duplicate object IDs",
+                recordSkipped(skipped,
+                              "duplicate spline-attachment ID index entries "
+                              "(visual placements processed independently; ID references ambiguous)",
                               tileLabel(tileReference.x, tileReference.y) +
                                   " spline attachment ID=" + std::to_string(attachment.id));
             }
@@ -2425,6 +2472,82 @@ GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat
     textureCache.emplace(key, texture);
     impl_->ownedTextures.push_back(texture);
     return texture;
+}
+
+std::optional<GLuint>
+MapSceneLoader::requestSeasonalSceneryTexture(const std::filesystem::path& path) {
+    const std::string key = openbus::pathToUtf8(path.lexically_normal());
+    auto found = seasonalTextureRequests.find(key);
+    if (found == seasonalTextureRequests.end()) {
+        const auto textureImages = sharedSceneryTextureImages_;
+        SeasonalTextureRequest request;
+        request.image = assetRequests_->submit([path, key, textureImages] {
+            return textureImages->getOrDecode(key, [&path] {
+                auto image = std::make_shared<Image>();
+                if (!TextureLoader::readImage(path, *image)) {
+                    throw std::runtime_error("Could not decode seasonal scenery texture: " +
+                                             openbus::pathToUtf8(path));
+                }
+                return image;
+            });
+        });
+        found = seasonalTextureRequests.emplace(key, std::move(request)).first;
+        pendingSeasonalTextureRequests.insert(key);
+    }
+    SeasonalTextureRequest& request = found->second;
+    if (request.texture != 0 || request.failed) {
+        return request.texture;
+    }
+    request.lastRequested = std::chrono::steady_clock::now();
+    request.lastRequestedFrame = seasonalTextureFrame;
+    if (request.image.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return std::nullopt;
+    }
+    try {
+        rememberPreparedTexture(key, request.image.get());
+        request.texture = getTexture(path);
+        if (request.texture == 0) {
+            throw std::runtime_error("OpenGL returned an empty seasonal scenery texture");
+        }
+    } catch (const std::runtime_error& error) {
+        request.failed = true;
+        gameLog.Warning("Seasonal scenery texture unavailable: " + std::string(error.what()));
+    }
+    pendingSeasonalTextureRequests.erase(key);
+    return request.texture;
+}
+
+void MapSceneLoader::releaseUnusedSeasonalSceneryTextures() {
+    const std::size_t finishedFrame = seasonalTextureFrame++;
+    if (pendingSeasonalTextureRequests.empty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < nextSeasonalTextureSweep) {
+        return;
+    }
+    nextSeasonalTextureSweep = now + std::chrono::seconds(1);
+    for (auto pending = pendingSeasonalTextureRequests.begin();
+         pending != pendingSeasonalTextureRequests.end();) {
+        const auto request = seasonalTextureRequests.find(*pending);
+        if (request == seasonalTextureRequests.end()) {
+            throw std::logic_error("Pending seasonal texture request was not retained");
+        }
+        if (request->second.lastRequestedFrame == finishedFrame ||
+            now - request->second.lastRequested < std::chrono::seconds(1) ||
+            request->second.image.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++pending;
+            continue;
+        }
+        try {
+            request->second.image.get();
+            seasonalTextureRequests.erase(request);
+        } catch (const std::runtime_error& error) {
+            request->second.failed = true;
+            gameLog.Warning("Seasonal scenery texture unavailable: " + std::string(error.what()));
+        }
+        pending = pendingSeasonalTextureRequests.erase(pending);
+    }
 }
 
 std::optional<double> MapSceneLoader::sampleTerrainHeight(int tileX, int tileY, double localX,

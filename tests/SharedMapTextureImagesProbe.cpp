@@ -1,3 +1,4 @@
+#include "ProbeTempDirectory.h"
 #include "render/map/SharedMapTextureImages.h"
 
 #include <array>
@@ -5,6 +6,7 @@
 #include <barrier>
 #include <chrono>
 #include <future>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -141,6 +143,39 @@ void checkCleanupPreservesLiveImages() {
     require(!decodedAgain && reused == live, "Cleanup removed a live image");
 }
 
+void checkSeasonalPathSharing() {
+    const auto root = openbus::probe::makeProbeDirectory("openbus-seasonal-paths", false);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { openbus::probe::removeProbeDirectory(path); }
+    } cleanup{root};
+    std::filesystem::create_directories(root / "texture" / "FaLl");
+    const auto base = root / "texture" / "leaf.tga";
+    const auto fall = root / "texture" / "FaLl" / "leaf.dds";
+    {
+        std::ofstream baseFile(base);
+        std::ofstream fallFile(fall);
+        baseFile.put('x');
+        fallFile.put('x');
+        require(static_cast<bool>(baseFile) && static_cast<bool>(fallFile),
+                "Could not write seasonal path fixtures");
+    }
+    SharedMapTextureImages cache;
+    std::array<std::future<std::shared_ptr<const SharedMapTextureImages::SeasonalPaths>>, 8> tasks;
+    for (auto& task : tasks) {
+        task = std::async(std::launch::async, [&] { return cache.seasonalPaths(base); });
+    }
+    auto paths = tasks.front().get();
+    std::error_code error;
+    require(paths && std::filesystem::equivalent((*paths)[2], fall, error) && !error,
+            "Seasonal folder or alternate extension was not found");
+    for (std::size_t index = 1; index < tasks.size(); ++index) {
+        require(tasks[index].get() == paths, "Concurrent seasonal lookups did not share paths");
+    }
+    require(!cache.seasonalPaths(root / "texture" / "missing.tga"),
+            "Missing seasonal variants should not allocate path sets");
+}
+
 } // namespace
 
 int main() {
@@ -149,6 +184,7 @@ int main() {
         checkIndependentDecodes();
         checkFailureRetry();
         checkCleanupPreservesLiveImages();
+        checkSeasonalPathSharing();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

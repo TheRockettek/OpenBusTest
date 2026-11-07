@@ -34,18 +34,24 @@ int main() {
         requireNear(vertices[1].z, 2.5, "height 1 maps to south-east corner");
         requireNear(vertices[2].x, -1.0 * tileSize, "north-east X matches east edge");
         requireNear(vertices[2].y, 4.0 * tileSize, "north-east Y advances one tile");
-        requireNear(vertices[2].z, 3.75, "height 2 maps to north-east corner");
+        requireNear(vertices[2].z, 5.0, "height 3 maps to north-east corner");
         requireNear(vertices[3].x, -2.0 * tileSize, "north-west X matches west edge");
         requireNear(vertices[3].y, 4.0 * tileSize, "north-west Y advances one tile");
-        requireNear(vertices[3].z, 5.0, "height 3 maps to north-west corner");
+        requireNear(vertices[3].z, 3.75, "height 2 maps to north-west corner");
 
-        const openbus::map::WaterSurface eastNeighbor{{2.5F, 9.0F, 8.0F, 3.75F}};
+        const openbus::map::WaterSurface eastNeighbor{{2.5F, 9.0F, 5.0F, 8.0F}};
         const auto adjacent = openbus::map::buildMapWaterSurfaceVertices(-1, 3, eastNeighbor);
         requireNear(vertices[1].x, adjacent[0].x, "east neighbor shares the west/east boundary");
         requireNear(vertices[1].z, adjacent[0].z,
                     "east neighbor south corner retains shared-edge water height");
         requireNear(vertices[2].z, adjacent[3].z,
                     "east neighbor north corner retains shared-edge water height");
+        const openbus::map::WaterSurface hkWest{{-4.91F, -5.0F, -4.77F, 1.25F}};
+        const openbus::map::WaterSurface hkEast{{-5.0F, -5.0F, 1.25F, -5.0F}};
+        const auto westTile = openbus::map::buildMapWaterSurfaceVertices(-1, 0, hkWest);
+        const auto eastTile = openbus::map::buildMapWaterSurfaceVertices(0, 0, hkEast);
+        requireNear(westTile[1].z, eastTile[0].z, "HK water southern shared edge");
+        requireNear(westTile[2].z, eastTile[3].z, "HK water northern shared edge");
     } catch (const std::exception& error) {
         std::cerr << "map water geometry probe failed: " << error.what() << '\n';
         return 1;

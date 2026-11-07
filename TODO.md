@@ -753,11 +753,12 @@ for alignment is not mistaken for supporting it.
 #### General CFG dialects
 
 - [~] Add an image-adjacent texture surface CFG loader for `[puddles]`,
-  `[moisture]`, `[surface]`, and `[NightMapMode]`. Wetness markers and
-  validated surface types 0-7 are retained; runtime texture discovery,
-  wetness/material physics, night-map behavior, and SCO `[maplight]` lightmap
-  generation remain unimplemented. SCO `[maplight]` runtime point sources are
-  parsed and rendered separately.
+  `[moisture]`, `[surface]`, and `[NightMapMode]`. Spline-road rendering and
+  approximate wheel grip use the wetness markers and byte-range surface types;
+  explanatory text between sections is ignored, while invalid values and
+  unknown sections remain diagnosed. Broader surface physics, night-map
+  behavior, and SCO `[maplight]` lightmap generation remain incomplete. SCO
+  `[maplight]` runtime point sources are parsed and rendered separately.
 - [~] Passenger-cabin `[noticketsale]`, `[ticket_sale]`,
   `[ticket_sale_money_point_2]`, and `[ticket_sale_change_point_2]` locations
   and parameters are retained with unsupported-behavior diagnostics. Ticket
@@ -944,6 +945,73 @@ limited per update. Supported scenery includes O3D models, external SCO
 of `.sli` road profiles also render. These are not equivalent to full OMSI map
 support; see the [README map scope](README.md#map-runtime-scope) for details.
 
+#### HK West Kowloon reported regressions
+
+- [~] The Star Ferry terminus road no longer receives an unrelated yellow-line
+  texture when multiple `[matl]` records share an index; an installed-map
+  capture and material-binding probe cover that case. Imported scenery now
+  uses white ambient material separately from authored diffuse colour, as
+  observed in the installed OMSI mesh-material initialization. Pixel and
+  X/O3D scenery probes cover dark diffuse values. Compare the black building,
+  yellow/dark floor areas and dark junction surfaces in-game.
+  The Star Ferry SCO's unhandled `[LightMapMapping]` enables tile-lightmap
+  influence in OMSI, but its contribution to the reported appearance is
+  unconfirmed. For an isolated overview, run
+  `OpenBusMapTrafficLightRenderingProbe --installed-map-screenshot <omsi-root> <map-dir> <output.png> <world-x> <world-y>`;
+  optionally append `<day-of-year> dry|snow` to compare seasonal scenery.
+  This does not reproduce the player's camera, scripts, or full weather.
+- [~] The Salisbury Road junction yellow box uses a zero-alpha O3D material
+  with an alpha-tested texture. A cutout-only zero-alpha compatibility rule
+  restores it in an installed-map capture; generated probes cover transparent
+  texels and preserve zero-alpha blended materials. A second capture at the
+  Star Ferry terminus junction also shows its yellow box and pedestrian
+  crossings. Other junction decorations and native material-alpha behavior
+  still need in-game comparison.
+- [~] The blue plaza patch was water from a tile with interchanged northern
+  water corners. Sidecar ordering now matches the neighboring HK tile and the
+  water clearance sampler; an installed-map capture no longer shows the patch.
+  Other missing scenery still needs identification. The installed map's
+  `tst_walkway.o3d` references `pccw2.bmp`, absent from its package and the
+  global texture folder but present in another scenery package; do not assume
+  an arbitrary cross-package texture is the correct replacement. The 164
+  duplicate spline-attachment IDs reported by the HK map affect unique-ID
+  references and traffic-path indexing, not the independent visual placement
+  pass; a streaming probe covers both behaviors and the diagnostic now
+  distinguishes them. Scenery and spline texture lookup also supports the
+  documented `subfolder/texture/file` layout for a `subfolder/file`
+  reference; spline collision uses the same local layout for surface data.
+  This does not resolve the missing `pccw2.bmp` package dependency.
+- [~] Tree previews and scenery mesh base textures select seasonal textures
+  from map date ranges and switch to `WinterSnow` when ground snow is present,
+  with cached path discovery, asynchronous texture loading and ordinary-texture
+  fallback. CPU and indirect rendering probes cover runtime transitions, snow
+  clearing and alternate extensions. Exact native date-boundary and snow
+  thresholds remain provisional; terrain and spline textures are not included.
+- [~] Missing or invalid sounds warn once per failed path and are retried at
+  most once per second, allowing recovery after a file is repaired or added.
+  Failed triggered loops remain pending until playback succeeds or the loop is
+  stopped; failed one-shots are not replayed automatically.
+  Audio cache keys and diagnostics use UTF-8 paths, including vehicle sound
+  paths outside the system's legacy code page; focused probes cover recovery
+  and repeated loop playback in Unicode directories.
+  The reported Dennis Eniro500 slow engine WAV is absent from the installed
+  assets; no substitute is selected.
+- [~] Transparent scenery uses a depth comparison that permits signal lenses
+  coplanar with their opaque housings. A script-driven coplanar light probe
+  covers the rendering regression; validate the installed signals in-game at
+  near and far distances.
+- [~] AI vehicles interpolate route distance and lateral offset between worker
+  updates for rendering, including wheel travel and steering, without changing
+  authoritative traffic simulation.
+  The presentation probe covers retargeting, discontinuities, loops and a
+  turn. A six-second HK West Kowloon benchmark at 2 Hz spawned road traffic
+  and shut down cleanly; validate visually at low worker rates, including
+  spawn/despawn, scheduled bus passengers, mirrors and dense junctions.
+- [~] Leaving the player bus now converts chassis rotation to the vehicle
+  placement yaw rather than the traffic navigation heading. The camera-math
+  probe covers multiple headings; live exit/re-entry on a sloped road still
+  needs validation.
+
 #### Keyword support audit (current implementation)
 
 - `[map]` and `[entrypoints]` are loaded; entrypoint zero is the default, with
@@ -976,10 +1044,10 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   raw fields and opaque label counts. Static rendering resolves parent IDs,
   ordered SCO/model `[new_attachment]` definitions, and child rotations; missing
   parents/anchors and cycles are skipped. `[water]` markers and binary
-  sidecars are parsed/validated and rendered as provisional translucent tile
-  quads. Their inferred SW/SE/NE/NW height ordering, appearance, and
-  multiple-surface behavior still need comparison against OMSI; water remains
-  visual-only, not collision.
+  sidecars are parsed/validated and rendered as translucent tile quads. Map-local
+  `water.tga`, `water_bump.bmp`, and `water_envmap.bmp` are used when present;
+  animated waves, coastline geometry, and OMSI visual parity remain incomplete.
+  Water remains visual-only, not collision.
   `[variable_terrain]` and `[variable_terrainlightmap]` marker presence is
   parsed and reported, but dynamic terrain/lightmap rendering is unsupported.
   `[varparent]` editor ordinals are retained separately from placement IDs and
@@ -1010,7 +1078,9 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   their raw payload lines with source line numbers; their runtime semantics
   remain unimplemented.
   `.map.water` presence and count-plus-four-float records are decoded and
-  validated; provisional tile quads use an unverified corner ordering.
+  validated; the inferred corner ordering is covered by neighboring-tile tests.
+  Map-local water albedo, bump, and environment textures are supported, but
+  exact OMSI water shading and animation remain unverified.
   `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence
   are inventoried but their payloads are not decoded or rendered.
   Unimplemented bracketed sections in tile files and `global.cfg` now produce
@@ -1350,9 +1420,10 @@ the outstanding implementation and validation tasks:
   indices. This does not
   reproduce the retained log or identify its exact source asset/version; rerun
   a representative map and investigate any remaining short strips.
-- [~] Provisional `[water]` tile quads are decoded, validated, rendered, and
-  covered by `OpenBusMapWaterGeometryProbe`; OMSI parity and water collision
-  remain incomplete. `[variable_terrain]`, `[variable_terrainlightmap]`, and
+- [~] `[water]` tile quads are decoded, validated, rendered, and covered by
+  `OpenBusMapWaterGeometryProbe`; map-local water textures are used when
+  available. OMSI water shading/animation parity and water collision remain
+  incomplete. `[variable_terrain]`, `[variable_terrainlightmap]`, and
   `[spline_terrain_align_2]` remain unsupported; `[rule]` and `[kill_rule]`
   have partial traffic-rule support.
   Decode/render `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where
@@ -1472,9 +1543,9 @@ the outstanding implementation and validation tasks:
   script-driven animations, dynamic material changes, sound dispatch, and
   mouse events after those runtime semantics are verified. `[varparent]`
   script-variable inheritance remains distinct and unsupported.
-- [~] Decode `.map.water` sidecars into per-surface four-height records;
-  determine corner/quadrant ordering and validate provisional water rendering.
-  Remaining per-tile texture semantics, seasonal ground textures, map lightmaps,
+- [~] Decode `.map.water` sidecars into per-surface four-height records and
+  validate corner ordering and textured water rendering. Remaining native water
+  animation/shading, per-tile texture semantics, seasonal ground textures, map lightmaps,
   and Chrono spline-selector/rule semantics need work. Chrono object selector
   delete/type/relabel operations and additive tile records are active; native
   precedence and visual parity remain unverified.
@@ -1714,6 +1785,16 @@ limitations.
   `RenderLoop::viewport_`; the reflection path does not query `GL_VIEWPORT`.
   A longer capture is still needed to establish setup cost and verify
   framebuffer/context transitions before considering further caching.
+- [~] A supplied 429-frame profile attributes 358.8 ms across 243 reflection
+  target draws (1.476 ms/draw, about 0.84 ms per main frame) and 274.8 ms across
+  428 `vehiclePlacementAndStuckCheck` calls (0.642 ms/call). Reflection refresh
+  can be capped independently with `OPENBUS_REFLECTION_MAX_FPS` or reduced with
+  `OPENBUS_REFLECTION_INTERVAL`; the AI worker can be capped independently of
+  rendering with `OPENBUS_MAX_FPS` or fixed with `OPENBUS_AI_HZ`. The placement
+  scope also performs per-frame render-pose interpolation and passenger/route
+  transitions, so split and measure the stuck/deadlock scan before reducing its
+  cadence. Keep fixed-step ODE and general vehicle/map script updates on their
+  existing schedules unless a separate correctness-preserving design is tested.
 - [~] Opt-in asynchronous OpenGL timer queries now measure reflection-target
   clear/draw work and the main-view draw phase without waiting for query
   results. Two-second average/maximum summaries are logged, and a configurable

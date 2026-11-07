@@ -2959,6 +2959,13 @@ void verifyTrafficWaterClearance() {
     junctionPath.points = {{{2.0, 10.0, -0.5}}, {{12.0, 10.0, -0.5}}};
     require(!mapTrafficRouteSegmentClearsWater(junctionPath, water, OMSI_TILE_SIZE_METERS),
             "scenery junction paths below water must also be excluded");
+    junctionPath.points = {{{30.0, 270.0, 0.0}}, {{31.0, 270.0, 0.0}}};
+    water.surfaces[0].heights = {-5.0F, -5.0F, 1.25F, -5.0F};
+    require(!mapTrafficRouteSegmentClearsWater(junctionPath, water, OMSI_TILE_SIZE_METERS),
+            "traffic clearance uses the raised north-west water corner");
+    water.surfaces[0].heights = {-5.0F, -5.0F, -5.0F, 1.25F};
+    require(mapTrafficRouteSegmentClearsWater(junctionPath, water, OMSI_TILE_SIZE_METERS),
+            "traffic clearance does not swap north-east and north-west water corners");
 }
 
 void verifyDrivingBehavior() {

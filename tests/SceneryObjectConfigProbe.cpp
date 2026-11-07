@@ -291,9 +291,12 @@ int main(int argc, char** argv) {
     }
     {
         std::ofstream output(surfaceTexturePath.string() + ".cfg");
-        output << "[puddles]\n[surface]\n0\n[NightMapMode]\n1\n";
+        output << "Surface texture notes\n[puddles]\n"
+                  "  [surface] ... describes the type\n"
+                  "    0: asphalt\n    1: concrete\n"
+                  "[surface]\n0\n[NightMapMode]\n1\n";
         std::ofstream invalid(invalidSurfaceTexturePath.string() + ".cfg");
-        invalid << "[surface]\n256\n[NightMapMode]\n1x\n";
+        invalid << "[surface]\n256\n[NightMapMode]\n1x\n[unknown_surface_probe]\n";
         std::ofstream slush(slushSurfaceTexturePath.string() + ".cfg");
         slush << "[surface]\n8\n";
         std::ofstream maxSurface(maxSurfaceTexturePath.string() + ".cfg");
@@ -409,8 +412,8 @@ int main(int argc, char** argv) {
                          surfaceConfiguration.supportsMoisture &&
                          surfaceConfiguration.surfaceType == 0 &&
                          surfaceConfiguration.nightMapMode == 1 &&
-                         !surfaceConfiguration.diagnostics.hasErrors(),
-                     "puddles imply moisture and retain numeric surface metadata");
+                         surfaceConfiguration.diagnostics.entries.empty(),
+                     "puddles imply moisture and surface comments do not generate diagnostics");
     valid &= require(slushSurfaceConfiguration.surfaceType == 8 &&
                         !slushSurfaceConfiguration.diagnostics.hasErrors() &&
                         maxSurfaceConfiguration.surfaceType == 255 &&
@@ -426,8 +429,15 @@ int main(int argc, char** argv) {
     valid &= require(invalidSurfaceConfiguration.configFound &&
                          !invalidSurfaceConfiguration.surfaceType.has_value() &&
                          !invalidSurfaceConfiguration.nightMapMode.has_value() &&
-                         invalidSurfaceConfiguration.diagnostics.hasErrors(),
-                     "invalid texture surface values are rejected");
+                         invalidSurfaceConfiguration.diagnostics.hasErrors() &&
+                         std::any_of(invalidSurfaceConfiguration.diagnostics.entries.begin(),
+                                     invalidSurfaceConfiguration.diagnostics.entries.end(),
+                                     [](const ConfigurationDiagnostic& diagnostic) {
+                                         return diagnostic.keyword == "unknown_surface_probe" &&
+                                                diagnostic.severity ==
+                                                    ConfigurationDiagnostic::Severity::Warning;
+                                     }),
+                     "invalid texture surface values and unknown sections are diagnosed");
     valid &= require(!missingSurfaceConfiguration.configFound &&
                          missingSurfaceConfiguration.diagnostics.entries.empty(),
                      "missing optional texture surface CFGs preserve existing texture behavior");

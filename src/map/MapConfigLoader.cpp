@@ -2284,9 +2284,6 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                     ignoredReason = "real-year offset is retained but not applied";
                 } else if (section == "[standarddepot]") {
                     ignoredReason = "standard depot is retained but not selected at runtime";
-                } else if (section == "[addseason]") {
-                    ignoredReason =
-                        "season metadata is retained but seasonal switching is not implemented";
                 }
                 openbus::config::logConfigurationTagStatus(
                     "global.cfg", globalPath, sectionLine + 1, keyword,

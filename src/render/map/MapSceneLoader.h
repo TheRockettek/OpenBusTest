@@ -47,6 +47,8 @@ class MapSceneLoader {
                                    bool failOnExhaustedRetries = false);
     // Logs totals and skip summaries; call after the initial streaming update.
     void logSummary() const;
+    std::optional<GLuint> requestSeasonalSceneryTexture(const std::filesystem::path& path);
+    void releaseUnusedSeasonalSceneryTextures();
 
   private:
     using Impl = MapRenderer::Impl;
@@ -83,6 +85,7 @@ class MapSceneLoader {
         std::string transmapTextureName;
         std::string freeTextureName;
         std::filesystem::path texturePath;
+        std::shared_ptr<const SharedMapTextureImages::SeasonalPaths> seasonTexturePaths;
         std::filesystem::path transmapTexturePath;
         PreparedSceneryAuxTexture lightmap;
         PreparedSceneryAuxTexture nightmap;
@@ -99,6 +102,7 @@ class MapSceneLoader {
         std::vector<ModelVertex> vertices;
         std::string textureName;
         std::filesystem::path texturePath;
+        std::shared_ptr<const SharedMapTextureImages::SeasonalPaths> seasonTexturePaths;
         Impl::ModelBatch batch;
     };
 
@@ -192,6 +196,7 @@ class MapSceneLoader {
     // Phases, in execution order.
     void configureGroundTextures();
     void loadGroundTextures();
+    void loadWaterTextures();
     bool loadTerrainTiles(const std::unordered_set<std::uint64_t>& tileKeys,
                           const openbus::map::MapTileCoordinate& priorityCenter,
                           bool waitForCompletion);
@@ -272,6 +277,17 @@ class MapSceneLoader {
     double baseTextureRepeatsPerTile = 1.0;
     SkipSummaries skipped;
     std::unordered_map<std::string, GLuint> textureCache;
+    struct SeasonalTextureRequest {
+        std::future<std::shared_ptr<Image>> image;
+        GLuint texture = 0;
+        bool failed = false;
+        std::chrono::steady_clock::time_point lastRequested;
+        std::size_t lastRequestedFrame = 0;
+    };
+    std::unordered_map<std::string, SeasonalTextureRequest> seasonalTextureRequests;
+    std::unordered_set<std::string> pendingSeasonalTextureRequests;
+    std::chrono::steady_clock::time_point nextSeasonalTextureSweep{};
+    std::size_t seasonalTextureFrame = 0;
     PreparedMapTextures preparedTextureImages;
     std::shared_ptr<SharedMapTextureImages> sharedSceneryTextureImages_ =
         std::make_shared<SharedMapTextureImages>();

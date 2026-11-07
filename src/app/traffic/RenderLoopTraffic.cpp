@@ -206,6 +206,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         trafficFleet_.vehicles.size());
     std::vector<std::optional<PopulationDecision>> populationDecisionsByHuman(
         humanTrafficActors_.size());
+    for (TrafficVehicleState& state : trafficFleet_.vehicles) {
+        state.presentation.advance(elapsedSeconds);
+    }
     if (trafficInputDue) {
         if (auto decisions = trafficFleet_.worker->takePopulationDecisions()) {
             trafficFleet_.populationPlanPending = false;
@@ -226,6 +229,24 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             TrafficVehicleState& state = trafficFleet_.vehicles[result.stateIndex];
             if (state.workerGeneration == result.generation && state.populationEnabled &&
                 state.vehicle != nullptr && state.vehicle->mapTrafficTileActive) {
+                // Snap implausible jumps rather than rendering a sweep through the scene.
+                const double maximumTravel =
+                    5.0 + 2.0 *
+                              std::max(state.actor.speedMetersPerSecond,
+                                       result.motion.speedMetersPerSecond) *
+                              results->elapsedSeconds;
+                const std::optional<double> loopStart = state.actor.route.closed
+                                                            ? std::optional<double>(0.0)
+                                                            : state.actor.route.loopStartDistance;
+                const bool presentationSnapped = state.presentation.retarget(
+                    state.workerGeneration,
+                    {result.motion.distanceMeters, result.motion.lateralOffsetMeters},
+                    results->elapsedSeconds, maximumTravel, state.actor.route.totalLength,
+                    loopStart);
+                if (presentationSnapped) {
+                    state.previousWheelRouteDistanceMeters = result.motion.distanceMeters;
+                    state.wheelRouteDistanceInitialized = true;
+                }
                 state.actor.distanceMeters = result.motion.distanceMeters;
                 state.actor.speedMetersPerSecond = result.motion.speedMetersPerSecond;
                 state.actor.targetSpeedMetersPerSecond = result.motion.targetSpeedMetersPerSecond;
@@ -1554,6 +1575,32 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 pose->pitchRadians * 180.0 / std::numbers::pi;
             trafficVehicle.vehicle->placement.rollDegrees =
                 pose->rollRadians * 180.0 / std::numbers::pi;
+            if (!trafficVehicle.presentation.initializedFor(trafficVehicle.workerGeneration)) {
+                trafficVehicle.presentation.reset(trafficVehicle.workerGeneration,
+                                                  {trafficVehicle.actor.distanceMeters,
+                                                   trafficVehicle.actor.lateralOffsetMeters});
+                trafficVehicle.previousWheelRouteDistanceMeters =
+                    trafficVehicle.actor.distanceMeters;
+                trafficVehicle.wheelRouteDistanceInitialized = true;
+            }
+            const auto renderSample = trafficVehicle.presentation.sample();
+            if (renderSample.distanceMeters == trafficVehicle.actor.distanceMeters &&
+                renderSample.lateralOffsetMeters == trafficVehicle.actor.lateralOffsetMeters) {
+                trafficVehicle.vehicle->trafficRenderPlacement = trafficVehicle.vehicle->placement;
+            } else {
+                auto renderPose = sampleMapTrafficActorPose(
+                    trafficVehicle.actor.route, renderSample.distanceMeters,
+                    renderSample.lateralOffsetMeters, trafficVehicle.actor.rearAxleOffsetMeters);
+                if (!renderPose) {
+                    throw std::runtime_error("Could not sample a map traffic presentation pose");
+                }
+                renderPose->position[2] += trafficVehicle.vehicle->aiDeltaHeight;
+                trafficVehicle.vehicle->trafficRenderPlacement = VehiclePlacement{
+                    renderPose->position,
+                    mapTrafficHeadingToVehicleYawDegrees(renderPose->headingRadians),
+                    renderPose->pitchRadians * 180.0 / std::numbers::pi,
+                    renderPose->rollRadians * 180.0 / std::numbers::pi};
+            }
             if (!trafficVehicle.vehicle->mapTrafficTileActive) {
                 trafficVehicle.actor.speedMetersPerSecond = 0.0;
             }
@@ -1562,23 +1609,17 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             trafficVehicle.vehicle->variables.set("velocity_ground", speedKmh);
             if (!trafficVehicle.wheelRouteDistanceInitialized) {
                 trafficVehicle.previousWheelRouteDistanceMeters =
-                    trafficVehicle.actor.distanceMeters;
+                    renderSample.distanceMeters;
                 trafficVehicle.wheelRouteDistanceInitialized = true;
             } else {
-                double distanceDelta = trafficVehicle.actor.distanceMeters -
-                                       trafficVehicle.previousWheelRouteDistanceMeters;
-                if (distanceDelta < 0.0) {
-                    if (route.closed) {
-                        distanceDelta += route.totalLength;
-                    } else if (route.loopStartDistance.has_value()) {
-                        distanceDelta += route.totalLength - *route.loopStartDistance;
-                    } else {
-                        distanceDelta = 0.0;
-                    }
-                }
-                trafficVehicle.wheelTravelDistanceMeters += std::max(0.0, distanceDelta);
+                const std::optional<double> loopStart =
+                    route.closed ? std::optional<double>(0.0) : route.loopStartDistance;
+                trafficVehicle.wheelTravelDistanceMeters +=
+                    openbus::app::trafficPresentationTravel(
+                        trafficVehicle.previousWheelRouteDistanceMeters,
+                        renderSample.distanceMeters, route.totalLength, loopStart);
                 trafficVehicle.previousWheelRouteDistanceMeters =
-                    trafficVehicle.actor.distanceMeters;
+                    renderSample.distanceMeters;
             }
             const openbus::map::MapTrafficTurnSignal turnSignal =
                 trafficVehicle.vehicle->mapTrafficTileActive

@@ -191,6 +191,11 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 Impl::ModelBatch batch = preparedTree.batch;
                 batch.material.texture = getTexture(preparedTree.texturePath);
                 batch.material.textured = true;
+                if (preparedTree.seasonTexturePaths) {
+                    batch.seasonalSceneryTextures =
+                        std::make_shared<Impl::SeasonalSceneryTextures>();
+                    batch.seasonalSceneryTextures->paths = *preparedTree.seasonTexturePaths;
+                }
                 pglGenBuffers(1, &batch.buffer);
                 pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
                 pglBufferData(
@@ -342,6 +347,11 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             if (!preparedBatch.texturePath.empty()) {
                 batch.material.texture = getTexture(preparedBatch.texturePath);
                 batch.material.textured = true;
+                if (preparedBatch.seasonTexturePaths) {
+                    batch.seasonalSceneryTextures =
+                        std::make_shared<Impl::SeasonalSceneryTextures>();
+                    batch.seasonalSceneryTextures->paths = *preparedBatch.seasonTexturePaths;
+                }
             } else if (!preparedBatch.textureName.empty()) {
                 recordSkipped(skipped, "scenery material textures not found",
                               openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +

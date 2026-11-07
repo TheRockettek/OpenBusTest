@@ -4,6 +4,7 @@
 #include "config/ConfigurationParser.h"
 #include "core/Logger.h"
 #include "core/PerfTrace.h"
+#include "core/Utf8Path.h"
 #include "core/Variables.h"
 
 #include <algorithm>
@@ -18,6 +19,7 @@ namespace {
 
 constexpr double EXTERIOR_SOUND_REFERENCE_DISTANCE = 4.0;
 constexpr double EXTERIOR_SOUND_MIN_MAX_DISTANCE = 60.0;
+constexpr auto TRIGGERED_LOOP_RETRY_INTERVAL = std::chrono::seconds(1);
 
 Logger soundLog = Logger("Sound");
 
@@ -34,7 +36,7 @@ std::filesystem::path resolve(const std::filesystem::path& base, std::string val
 }
 
 std::string pathKey(const std::filesystem::path& path) {
-    return path.lexically_normal().generic_string();
+    return openbus::pathToUtf8(path.lexically_normal().make_preferred());
 }
 
 bool endsWith(const std::string& value, std::string_view suffix) {
@@ -43,18 +45,18 @@ bool endsWith(const std::string& value, std::string_view suffix) {
 }
 
 bool isLoopSoundFile(const std::filesystem::path& path) {
-    const std::string stem = lower(path.stem().string());
+    const std::string stem = lower(openbus::pathToUtf8(path.stem()));
     return stem == "loop" || endsWith(stem, "_loop") || endsWith(stem, "-loop");
 }
 
 bool isEndSoundFile(const std::filesystem::path& path) {
-    return endsWith(lower(path.stem().string()), "_end");
+    return endsWith(lower(openbus::pathToUtf8(path.stem())), "_end");
 }
 
 bool belongsToSoundFamily(const std::filesystem::path& loopPath,
                           const std::filesystem::path& endPath) {
-    const std::string loopStem = lower(loopPath.stem().string());
-    const std::string endStem = lower(endPath.stem().string());
+    const std::string loopStem = lower(openbus::pathToUtf8(loopPath.stem()));
+    const std::string endStem = lower(openbus::pathToUtf8(endPath.stem()));
     const std::string family = endStem.substr(0, endStem.size() - 4);
     return loopPath.parent_path() == endPath.parent_path() &&
            (loopStem == family + "_loop" || loopStem == family + "-loop");
@@ -62,8 +64,8 @@ bool belongsToSoundFamily(const std::filesystem::path& loopPath,
 
 bool belongsToStartFamily(const std::filesystem::path& loopPath,
                           const std::filesystem::path& startPath) {
-    const std::string loopStem = lower(loopPath.stem().string());
-    const std::string startStem = lower(startPath.stem().string());
+    const std::string loopStem = lower(openbus::pathToUtf8(loopPath.stem()));
+    const std::string startStem = lower(openbus::pathToUtf8(startPath.stem()));
     constexpr std::string_view suffix = "_start";
     if (startStem.size() <= suffix.size() ||
         startStem.compare(startStem.size() - suffix.size(), suffix.size(), suffix) != 0) {
@@ -167,7 +169,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
 
     openbus::config::Reader reader(configPath);
     if (!reader.isOpen()) {
-        soundLog.Warning("Unable to open sound configuration: " + configPath.string());
+        soundLog.Warning("Unable to open sound configuration: " + openbus::pathToUtf8(configPath));
         return;
     }
 
@@ -381,7 +383,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
                 }
             }
             current.conditions.push_back({{}, 0.0F, -1});
-            soundLog.Warning("Invalid [conditionSingle] in " + configPath.string());
+            soundLog.Warning("Invalid [conditionSingle] in " + openbus::pathToUtf8(configPath));
             updateCurrentTriggers();
             continue;
         }
@@ -443,7 +445,9 @@ void VehicleSoundBank::stopTriggeredLoop(SoundPlayback& playback, SoundDefinitio
     if (loop == activeTriggeredLoops_.end()) {
         return;
     }
-    playback.stopLoop(loop->second.handle);
+    if (loop->second.handle != 0) {
+        playback.stopLoop(loop->second.handle);
+    }
     activeTriggeredLoops_.erase(loop);
 }
 
@@ -565,7 +569,16 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                        (definition.loop || retriggerPolicy == SoundRetriggerPolicy::KeepPlaying)) {
                 // OpenBus KeepPlaying policy: update a live voice instead of restarting it.
                 // Exact native OMSI same-file retrigger behavior is still unverified.
-                if (definition.loop) {
+                if (definition.loop && active->second.handle == 0) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now >= active->second.nextRetry) {
+                        active->second.handle = playback.play(file, true, parameters);
+                        if (active->second.handle == 0) {
+                            active->second.nextRetry = std::chrono::steady_clock::now() +
+                                                       TRIGGERED_LOOP_RETRY_INTERVAL;
+                        }
+                    }
+                } else if (definition.loop) {
                     playback.updateLoop(active->second.handle, parameters);
                 } else {
                     playback.update(active->second.handle, parameters);
@@ -575,9 +588,9 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                 active->second.parameters = parameters;
                 continue;
             } else {
-                if (definition.loop) {
+                if (definition.loop && active->second.handle != 0) {
                     playback.stopLoop(active->second.handle);
-                } else {
+                } else if (!definition.loop) {
                     playback.stop(active->second.handle);
                 }
                 ownedSources.erase(active);
@@ -587,9 +600,13 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
             continue;
         }
         const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);
-        if (handle != 0) {
-            ownedSources.emplace(definition.id,
-                                 ActiveSound{file, handle, definition, controlValue, parameters});
+        if (handle != 0 || definition.loop) {
+            ActiveSound sound{file, handle, definition, controlValue, parameters};
+            if (handle == 0) {
+                sound.nextRetry =
+                    std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
+            }
+            ownedSources.emplace(definition.id, std::move(sound));
         }
     }
 }
@@ -616,10 +633,24 @@ void VehicleSoundBank::stop(SoundPlayback& playback, const std::string& name) {
 void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variables& variables,
                                           openbus::rendering::ViewpointContext viewpoint) {
     const auto update = [&](ActiveSound& sound, bool loop) {
+        const auto now = std::chrono::steady_clock::now();
+        if (loop && sound.handle == 0 && now < sound.nextRetry) {
+            return;
+        }
         SoundPlaybackParameters parameters = worldParameters(
             triggeredParameters(sound.definition, sound.controlValue, variables, viewpoint));
         if (viewpoint == openbus::rendering::ViewpointContext::NonPlayer) {
             parameters.gain *= listenerOutsideGain_;
+        }
+        if (loop && sound.handle == 0) {
+            sound.file = openbus::assets::resolveCaseInsensitivePath(sound.file);
+            sound.handle = playback.play(sound.file, true, parameters);
+            if (sound.handle == 0) {
+                sound.nextRetry =
+                    std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
+            }
+            sound.parameters = parameters;
+            return;
         }
         if (parameters.gain == sound.parameters.gain &&
             parameters.pitch == sound.parameters.pitch &&
@@ -724,7 +755,9 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
 void VehicleSoundBank::stopAllLoops(SoundPlayback& playback) {
     for (const auto& [id, source] : activeTriggeredLoops_) {
         (void)id;
-        playback.stopLoop(source.handle);
+        if (source.handle != 0) {
+            playback.stopLoop(source.handle);
+        }
     }
     for (const auto& [key, handle] : activeAmbientLoops_) {
         (void)key;

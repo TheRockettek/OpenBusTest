@@ -503,6 +503,36 @@ int main() {
     pglBindBuffer(GL_ARRAY_BUFFER, buffer);
     pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
     ModelMaterial material;
+    {
+        ModelMaterial scenery;
+        scenery.textured = true;
+        scenery.texture = white;
+        scenery.whiteAmbient = true;
+        setLightingViewMatrix(identityMatrix(), std::array<double, 3>{0.0, 0.0, 1.0});
+        setWeatherLighting(1.0);
+        const auto shaded = draw(scenery, {0.04, 0.25, 0.0}, 1.0);
+        scenery.texture = blue;
+        const auto textured = draw(scenery, {0.04, 0.25, 0.0}, 1.0);
+        scenery.texture = white;
+        scenery.whiteAmbient = false;
+        const auto legacy = draw(scenery, {0.04, 0.25, 0.0}, 1.0);
+        scenery.whiteAmbient = true;
+        setLightingViewMatrix(identityMatrix(), std::array<double, 3>{0.0, 0.0, -1.0});
+        const auto lit = draw(scenery, {0.04, 0.25, 0.0}, 1.0);
+        setWeatherLighting(0.0);
+        const auto night = draw(scenery, {0.04, 0.25, 0.0}, 1.0);
+        if (!close(shaded[0], 148) || !close(shaded[1], 148) ||
+            !close(shaded[2], 148) || !close(textured[0], 38) ||
+            !close(textured[1], 49) || !close(textured[2], 65) || !close(legacy[0], 6) ||
+            !close(legacy[1], 37) || legacy[2] != 0 ||
+            !close(lit[0], 152) || !close(lit[1], 175) || !close(lit[2], 148) ||
+            night[0] != 0 || night[1] != 0 || night[2] != 0) {
+            std::cerr << "scenery ambient and diffuse material lighting mismatch\n";
+            passed = false;
+        }
+        setWeatherLighting(std::nullopt);
+        setLightingViewMatrix(identityMatrix());
+    }
     const auto setTriangleDepth = [&](float depth) {
         auto depthVertices = vertices;
         for (std::size_t index = 2; index < depthVertices.size(); index += 13) {

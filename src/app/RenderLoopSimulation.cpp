@@ -85,10 +85,11 @@ coupledVehiclePairs(const std::vector<std::unique_ptr<Vehicle>>& vehicles,
 }
 
 double mapTrafficRouteCurvatureAtRearAxle(const openbus::map::MapTrafficActor& actor,
+                                          double distanceMeters, double lateralOffsetMeters,
                                           double wheelbaseMeters, double rearAxleOffsetMeters) {
     const auto& route = actor.route;
     const double sampleSpan = std::max(1.0, wheelbaseMeters);
-    const double rearAxleDistance = actor.distanceMeters + rearAxleOffsetMeters;
+    const double rearAxleDistance = distanceMeters + rearAxleOffsetMeters;
     double fromDistance = rearAxleDistance - sampleSpan * 0.5;
     double toDistance = rearAxleDistance + sampleSpan * 0.5;
     if (!route.closed && !route.loopStartDistance) {
@@ -100,9 +101,9 @@ double mapTrafficRouteCurvatureAtRearAxle(const openbus::map::MapTrafficActor& a
         return 0.0;
     }
     const double fromHeading = openbus::map::mapTrafficRouteTravelHeadingRadians(
-        route, fromDistance, actor.lateralOffsetMeters);
+        route, fromDistance, lateralOffsetMeters);
     const double toHeading = openbus::map::mapTrafficRouteTravelHeadingRadians(
-        route, toDistance, actor.lateralOffsetMeters);
+        route, toDistance, lateralOffsetMeters);
     return std::remainder(toHeading - fromHeading, 2.0 * std::numbers::pi) / distanceSpan;
 }
 
@@ -388,7 +389,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
             pose = simulation.chassisPose();
             pose.position = transformLocalPoint(pose, {0.0, 0.0, vehicle->modelOffsetZ});
         } else {
-            VehiclePlacement placement = vehicle->placement;
+            VehiclePlacement placement =
+                vehicle->trafficRenderPlacement.value_or(vehicle->placement);
             if (mapRenderer_ != nullptr && !vehicle->followsMapTrafficRoute) {
                 placement.position[2] =
                     mapRenderer_->terrainHeightAt(placement.position[0], placement.position[1])
@@ -1655,9 +1657,12 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
         if (!trafficVehicle.populationEnabled || trafficVehicle.vehicle == nullptr) {
             continue;
         }
+        const auto presentation = trafficVehicle.presentation.sample();
         trafficVehicle.vehicle->updateTrafficWheelAnimations(
             trafficVehicle.wheelTravelDistanceMeters,
             mapTrafficRouteCurvatureAtRearAxle(trafficVehicle.actor,
+                                               presentation.distanceMeters,
+                                               presentation.lateralOffsetMeters,
                                                trafficVehicle.vehicle->trafficWheelbaseMeters,
                                                trafficVehicle.actor.rearAxleOffsetMeters),
             trafficVehicle.actor.speedMetersPerSecond);

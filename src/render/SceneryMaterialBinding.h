@@ -24,15 +24,16 @@ inline std::string sceneryTextureBasename(const std::string& name) {
 
 // Bind SCO [matl] records to source O3D/X material slots. Some OMSI scenery configs
 // number repeated texture overrides in their own list rather than by the source O3D slot.
-// Prefer matching duplicate texture names in authored order; only use numeric slots when
-// no source slot carries that texture name. This avoids applying (for example) a fence
-// texture/alpha mode to unrelated material slots 0 and 1 when fence surfaces are slots 4/5.
+// Prefer matching duplicate texture names in authored order. Numeric fallback is only
+// safe when the index identifies a single authored state.
 inline std::unordered_map<int, const ModelMaterialState*>
 resolveSceneryMaterialStates(const openbus::rendering::ParsedObj& parsed, const ModelPart& part) {
     std::unordered_map<int, const ModelMaterialState*> statesByIndex;
+    std::unordered_map<int, std::size_t> stateCountsByIndex;
     std::unordered_map<std::string, std::vector<const ModelMaterialState*>> statesByTexture;
     for (const ModelMaterialState& state : part.materialStatesInOrder) {
         statesByIndex.try_emplace(state.materialIndex, &state);
+        ++stateCountsByIndex[state.materialIndex];
         const std::string key = sceneryTextureBasename(state.textureName);
         if (!key.empty()) {
             statesByTexture[key].push_back(&state);
@@ -80,6 +81,9 @@ resolveSceneryMaterialStates(const openbus::rendering::ParsedObj& parsed, const 
             continue;
         }
         const std::string directTexture = sceneryTextureBasename(direct->second->textureName);
+        if (!directTexture.empty() && stateCountsByIndex.at(source->materialIndex) != 1) {
+            continue;
+        }
         if (!directTexture.empty() && directTexture != sourceTexture &&
             sourceTextureNames.contains(directTexture)) {
             continue; // This is another source slot's override, not this slot's material.

@@ -1,10 +1,12 @@
 #include "audio/VehicleSoundBank.h"
 #include "core/Logger.h"
+#include "core/Utf8Path.h"
 #include "core/Variables.h"
 #include "ProbeTempDirectory.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -14,6 +16,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -31,6 +34,7 @@ class FakePlayback final : public SoundPlayback {
         ++playAttempts;
         if (failuresRemaining != 0) {
             --failuresRemaining;
+            std::this_thread::sleep_for(failureDelay);
             return 0;
         }
         const SoundPlaybackHandle handle = ++nextHandle;
@@ -69,6 +73,7 @@ class FakePlayback final : public SoundPlayback {
     SoundPlaybackHandle nextHandle = 0;
     std::size_t playAttempts = 0;
     std::size_t failuresRemaining = 0;
+    std::chrono::milliseconds failureDelay{0};
     std::unordered_set<SoundPlaybackHandle> active;
     std::vector<RecordedPlayback> started;
     std::vector<SoundPlaybackHandle> queried;
@@ -414,16 +419,17 @@ bool checkFailuresAndUnknownTriggers(const std::filesystem::path& configPath) {
                          playback.active.size() == 1,
                      "failed T.F replacement must retry immediately");
 
-    playback.failuresRemaining = 2;
+    playback.failuresRemaining = 1;
     bank.trigger(playback, "ev_loop_a", {}, 0.0F, variables, exterior);
     bank.trigger(playback, "ev_loop_a_alias", {}, 0.0F, variables, exterior);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     bank.trigger(playback, "ev_loop_a", {}, 0.0F, variables, exterior);
-    passed &= expect(playback.playAttempts == 8 && playback.started.size() == 3 &&
+    passed &= expect(playback.playAttempts == 7 && playback.started.size() == 3 &&
                          playback.started.back().looped && playback.active.size() == 2,
-                     "failed triggered loops must retry through aliases without storing handle zero");
+                     "failed triggered loops must retry through aliases after the cooldown");
     bank.trigger(playback, "unknown_active", "replacement.wav", 0.0F, variables, exterior);
     bank.stop(playback, "unknown_active");
-    passed &= expect(playback.playAttempts == 8 && playback.active.size() == 2 &&
+    passed &= expect(playback.playAttempts == 7 && playback.active.size() == 2 &&
                          std::none_of(playback.queried.begin(), playback.queried.end(),
                                       [](SoundPlaybackHandle handle) { return handle == 0; }),
                      "unknown file triggers must not affect configured voices or create ownership");
@@ -875,6 +881,91 @@ bool checkMovingVehicleSources(const std::filesystem::path& root) {
     return passed;
 }
 
+bool checkUnicodeSoundPaths(const std::filesystem::path& root) {
+    const auto directory = root / openbus::pathFromUtf8("sound-\xe6\xb8\xac");
+    std::filesystem::create_directories(directory);
+    const auto configPath = directory / "sound.cfg";
+    {
+        std::ofstream config(configPath);
+        config << "[sound]\nmotor_loop.wav\n1\n[trigger]\nev_unicode\n";
+    }
+    VehicleSoundBank bank;
+    bank.load(configPath);
+    Variables variables;
+    FakePlayback playback;
+    bank.trigger(playback, "ev_unicode", {}, 0.0F, variables, exterior);
+    bank.trigger(playback, "ev_unicode", {}, 0.0F, variables, exterior);
+    return expect(playback.started.size() == 1 && playback.started.front().looped,
+                  "Unicode sound directories must preserve loop ownership");
+}
+
+bool checkFailedTriggeredLoopRecovery(const std::filesystem::path& root) {
+    const auto configPath = root / "failed-loops.cfg";
+    {
+        std::ofstream config(configPath);
+        config << "[sound]\nmotor_loop.wav\n1\n[trigger]\nev_motor\n"
+                  "[trigger]\nev_motor_alias\n"
+                  "[sound]\nhorn.wav\n1\n[trigger]\nev_horn\n";
+    }
+    VehicleSoundBank bank;
+    bank.load(configPath);
+    Variables variables;
+    FakePlayback playback;
+    playback.failuresRemaining = 1;
+    bank.trigger(playback, "ev_motor", {}, 0.0F, variables, exterior);
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        bank.updateActiveSounds(playback, variables, exterior);
+        bank.trigger(playback, "ev_motor", {}, 0.0F, variables, exterior);
+    }
+    bool passed = expect(playback.playAttempts == 1,
+                         "pending loops must not retry on every frame or repeated trigger");
+    const auto repairedPath = root / "MOTOR_LOOP.wav";
+    {
+        std::ofstream repaired(repairedPath, std::ios::binary);
+        repaired << "fixture";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    bank.updateActiveSounds(playback, variables, exterior);
+    std::error_code resolveError;
+    passed &= expect(playback.started.size() == 1 && playback.started.front().looped &&
+                         std::filesystem::equivalent(playback.started.front().path, repairedPath,
+                                                     resolveError) &&
+                         !resolveError,
+                     "failed triggered loops must retry during active sound updates");
+    bank.stop(playback, "ev_motor_alias");
+    playback.failuresRemaining = 1;
+    bank.trigger(playback, "ev_motor", {}, 0.0F, variables, exterior);
+    bank.stop(playback, "ev_motor_alias");
+    bank.updateActiveSounds(playback, variables, exterior);
+    passed &= expect(playback.started.size() == 1,
+                     "stopping an alias must cancel a pending loop");
+    playback.failuresRemaining = 1;
+    bank.trigger(playback, "ev_motor", {}, 0.0F, variables, exterior);
+    bank.stopAllLoops(playback);
+    bank.updateActiveSounds(playback, variables, exterior);
+    passed &= expect(playback.started.size() == 1,
+                     "stopAllLoops must cancel pending loops");
+    playback.failuresRemaining = 1;
+    bank.trigger(playback, "ev_horn", {}, 0.0F, variables, exterior);
+    bank.updateActiveSounds(playback, variables, exterior);
+    passed &= expect(playback.started.size() == 1,
+                     "failed one-shots must not be replayed automatically");
+
+    VehicleSoundBank slowBank;
+    slowBank.load(configPath);
+    FakePlayback slowPlayback;
+    slowPlayback.failuresRemaining = 2;
+    slowBank.trigger(slowPlayback, "ev_motor", {}, 0.0F, variables, exterior);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    slowPlayback.failureDelay = std::chrono::milliseconds(1100);
+    slowBank.updateActiveSounds(slowPlayback, variables, exterior);
+    slowBank.updateActiveSounds(slowPlayback, variables, exterior);
+    passed &= expect(slowPlayback.playAttempts == 2,
+                     "retry cooldown must start after a slow failed playback attempt");
+    slowBank.stopAllLoops(slowPlayback);
+    return passed;
+}
+
 int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_sound_probe");
@@ -890,6 +981,12 @@ int main() {
         return 1;
     }
     std::filesystem::create_directories(root);
+    if (!checkUnicodeSoundPaths(root)) {
+        return 1;
+    }
+    if (!checkFailedTriggeredLoopRecovery(root)) {
+        return 1;
+    }
     const std::filesystem::path configPath = root / "sound.cfg";
     {
         std::ofstream config(configPath);

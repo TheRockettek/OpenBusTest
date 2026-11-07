@@ -1,7 +1,10 @@
 #pragma once
 
 #include "assets/TextureLoader.h"
+#include "core/AssetPath.h"
+#include "render/map/TreeSeason.h"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <memory>
@@ -15,6 +18,8 @@ namespace openbus::rendering {
 
 class SharedMapTextureImages {
   public:
+    using SeasonalPaths = std::array<std::filesystem::path, map_detail::treeSeasonDirectories.size()>;
+
     struct Stats {
         std::size_t decodeAttempts;
         std::size_t sharedImageUses;
@@ -63,6 +68,55 @@ class SharedMapTextureImages {
         return image;
     }
 
+    std::shared_ptr<const SeasonalPaths> seasonalPaths(const std::filesystem::path& texture) {
+        if (texture.empty()) {
+            return {};
+        }
+        const std::string textureKey = openbus::pathToUtf8(texture.lexically_normal());
+        SeasonalPaths folders;
+        {
+            std::lock_guard lock(seasonalMutex_);
+            const auto cached = seasonalPaths_.find(textureKey);
+            if (cached != seasonalPaths_.end()) {
+                return cached->second;
+            }
+            const auto parent = texture.parent_path();
+            const std::string folderKey = openbus::pathToUtf8(parent.lexically_normal());
+            auto found = seasonalFolders_.find(folderKey);
+            if (found == seasonalFolders_.end()) {
+                SeasonalPaths discovered;
+                for (std::size_t index = 0; index < discovered.size(); ++index) {
+                    const auto candidate = openbus::assets::resolveCaseInsensitivePath(
+                        parent / map_detail::treeSeasonDirectories[index]);
+                    if (std::filesystem::is_directory(candidate)) {
+                        discovered[index] = candidate;
+                    }
+                }
+                found = seasonalFolders_.emplace(folderKey, std::move(discovered)).first;
+            }
+            folders = found->second;
+        }
+        SeasonalPaths discovered;
+        bool any = false;
+        for (std::size_t index = 0; index < folders.size(); ++index) {
+            if (folders[index].empty()) {
+                continue;
+            }
+            const auto candidate =
+                openbus::assets::resolveTexturePath(folders[index] / texture.filename());
+            if (std::filesystem::is_regular_file(candidate)) {
+                discovered[index] = candidate;
+                any = true;
+            }
+        }
+        std::shared_ptr<const SeasonalPaths> result;
+        if (any) {
+            result = std::make_shared<SeasonalPaths>(std::move(discovered));
+        }
+        std::lock_guard lock(seasonalMutex_);
+        return seasonalPaths_.emplace(textureKey, std::move(result)).first->second;
+    }
+
   private:
     struct Entry {
         std::mutex mutex;
@@ -71,6 +125,9 @@ class SharedMapTextureImages {
 
     std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<Entry>> entries_;
+    std::mutex seasonalMutex_;
+    std::unordered_map<std::string, SeasonalPaths> seasonalFolders_;
+    std::unordered_map<std::string, std::shared_ptr<const SeasonalPaths>> seasonalPaths_;
     std::size_t insertionsSinceCleanup_ = 0;
     std::atomic<std::size_t> decodeAttempts_ = 0;
     std::atomic<std::size_t> sharedImageUses_ = 0;

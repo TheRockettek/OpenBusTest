@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <vector>
 
 namespace openbus::rendering {
@@ -137,6 +138,11 @@ void applyPose(const BodyPose& pose) {
                             pose.rotation[2], pose.rotation[5], pose.rotation[8], 0.0,
                             pose.position[0], pose.position[1], pose.position[2], 1.0};
     cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
+}
+
+VehiclePlacement makeYawPlacementFromPose(const BodyPose& pose) {
+    return {pose.position,
+            std::atan2(pose.rotation[3], pose.rotation[0]) * 180.0 / std::numbers::pi};
 }
 
 VehiclePlacement makeModelRootPlacement(const VehiclePlacement& groundPlacement,

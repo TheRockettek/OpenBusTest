@@ -30,6 +30,7 @@
 #include "render/RenderPrimitives.h"
 #include "render/SceneryMaterialBinding.h"
 #include "render/map/MapRenderer.h"
+#include "render/map/TreeSeason.h"
 #include "scripting/ScriptRuntime.h"
 
 #include <algorithm>
@@ -232,6 +233,12 @@ struct MapRenderer::Impl {
         mutable CullingSlot cullingSlot;
     };
 
+    struct SeasonalSceneryTextures {
+        std::array<GLuint, treeSeasonDirectories.size()> textures = {};
+        std::array<bool, treeSeasonDirectories.size()> finished = {};
+        std::array<std::filesystem::path, treeSeasonDirectories.size()> paths;
+    };
+
     struct ModelBatch {
         GLuint buffer = 0;
         GLuint indexBuffer = 0;
@@ -241,6 +248,7 @@ struct MapRenderer::Impl {
         std::size_t vertexCount = 0;
         std::size_t indexCount = 0;
         ModelMaterial material;
+        std::shared_ptr<SeasonalSceneryTextures> seasonalSceneryTextures;
         int scriptTextureIndex = -1;
         int textTextureIndex = -1;
         std::string freeTextureName;
@@ -392,6 +400,7 @@ struct MapRenderer::Impl {
     std::vector<TileBuffer> terrainBuffers;
     std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> terrainByCoordinate;
     std::vector<WaterBatch> waterBatches;
+    ModelMaterial waterMaterial;
     std::vector<ModelBatch> sceneryBatches;
     std::unordered_map<std::string, HumanModelAsset> humanTrafficModels;
     std::unordered_map<std::string, PendingHumanModel> pendingHumanTrafficModels;
@@ -463,6 +472,7 @@ struct MapRenderer::Impl {
     std::optional<openbus::map::MapTileCoordinate> requestedCenterTile;
     bool leftHandTraffic = false;
     SimulationState* simulationState = nullptr;
+    std::vector<TreeSeasonPeriod> treeSeasons;
 
     ~Impl();
 };

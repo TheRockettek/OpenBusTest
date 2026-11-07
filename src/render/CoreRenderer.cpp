@@ -277,6 +277,7 @@ struct Uniforms {
     GLint useFreeTexture = -1;
     GLint useTextTexture = -1;
     GLint weatherLitDynamicTexture = -1;
+    GLint whiteAmbient = -1;
     GLint useInteriorLight = -1;
     GLint interiorLightCount = -1;
     std::array<GLint, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
@@ -364,6 +365,7 @@ struct ModelUniformState {
     bool useFreeTexture = false;
     bool useTextTexture = false;
     bool weatherLitDynamicTexture = false;
+    bool whiteAmbient = false;
     bool useInteriorLight = false;
     bool flipTextureY = false;
     bool useMaterialColors = false;
@@ -744,6 +746,7 @@ uniform bool uUseEnvironment;
 uniform bool uUseFreeTexture;
 uniform bool uUseTextTexture;
 uniform bool uWeatherLitDynamicTexture;
+uniform bool uWhiteAmbient;
 uniform bool uUseInteriorLight;
 uniform int uInteriorLightCount;
 uniform vec3 uInteriorLightViewPositions[4];
@@ -766,7 +769,7 @@ void main() {
     if (uCullBackFaces && !gl_FrontFacing) {
         discard;
     }
-    vec4 color = uColor;
+    vec4 color = vec4(1.0, 1.0, 1.0, uColor.a);
     vec2 textureCoordinate = vTexCoord.xy * uTextureScale;
     if (uUseTextTexture) {
         color *= texture(uTextTexture, vTexCoord.xy);
@@ -781,6 +784,8 @@ void main() {
         }
         color *= sampledTexture;
     }
+    vec3 ambientReflectance = color.rgb;
+    color.rgb *= uColor.rgb;
     // Empty text-atlas pixels must remain transparent and must not occlude other
     // scenery. Surviving glyph pixels can then safely write depth during the
     // blended map-text pass, preventing later scenery from showing through letters.
@@ -791,16 +796,25 @@ void main() {
     // it over the albedo preserves colored base textures and reveals detail on
     // deliberately white base images such as Cotterell's wh_white.bmp.
     if (uUseDetailTexture) {
-        color.rgb *= texture(uDetailTexture, vTexCoord.xy * uDetailTextureScale).rgb;
+        vec3 detail = texture(uDetailTexture, vTexCoord.xy * uDetailTextureScale).rgb;
+        color.rgb *= detail;
+        ambientReflectance *= detail;
     }
     color.rgb = mix(color.rgb, vec3(0.90, 0.92, 0.94), clamp(uSnowCoverage, 0.0, 1.0));
+    ambientReflectance = mix(ambientReflectance, vec3(0.90, 0.92, 0.94),
+                             clamp(uSnowCoverage, 0.0, 1.0));
     vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
     if (!uUseTextTexture && !uUseFreeTexture) {
         vec3 surfaceNormal = normalize(vNormal);
         vec3 lightDirection = normalize(uLightDirection);
         float diffuse = max(dot(surfaceNormal, lightDirection), 0.0);
-        color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
+        if (uWhiteAmbient) {
+            color.rgb = clamp(ambientReflectance * uAmbientLight +
+                              color.rgb * uDiffuseLight * diffuse, 0.0, 1.0);
+        } else {
+            color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
+        }
     } else if (uWeatherLitDynamicTexture) {
         color.rgb *= uWeatherBrightness;
     }
@@ -1358,6 +1372,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.useTextTexture = pglGetUniformLocation(program, "uUseTextTexture");
         uniforms.weatherLitDynamicTexture =
             pglGetUniformLocation(program, "uWeatherLitDynamicTexture");
+        uniforms.whiteAmbient = pglGetUniformLocation(program, "uWhiteAmbient");
         uniforms.useInteriorLight = pglGetUniformLocation(program, "uUseInteriorLight");
         uniforms.interiorLightCount = pglGetUniformLocation(program, "uInteriorLightCount");
         for (std::size_t index = 0; index < MAX_INTERIOR_LIGHTS; ++index) {
@@ -1553,6 +1568,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.useFreeTexture != material.useFreeTexture ||
         modelUniformState.useTextTexture != material.useTextTexture ||
         modelUniformState.weatherLitDynamicTexture != material.weatherLitDynamicTexture ||
+        modelUniformState.whiteAmbient != material.whiteAmbient ||
         modelUniformState.useInteriorLight != material.useInteriorLight ||
         modelUniformState.interiorLightCount != material.interiorLightCount;
     if (flagsChanged) {
@@ -1571,6 +1587,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useTextTexture, material.useTextTexture ? 1 : 0);
         pglUniform1i(modelUniforms.weatherLitDynamicTexture,
                      material.weatherLitDynamicTexture ? 1 : 0);
+        pglUniform1i(modelUniforms.whiteAmbient, material.whiteAmbient ? 1 : 0);
         pglUniform1i(modelUniforms.useInteriorLight, material.useInteriorLight ? 1 : 0);
         pglUniform1i(modelUniforms.interiorLightCount, material.interiorLightCount);
     }
@@ -1671,6 +1688,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.useFreeTexture = material.useFreeTexture;
     modelUniformState.useTextTexture = material.useTextTexture;
     modelUniformState.weatherLitDynamicTexture = material.weatherLitDynamicTexture;
+    modelUniformState.whiteAmbient = material.whiteAmbient;
     modelUniformState.useInteriorLight = material.useInteriorLight;
     modelUniformState.flipTextureY = material.flipTextureY;
     modelUniformState.alphaMode = alphaMode;

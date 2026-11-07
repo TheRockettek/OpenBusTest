@@ -1,6 +1,7 @@
 // Map drawing: terrain, water, roads and instanced scenery with culling/sorting.
 
 #include "render/map/MapRendererInternal.h"
+#include "render/map/MapSceneLoader.h"
 
 #include "core/Utf8Path.h"
 
@@ -208,6 +209,14 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
 
 void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFraction) const {
     TraceScope trace("map", "MapRenderer::draw");
+    const auto& sharedVariables = impl_->simulationState->sharedVariables();
+    const float dayOfYear = sharedVariables.get("dayofyear");
+    if (!std::isfinite(dayOfYear) || dayOfYear < 1.0F || dayOfYear > 366.0F ||
+        std::floor(dayOfYear) != dayOfYear) {
+        throw std::invalid_argument("Simulation day of year is invalid for tree textures");
+    }
+    const std::size_t treeSeason = treeSeasonIndex(
+        impl_->treeSeasons, static_cast<int>(dayOfYear), sharedVariables.roadWeather().groundSnow);
     IndirectCullingBatch& indirectBatch = impl_->indirectCullingBatch;
     IndirectCullingScope indirectScope;
     bool indirect = false;
@@ -685,8 +694,10 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         std::stable_sort(
             visibleWater.begin(), visibleWater.end(),
             [](const auto& first, const auto& second) { return first.second > second.second; });
-        ModelMaterial material;
-        const std::array<double, 3> waterColor = {0.24, 0.48, 0.60};
+        const ModelMaterial& material = impl_->waterMaterial;
+        const std::array<double, 3> waterColor = material.textured
+                                                     ? std::array<double, 3>{1.0, 1.0, 1.0}
+                                                     : std::array<double, 3>{0.24, 0.48, 0.60};
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         glDepthMask(GL_FALSE);
@@ -884,6 +895,33 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                     }
                 }
                 ModelMaterial sceneryMaterial = batch.material;
+                if (batch.seasonalSceneryTextures) {
+                    auto& textures = *batch.seasonalSceneryTextures;
+                    std::size_t selected =
+                        treeSeason == 4 && textures.paths[4].empty() ? 3 : treeSeason;
+                    const auto requestSeason = [&](std::size_t index) {
+                        if (textures.finished[index] || textures.paths[index].empty()) {
+                            return;
+                        }
+                        const auto texture =
+                            sceneLoader_->requestSeasonalSceneryTexture(textures.paths[index]);
+                        if (texture) {
+                            textures.textures[index] = *texture;
+                            textures.finished[index] = true;
+                        }
+                    };
+                    requestSeason(selected);
+                    if (treeSeason == 4 && selected == 4 && textures.finished[4] &&
+                        textures.textures[4] == 0) {
+                        selected = 3;
+                        requestSeason(selected);
+                    }
+                    if (textures.textures[selected] != 0) {
+                        sceneryMaterial.texture = textures.textures[selected];
+                    } else if (treeSeason == 4 && textures.textures[3] != 0) {
+                        sceneryMaterial.texture = textures.textures[3];
+                    }
+                }
                 const auto weatherBrightness =
                     impl_->simulationState->sharedVariables().environmentBrightness();
                 if (weatherBrightness) {
@@ -1124,10 +1162,9 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             // Text textures are transparent overlays: write depth only where the
             // shader retains visible glyph pixels, leaving the cleared background
             // transparent for the rest of the scene.
-            const bool hasOpaqueTransmapDepth =
-                scenery->alphaMode == 2 && scenery->material.useTransmap &&
-                !scenery->material.useTextTexture && !scenery->batch->noZwrite;
-            occlusionState.depthFunc = hasOpaqueTransmapDepth ? GL_LEQUAL : GL_LESS;
+            // Illuminated signal lenses and other overlays can be exactly coplanar
+            // with their opaque base mesh.
+            occlusionState.depthFunc = GL_LEQUAL;
             occlusionState.depthMask =
                 scenery->material.useTextTexture && !scenery->batch->noZwrite ? GL_TRUE : GL_FALSE;
             glDepthFunc(occlusionState.depthFunc);
@@ -1160,6 +1197,10 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         drawSceneryTypes(4);
         drawSceneryTypes(5);
     }
+}
+
+void MapRenderer::finishFrame() const {
+    sceneLoader_->releaseUnusedSeasonalSceneryTextures();
 }
 
 } // namespace openbus::rendering

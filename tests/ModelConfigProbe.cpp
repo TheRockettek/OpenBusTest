@@ -240,6 +240,26 @@ int main(int argc, char** argv) {
         std::cerr << "repeated Fence_3 material overrides were not bound to matching O3D slots\n";
         return 1;
     }
+    ParsedObj terminusMesh;
+    terminusMesh.materials["matl_0"].materialIndex = 0;
+    terminusMesh.materials["matl_0"].textureName = "asphalt.bmp";
+    terminusMesh.materials["matl_1"].materialIndex = 1;
+    terminusMesh.materials["matl_1"].textureName = "marking.tga";
+    ModelPart terminusPart;
+    ModelMaterialState unmatchedMarking;
+    unmatchedMarking.textureName = "missing-marking.tga";
+    unmatchedMarking.materialIndex = 0;
+    ModelMaterialState presentMarking;
+    presentMarking.textureName = "marking.tga";
+    presentMarking.materialIndex = 0;
+    terminusPart.materialStatesInOrder = {unmatchedMarking, presentMarking};
+    const auto terminusBindings =
+        openbus::map::resolveSceneryMaterialStates(terminusMesh, terminusPart);
+    if (terminusBindings.contains(0) || !terminusBindings.contains(1) ||
+        terminusBindings.at(1) != &terminusPart.materialStatesInOrder[1]) {
+        std::cerr << "ambiguous unmatched SCO marking replaced an unrelated road material\n";
+        return 1;
+    }
     ParsedObj replacementMesh;
     replacementMesh.materials.emplace("matl_0",
                                       ObjMaterial{.materialIndex = 0, .textureName = "base.dds"});

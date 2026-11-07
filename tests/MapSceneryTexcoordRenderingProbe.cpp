@@ -6,6 +6,7 @@
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
 #include "render/map/MapRenderer.h"
+#include "render/map/TreeSeason.h"
 
 #include <GLFW/glfw3.h>
 
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <numbers>
 #include <stdexcept>
@@ -69,7 +71,42 @@ void writeSolidTexture(const std::filesystem::path& path,
     check(static_cast<bool>(output), "Could not write scenery lightmap texture");
 }
 
-void writeNormalMesh(const std::filesystem::path& path, float normalY) {
+void writeRgbaTexture(const std::filesystem::path& path, std::uint8_t alpha) {
+    std::array<std::uint8_t, 22> image = {};
+    image[2] = 2;
+    image[12] = image[14] = 1;
+    image[16] = 32;
+    image[17] = 8;
+    image[18] = 0;
+    image[19] = 200;
+    image[20] = 255;
+    image[21] = alpha;
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(image.data()), image.size());
+    check(static_cast<bool>(output), "Could not write scenery cutout texture");
+}
+
+void writeSolidBmp(const std::filesystem::path& path,
+                   const std::array<std::uint8_t, 3>& rgb) {
+    std::array<std::uint8_t, 58> image = {};
+    image[0] = 'B';
+    image[1] = 'M';
+    image[2] = 58;
+    image[10] = 54;
+    image[14] = 40;
+    image[18] = image[22] = 1;
+    image[26] = 1;
+    image[28] = 24;
+    image[34] = 4;
+    image[54] = rgb[2];
+    image[55] = rgb[1];
+    image[56] = rgb[0];
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(image.data()), image.size());
+    check(static_cast<bool>(output), "Could not write seasonal BMP");
+}
+
+void writeNormalMesh(const std::filesystem::path& path, float normalY, float diffuse = 1.0F) {
     std::vector<std::uint8_t> bytes = {0x84, 0x19, 0x01};
     const auto integer = [&](std::uint32_t value, int width) {
         for (int index = 0; index < width; ++index) {
@@ -96,7 +133,7 @@ void writeNormalMesh(const std::filesystem::path& path, float normalY) {
     }
     bytes.push_back(0x26);
     integer(1, 2);
-    for (const float value : {1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F,
+    for (const float value : {diffuse, diffuse, diffuse, 1.0F, 0.0F, 0.0F,
                               0.0F, 0.0F, 0.0F, 0.0F, 0.0F})
         number(value);
     bytes.push_back(0);
@@ -244,20 +281,33 @@ void runNormalProbe(const std::filesystem::path& root) {
     writeSolidTexture(root / "base.tga", {255, 255, 255});
     writeNormalMesh(root / "model" / "up.o3d", 1.0F);
     writeNormalMesh(root / "model" / "down.o3d", -1.0F);
+    writeNormalMesh(root / "model" / "dark.o3d", -1.0F, 0.04F);
     writeText(root / "model" / "up.x",
               "xof 0303txt 0032\n"
               "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
               "MeshNormals { 1; 0;1;0;; 2; 3;0,0,0;, 3;0,0,0;; }\n"
               "MeshMaterialList { 1; 2; 0,0;; Material { "
               "1;1;1;1;; 0; 0;0;0;; 0;0;0;; } } }\n");
+    writeText(root / "model" / "dark.x",
+              "xof 0303txt 0032\n"
+              "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+              "MeshNormals { 1; 0;-1;0;; 2; 3;0,0,0;, 3;0,0,0;; }\n"
+              "MeshMaterialList { 1; 2; 0,0;; Material { "
+              "0.04;0.04;0.04;1;; 0; 0;0;0;; 0;0;0;; } } }\n");
     writeText(root / "up.sco", "[mesh]\nup.o3d\n");
     writeText(root / "down.sco", "[mesh]\ndown.o3d\n");
     writeText(root / "up-x.sco", "[mesh]\nup.x\n");
+    writeText(root / "dark.sco", "[mesh]\ndark.o3d\n");
+    writeText(root / "dark-x.sco", "[mesh]\ndark.x\n");
+    writeText(root / "shadow.sco", "[mesh]\ndark.o3d\n[isshadow]\n");
     writeText(root / "tile.map",
               "[version]\n14\n[terrain]\n"
+              "[object]\n0\nshadow.sco\n99\n-10\n0\n5\n0\n0\n0\n0\n"
               "[object]\n0\nup-x.sco\n100\n-6\n0\n5\n0\n0\n0\n0\n"
               "[object]\n0\nup.sco\n101\n-2\n0\n5\n0\n0\n0\n0\n"
-              "[object]\n0\ndown.sco\n102\n2\n0\n5\n0\n0\n0\n0\n");
+              "[object]\n0\ndown.sco\n102\n2\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\ndark-x.sco\n103\n6\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\ndark.sco\n104\n10\n0\n5\n0\n0\n0\n0\n");
     const std::array<std::uint8_t, 20> terrain = {1};
     std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
     terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
@@ -274,7 +324,7 @@ void runNormalProbe(const std::filesystem::path& root) {
     SimulationState simulation;
     AssetRequestManager assets;
     MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
-    check(renderer.renderStats().activeSceneryObjects == 3, "Normal scenery did not load");
+    check(renderer.renderStats().activeSceneryObjects == 6, "Normal scenery did not load");
     glViewport(0, 0, 64, 64);
     glDisable(GL_DITHER);
     setPerspective(64, 64, 90);
@@ -284,13 +334,367 @@ void runNormalProbe(const std::filesystem::path& root) {
     glClearColor(0, 0, 0, 0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     renderer.draw();
-    std::array<std::uint8_t, 4> upX = {}, up = {}, down = {};
+    std::array<std::uint8_t, 4> shadow = {}, upX = {}, up = {}, down = {}, darkX = {}, dark = {};
+    glReadPixels(2, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, shadow.data());
     glReadPixels(14, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, upX.data());
     glReadPixels(26, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, up.data());
     glReadPixels(38, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, down.data());
+    glReadPixels(50, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, darkX.data());
+    glReadPixels(62, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, dark.data());
     check(up[0] > 215 && down[0] >= 145 && down[0] <= 150 && up[0] > down[0] + 60,
           "O3D surface normal did not produce the expected directional lighting");
     check(upX[0] == up[0], "X and O3D upward normals did not produce matching lighting");
+    check(darkX[0] >= 145 && darkX[0] <= 150 && dark[0] == darkX[0],
+          "Dark X and O3D scenery diffuse colours incorrectly darkened ambient light");
+    check(shadow[0] >= 4 && shadow[0] <= 8,
+          "Scenery shadow mesh lost its authored dark tint");
+}
+
+void runCutoutProbe(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "model");
+    writeSolidTexture(root / "base.tga", {0, 0, 0});
+    writeRgbaTexture(root / "yellow.tga", 255);
+    writeRgbaTexture(root / "clear.tga", 0);
+    const auto mesh = [](std::string_view texture) {
+        return "xof 0303txt 0032\n"
+               "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+               "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+               "MeshMaterialList { 1; 2; 0,0;; Material { "
+               "0.64;0.64;0.64;0;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"" +
+               std::string(texture) + "\"; } } } }\n";
+    };
+    writeText(root / "model" / "yellow.x", mesh("yellow.tga"));
+    writeText(root / "model" / "clear.x", mesh("clear.tga"));
+    writeText(root / "cutout.sco",
+              "[mesh]\nyellow.x\n[matl]\nyellow.tga\n0\n[matl_alpha]\n1\n");
+    writeText(root / "clear.sco",
+              "[mesh]\nclear.x\n[matl]\nclear.tga\n0\n[matl_alpha]\n1\n");
+    writeText(root / "blend.sco",
+              "[mesh]\nyellow.x\n[matl]\nyellow.tga\n0\n[matl_alpha]\n2\n");
+    writeText(root / "tile.map",
+              "[version]\n14\n[terrain]\n"
+              "[object]\n0\ncutout.sco\n100\n-4\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\nclear.sco\n101\n0\n0\n5\n0\n0\n0\n0\n"
+              "[object]\n0\nblend.sco\n102\n4\n0\n5\n0\n0\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write scenery cutout terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.renderStats().activeSceneryObjects == 3, "Cutout scenery did not load");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, 0, -16}));
+    setLightingViewMatrix(identityMatrix());
+    glDepthMask(GL_TRUE);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.draw();
+    std::array<std::uint8_t, 4> cutout = {}, clear = {}, blend = {};
+    glReadPixels(20, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, cutout.data());
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, clear.data());
+    glReadPixels(44, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, blend.data());
+    check(cutout[0] > 100 && cutout[1] > 70, "Zero-alpha cutout marking was not rendered");
+    check(clear[0] < 5 && clear[1] < 5,
+          "Transparent texture was rendered");
+    check(blend[0] < 5 && blend[1] < 5,
+          "Blended zero-alpha material was rendered");
+}
+
+void runTreeSeasonProbe(const std::filesystem::path& root, bool mesh = false) {
+    using namespace openbus::rendering::map_detail;
+    const auto period = parseTreeSeason({"Spring:", {"1", "79", "172"}});
+    check(period.has_value(), "Valid tree season was rejected");
+    const std::vector<TreeSeasonPeriod> periods{*period};
+    check(treeSeasonIndex(periods, 79, 0.0) == 0 &&
+              treeSeasonIndex(periods, 80, 0.0) == 1 &&
+              treeSeasonIndex(periods, 172, 0.0) == 1 &&
+              treeSeasonIndex(periods, 173, 0.0) == 0 &&
+              treeSeasonIndex(periods, 80, treeSnowThreshold * 0.5) == 1 &&
+              treeSeasonIndex(periods, 80, treeSnowThreshold) == 4,
+          "Tree season boundary or snow threshold is incorrect");
+    check(!parseTreeSeason({"Bad:", {"1", "172", "79"}}) &&
+              !parseTreeSeason({"Bad:", {"1", "x", "172"}}) &&
+              !parseTreeSeason({"Bad:", {"5", "0", "38"}}),
+          "Invalid tree season was accepted");
+    const auto textureDirectory = mesh ? root / "plants" / "texture" : root / "texture";
+    std::filesystem::create_directories(textureDirectory / "Spring");
+    std::filesystem::create_directories(textureDirectory / "Summer");
+    std::filesystem::create_directories(textureDirectory / "Winter");
+    std::filesystem::create_directories(textureDirectory / "WinterSnow");
+    writeSolidTexture(root / "base.tga", {0, 0, 0});
+    writeSolidTexture(textureDirectory / "tree.tga", {0, 255, 0});
+    writeSolidBmp(textureDirectory / "Spring" / "tree.bmp", {255, 0, 0});
+    writeSolidTexture(textureDirectory / "Summer" / "tree.tga", {0, 0, 255});
+    writeSolidTexture(textureDirectory / "Winter" / "tree.tga", {255, 255, 0});
+    writeSolidTexture(textureDirectory / "WinterSnow" / "tree.tga", {255, 0, 255});
+    if (mesh) {
+        std::filesystem::create_directories(root / "model");
+        writeText(root / "model" / "plant.x",
+                  "xof 0303txt 0032\n"
+                  "Mesh { 3; -5;0;-5;, 5;0;-5;, 0;0;5;; 2; 3;0,1,2;, 3;2,1,0;;\n"
+                  "MeshTextureCoords { 3; 0.5;0.5;, 0.5;0.5;, 0.5;0.5;; }\n"
+                  "MeshMaterialList { 1; 2; 0,0;; Material { "
+                  "1;1;1;1;; 0; 0;0;0;; 0;0;0;; TextureFilename { \"plants/tree.tga\"; } } } }\n");
+        writeText(root / "tree.sco", "[mesh]\nplant.x\n");
+    } else {
+        writeText(root / "tree.sco", "[tree]\ntree.tga\n10\n10\n1\n1\n");
+    }
+    writeText(root / "tile.map", "[version]\n14\n[terrain]\n"
+              "[object]\n0\ntree.sco\n100\n0\n0\n5\n0\n0\n0\n0\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write tree terrain");
+    terrainFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.metadata.seasons = {{"Winter snow:", {"4", "0", "38"}},
+                            {"Spring:", {"1", "79", "172"}},
+                            {"Fall:", {"2", "264", "355"}}};
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.hasTerrainFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    simulation.sharedVariables().set("dayofyear", 200.0F);
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(renderer.renderStats().activeSceneryObjects == 1, "Tree scenery did not load");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    setModelViewMatrix(translationMatrix({0, -4, -16}));
+    setLightingViewMatrix(identityMatrix());
+    const auto draw = [&](MapRenderer& scene) {
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        scene.draw();
+        scene.finishFrame();
+        std::array<std::uint8_t, 64 * 64 * 4> pixels = {};
+        glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        std::array<unsigned int, 5> maximum = {};
+        for (std::size_t pixel = 0; pixel < pixels.size(); pixel += 4) {
+            for (std::size_t channel = 0; channel < 3; ++channel) {
+                maximum[channel] = std::max(maximum[channel],
+                                            static_cast<unsigned int>(pixels[pixel + channel]));
+            }
+            const int magenta = std::min(static_cast<int>(pixels[pixel]),
+                                         static_cast<int>(pixels[pixel + 2])) -
+                                static_cast<int>(pixels[pixel + 1]);
+            maximum[3] = std::max(maximum[3], static_cast<unsigned int>(std::max(0, magenta)));
+            const int yellow = std::min(static_cast<int>(pixels[pixel]),
+                                        static_cast<int>(pixels[pixel + 1])) -
+                               static_cast<int>(pixels[pixel + 2]);
+            maximum[4] = std::max(maximum[4], static_cast<unsigned int>(std::max(0, yellow)));
+        }
+        return maximum;
+    };
+    const auto awaitColor = [&](MapRenderer& scene, const auto& matches) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        auto color = draw(scene);
+        while (!matches(color) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            color = draw(scene);
+        }
+        return color;
+    };
+    const auto summer = awaitColor(renderer, [](const auto& color) { return color[2] > 50; });
+    simulation.sharedVariables().set("dayofyear", 80.0F);
+    const auto spring = awaitColor(renderer, [](const auto& color) { return color[0] > 50; });
+    simulation.sharedVariables().set("dayofyear", 265.0F);
+    const auto fallFallback = draw(renderer);
+    simulation.sharedVariables().set("dayofyear", 1.0F);
+    const auto winter =
+        awaitColor(renderer, [](const auto& color) { return color[0] > 50 && color[1] > 50; });
+    auto weather = simulation.sharedVariables().weather();
+    weather.omsiSnow = true;
+    simulation.sharedVariables().setWeather(weather);
+    simulation.sharedVariables().seedRoadWeatherFromPreset();
+    const auto snow = awaitColor(renderer, [](const auto& color) { return color[3] > 50; });
+    simulation.sharedVariables().resetRoadWeather();
+    const auto restored = draw(renderer);
+    check(summer[2] > 50 && summer[0] < 5 && summer[1] < 5, "Summer tree texture missing");
+    check(spring[0] > 50 && spring[1] < 5 && spring[2] < 5,
+          "Spring tree texture or alternate extension missing");
+    check(fallFallback[1] > 50 && fallFallback[0] < 5 && fallFallback[2] < 5,
+          "Missing seasonal texture did not fall back");
+    check(winter[0] > 50 && winter[1] > 50 && winter[2] < 5,
+          "Dry snowy-season tree did not use winter texture");
+    check(snow[3] > 50, "Snow tree texture missing");
+    check(restored == winter, "Tree texture did not recover after snow cleared");
+    check(std::filesystem::remove(textureDirectory / "WinterSnow" / "tree.tga"),
+          "Could not remove snow texture for fallback test");
+    simulation.sharedVariables().seedRoadWeatherFromPreset();
+    MapRenderer noSnowVariant(map, 0, 0, 0, 0, root, simulation, assets);
+    const auto winterFallback = awaitColor(noSnowVariant, [](const auto& color) {
+        return color[4] > 30;
+    });
+    check(winterFallback[4] > 30,
+          "Missing snow texture did not fall back to winter");
+    {
+        std::ofstream invalid(textureDirectory / "WinterSnow" / "tree.tga", std::ios::binary);
+        invalid << "invalid texture";
+        check(static_cast<bool>(invalid), "Could not write invalid snow texture");
+    }
+    MapRenderer invalidSnowVariant(map, 0, 0, 0, 0, root, simulation, assets);
+    const auto invalidSnowFallback =
+        awaitColor(invalidSnowVariant, [](const auto& color) { return color[4] > 30; });
+    check(invalidSnowFallback[4] > 30, "Invalid snow texture did not fall back to winter");
+
+    simulation.sharedVariables().resetRoadWeather();
+    simulation.sharedVariables().set("dayofyear", 200.0F);
+    const auto queueSeasonWhileBlocked = [&](MapRenderer& scene, bool finishFrame = true) {
+        std::promise<void> releaseWorkers;
+        struct ReleaseWorkers {
+            std::promise<void>& promise;
+            bool released = false;
+            void release() {
+                promise.set_value();
+                released = true;
+            }
+            ~ReleaseWorkers() {
+                if (!released) {
+                    promise.set_value();
+                }
+            }
+        } releaseGuard{releaseWorkers};
+        const auto release = releaseWorkers.get_future().share();
+        std::vector<std::future<void>> blockers;
+        const auto workers = assets.queueStats().workerCount;
+        for (std::size_t index = 0; index < workers; ++index) {
+            blockers.push_back(assets.submit([release] { release.wait(); }));
+        }
+        const auto readyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (assets.queueStats().activeWorkers < workers &&
+               std::chrono::steady_clock::now() < readyDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check(workers != 0 && assets.queueStats().activeWorkers == workers,
+              "Could not block seasonal texture workers");
+        if (finishFrame) {
+            draw(scene);
+        } else {
+            scene.draw();
+        }
+        releaseGuard.release();
+        for (auto& blocker : blockers) {
+            blocker.get();
+        }
+        const auto decodeDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while ((assets.queueStats().activeWorkers != 0 || assets.queueStats().queuedTasks != 0) &&
+               std::chrono::steady_clock::now() < decodeDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check(assets.queueStats().activeWorkers == 0 && assets.queueStats().queuedTasks == 0,
+              "Seasonal texture decode did not finish");
+    };
+    MapRenderer slowVisible(map, 0, 0, 0, 0, root, simulation, assets);
+    queueSeasonWhileBlocked(slowVisible);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    setModelViewMatrix(translationMatrix({500, -4, -16}));
+    slowVisible.draw();
+    setModelViewMatrix(translationMatrix({0, -4, -16}));
+    const auto slowColor = draw(slowVisible);
+    check(slowColor[2] > 50 && slowColor[0] < 5 && slowColor[1] < 5,
+          "Visible seasonal texture was discarded at a low frame rate");
+
+    MapRenderer longFrame(map, 0, 0, 0, 0, root, simulation, assets);
+    queueSeasonWhileBlocked(longFrame, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    longFrame.finishFrame();
+    check(std::filesystem::remove(textureDirectory / "Summer" / "tree.tga"),
+          "Could not remove seasonal texture for long-frame test");
+    const auto longFrameColor = draw(longFrame);
+    check(longFrameColor[2] > 50 && longFrameColor[0] < 5 && longFrameColor[1] < 5,
+          "Seasonal texture requested during a long frame was discarded");
+    writeSolidTexture(textureDirectory / "Summer" / "tree.tga", {0, 0, 255});
+
+    MapRenderer unusedRequest(map, 0, 0, 0, 0, root, simulation, assets);
+    queueSeasonWhileBlocked(unusedRequest);
+    simulation.sharedVariables().set("dayofyear", 265.0F);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    draw(unusedRequest);
+    check(std::filesystem::remove(textureDirectory / "Summer" / "tree.tga"),
+          "Could not remove unused seasonal texture");
+    simulation.sharedVariables().set("dayofyear", 200.0F);
+    draw(unusedRequest);
+    const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while ((assets.queueStats().activeWorkers != 0 || assets.queueStats().queuedTasks != 0) &&
+           std::chrono::steady_clock::now() < retryDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(assets.queueStats().activeWorkers == 0 && assets.queueStats().queuedTasks == 0,
+          "Seasonal texture retry did not finish");
+    const auto unusedFallback = draw(unusedRequest);
+    check(unusedFallback[1] > 50 && unusedFallback[0] < 5 && unusedFallback[2] < 5,
+          "Unused seasonal decode was retained instead of released");
+}
+
+void runWaterCornerProbe(const std::filesystem::path& root) {
+    writeSolidTexture(root / "base.tga", {255, 0, 0});
+    writeText(root / "tile.map", "[version]\n14\n[terrain]\n[water]\n");
+    const std::array<std::uint8_t, 20> terrain = {1};
+    std::ofstream terrainFile(root / "tile.terrain", std::ios::binary);
+    terrainFile.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
+    check(static_cast<bool>(terrainFile), "Could not write water-corner terrain");
+    terrainFile.close();
+    const std::array<std::uint32_t, 5> water = {
+        1, std::bit_cast<std::uint32_t>(-1.0F), std::bit_cast<std::uint32_t>(-1.0F),
+        std::bit_cast<std::uint32_t>(2.0F), std::bit_cast<std::uint32_t>(-1.0F)};
+    std::ofstream waterFile(root / "tile.water", std::ios::binary);
+    for (const std::uint32_t value : water) {
+        const std::array<char, 4> bytes = {
+            static_cast<char>(value & 0xffU), static_cast<char>((value >> 8) & 0xffU),
+            static_cast<char>((value >> 16) & 0xffU), static_cast<char>((value >> 24) & 0xffU)};
+        waterFile.write(bytes.data(), bytes.size());
+    }
+    check(static_cast<bool>(waterFile), "Could not write water-corner sidecar");
+    waterFile.close();
+    openbus::map::MapDefinition map;
+    map.rootPath = root;
+    map.coordinates.tileSize = 10;
+    map.groundTextures.push_back({"base.tga", "", {}});
+    openbus::map::MapTileReference tile;
+    tile.textPath = root / "tile.map";
+    tile.terrainPath = root / "tile.terrain";
+    tile.waterPath = root / "tile.water";
+    tile.hasTerrainFile = true;
+    tile.hasWaterFile = true;
+    map.tiles.push_back(tile);
+    SimulationState simulation;
+    AssetRequestManager assets;
+    MapRenderer renderer(map, 0, 5, 5, 0, root, simulation, assets);
+    check(renderer.renderStats().totalWaterBatches == 1, "Water corner fixture did not load");
+    glViewport(0, 0, 64, 64);
+    glDisable(GL_DITHER);
+    setPerspective(64, 64, 90);
+    lookAt(5, 5, 10, 5, 5, 0, 0, 1, 0);
+    setLightingViewMatrix(modelViewMatrix());
+    glDepthMask(GL_TRUE);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.draw();
+    std::array<std::uint8_t, 4> northwest = {}, northeast = {};
+    glReadPixels(19, 45, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, northwest.data());
+    glReadPixels(45, 45, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, northeast.data());
+    check(northwest[2] > 20 && northeast[2] < 5,
+          "Raised north-west water appeared on the wrong side of the terrain");
 }
 
 void runLightmapProbe(const std::filesystem::path& root) {
@@ -399,15 +803,16 @@ void runLightmapProbe(const std::filesystem::path& root) {
 }
 
 void runRoadWeatherProbe(const std::filesystem::path& root) {
-    std::filesystem::create_directories(root / "Splines");
-    writeSolidTexture(root / "wet.tga", {180, 180, 180});
+    std::filesystem::create_directories(root / "Splines" / "Weather" / "texture");
+    writeSolidTexture(root / "Splines" / "Weather" / "texture" / "wet.tga", {180, 180, 180});
     writeSolidTexture(root / "dry.tga", {180, 180, 180});
     writeSolidTexture(root / "classified.tga", {180, 180, 180});
     writeSolidTexture(root / "ground.tga", {30, 30, 30});
-    writeText(root / "wet.tga.cfg", "[moisture]\n[surface]\n0\n");
+    writeText(root / "Splines" / "Weather" / "texture" / "wet.tga.cfg",
+              "[moisture]\n[surface]\n0\n");
     writeText(root / "classified.tga.cfg", "[surface]\n0\n");
     writeText(root / "Splines" / "Test.sli",
-              "[texture]\nwet.tga\n[texture]\nclassified.tga\n[texture]\ndry.tga\n"
+              "[texture]\nWeather\\wet.tga\n[texture]\nclassified.tga\n[texture]\ndry.tga\n"
               "[profile]\n0\n[profilepnt]\n-6\n0\n0\n0\n"
               "[profilepnt]\n-2\n0\n1\n0\n"
               "[profile]\n1\n[profilepnt]\n-2\n0\n0\n0\n"
@@ -1784,6 +2189,10 @@ int main(int argc, char** argv) {
     const bool nightmap = argc == 2 && std::string_view(argv[1]) == "--nightmap";
     const bool itemLightmap = argc == 2 && std::string_view(argv[1]) == "--item-lightmap";
     const bool normals = argc == 2 && std::string_view(argv[1]) == "--normals";
+    const bool cutout = argc == 2 && std::string_view(argv[1]) == "--cutout";
+    const bool treeSeason = argc == 2 && std::string_view(argv[1]) == "--tree-season";
+    const bool meshSeason = argc == 2 && std::string_view(argv[1]) == "--mesh-season";
+    const bool waterCorners = argc == 2 && std::string_view(argv[1]) == "--water-corners";
     const bool human = argc == 2 && std::string_view(argv[1]) == "--human-skinning";
     const bool splineLabels = argc == 2 && std::string_view(argv[1]) == "--spline-labels";
     const bool roadWeather = argc == 2 && std::string_view(argv[1]) == "--road-weather";
@@ -1795,7 +2204,7 @@ int main(int argc, char** argv) {
     const bool splineHumanDependencies =
         argc == 2 && std::string_view(argv[1]) == "--spline-human-dependencies";
     if (argc != 1 && !lightmap && !bumpmap && !environment && !nightmap && !itemLightmap &&
-        !normals && !human && !splineLabels && !roadWeather && !terrainWeather &&
+        !normals && !cutout && !treeSeason && !meshSeason && !waterCorners && !human && !splineLabels && !roadWeather && !terrainWeather &&
         !splineText && !splineOwnership &&
         !splineDependencies && !splineHumanDependencies) {
         return 2;
@@ -1810,9 +2219,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(
-        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ||
+        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || cutout || treeSeason || meshSeason || waterCorners || human ||
                 splineLabels || roadWeather || terrainWeather || splineText || splineOwnership ? 64 : 32,
-        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || human ||
+        lightmap || bumpmap || environment || nightmap || itemLightmap || normals || cutout || treeSeason || meshSeason || waterCorners || human ||
                 splineLabels || roadWeather || terrainWeather || splineText || splineOwnership ? 64 : 32,
                                           "Scenery material probe", nullptr, nullptr);
     if (window == nullptr) {
@@ -1820,7 +2229,7 @@ int main(int argc, char** argv) {
         return 77;
     }
     glfwMakeContextCurrent(window);
-    const auto root = openbus::probe::makeProbeDirectory("openbus-scenery-uv-rendering");
+    const auto root = openbus::probe::makeProbeDirectory("openbus-scenery-uv-rendering", false);
     bool passed = loadOpenGLFunctions() && initializeCoreRenderer();
     const bool unavailable = passed && indirect && !indirectCullingAvailable();
     if (passed && !unavailable) {
@@ -1829,6 +2238,12 @@ int main(int argc, char** argv) {
                 runHumanSkinningProbe(root);
             } else if (normals) {
                 runNormalProbe(root);
+            } else if (cutout) {
+                runCutoutProbe(root);
+            } else if (treeSeason || meshSeason) {
+                runTreeSeasonProbe(root, meshSeason);
+            } else if (waterCorners) {
+                runWaterCornerProbe(root);
             } else if (lightmap) {
                 runLightmapProbe(root);
             } else if (bumpmap) {

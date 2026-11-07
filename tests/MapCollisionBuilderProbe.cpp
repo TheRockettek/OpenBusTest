@@ -465,6 +465,24 @@ void runSurfaceHeightMapProbe() {
     require(curvedResult.meshes.size() == 1 &&
                 curvedResult.meshes.front().vertices.size() > constantMesh.vertices.size(),
             "constant surface keeps subdivisions when road quads are not affine");
+    const auto nestedTexture = omsiRoot / "Splines" / "Markings" / "texture" / "White.dds";
+    writeText(nestedTexture, "fixture nested texture");
+    writeText(nestedTexture.string() + ".cfg", "[moisture]\n[surface]\n3\n");
+    writeSurfaceBitmap(nestedTexture.string() + ".surf");
+    writeText(tile.textPath, tileText);
+    const auto nestedResult = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    require(nestedResult.meshes.size() == 1 &&
+                !nestedResult.meshes.front().surfaceHeightMapIndices.empty() &&
+                !nestedResult.meshes.front().triangleSurfaces.empty() &&
+                nestedResult.meshes.front().triangleSurfaces.size() ==
+                    nestedResult.meshes.front().indices.size() / 3 &&
+                std::all_of(nestedResult.meshes.front().triangleSurfaces.begin(),
+                            nestedResult.meshes.front().triangleSurfaces.end(),
+                            [](const auto& surface) {
+                                return surface && surface->type == 3 && surface->moisture;
+                            }) &&
+                nestedResult.meshes.front().vertices.size() > constantMesh.vertices.size(),
+            "nested local road texture supplies surface metadata and height map before global");
     openbus::probe::removeProbeDirectory(root);
 }
 

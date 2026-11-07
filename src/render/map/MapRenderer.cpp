@@ -104,6 +104,14 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     TraceScope trace("map", "MapRenderer::MapRenderer");
     assetRequests_ = &assetRequests;
     impl_->simulationState = &simulationState;
+    for (const auto& definition : mapDefinition_.metadata.seasons) {
+        const auto period = parseTreeSeason(definition);
+        if (period) {
+            impl_->treeSeasons.push_back(*period);
+        } else {
+            gameLog.Warning("Invalid map season definition: " + definition.label);
+        }
+    }
     impl_->omsiRoot = omsiRoot;
     impl_->coordinates = mapDefinition_.coordinates;
     for (const auto& tile : mapDefinition_.tiles) {

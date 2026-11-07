@@ -158,7 +158,7 @@ std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot
     const std::filesystem::path relative = normalizedAssetPath(textureName);
     const std::filesystem::path packageRoot = objectRoot.parent_path();
     const std::filesystem::path modelPackageRoot = modelRoot.parent_path();
-    const std::array<std::filesystem::path, 9> candidates = {
+    const std::array<std::filesystem::path, 13> candidates = {
         objectRoot / "texture" / relative,
         objectRoot / relative,
         modelRoot / relative,
@@ -166,9 +166,16 @@ std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot
         packageRoot / relative,
         modelPackageRoot / "texture" / relative,
         modelPackageRoot / relative,
+        openbus::assets::textureSubdirectoryPath(objectRoot, relative),
+        openbus::assets::textureSubdirectoryPath(modelRoot, relative),
+        openbus::assets::textureSubdirectoryPath(packageRoot, relative),
+        openbus::assets::textureSubdirectoryPath(modelPackageRoot, relative),
         omsiRoot / relative,
         omsiRoot / "Texture" / relative};
     for (const std::filesystem::path& candidate : candidates) {
+        if (candidate.empty()) {
+            continue;
+        }
         const std::filesystem::path resolved = openbus::assets::resolveTexturePath(candidate);
         if (std::filesystem::is_regular_file(resolved)) {
             return resolved;
@@ -240,10 +247,15 @@ std::filesystem::path findSplineTexture(const std::filesystem::path& profilePath
                                         const std::string& textureName) {
     const std::filesystem::path relative = normalizedAssetPath(textureName);
     const std::filesystem::path profileRoot = profilePath.parent_path();
-    const std::array<std::filesystem::path, 5> candidates = {
-        profileRoot / "texture" / relative, profileRoot / relative, omsiRoot / "Texture" / relative,
-        omsiRoot / "texture" / relative, omsiRoot / relative};
+    const std::array<std::filesystem::path, 6> candidates = {
+        profileRoot / "texture" / relative,
+        profileRoot / relative,
+        openbus::assets::textureSubdirectoryPath(profileRoot, relative),
+        omsiRoot / "Texture" / relative, omsiRoot / "texture" / relative, omsiRoot / relative};
     for (const std::filesystem::path& candidate : candidates) {
+        if (candidate.empty()) {
+            continue;
+        }
         if (std::filesystem::is_regular_file(candidate)) {
             return candidate;
         }

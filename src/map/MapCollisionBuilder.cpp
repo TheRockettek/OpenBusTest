@@ -71,8 +71,12 @@ std::filesystem::path resolveSurfaceMap(const MapDefinition& map,
     const std::filesystem::path profileRoot = profilePath.parent_path();
     for (const std::filesystem::path& textureCandidate :
          {profileRoot / "texture" / relative, profileRoot / relative,
+          openbus::assets::textureSubdirectoryPath(profileRoot, relative),
           omsiRoot / "Texture" / relative, omsiRoot / "texture" / relative, omsiRoot / relative,
           map.rootPath / relative}) {
+        if (textureCandidate.empty()) {
+            continue;
+        }
         std::filesystem::path surfaceCandidate = textureCandidate;
         surfaceCandidate += ".surf";
         const std::filesystem::path resolved =
@@ -92,7 +96,11 @@ std::optional<CollisionSurface> loadRoadSurface(const MapDefinition& map,
     const std::filesystem::path profileRoot = profilePath.parent_path();
     for (const std::filesystem::path& candidate :
          {profileRoot / "texture" / relative, profileRoot / relative,
+          openbus::assets::textureSubdirectoryPath(profileRoot, relative),
           omsiRoot / "Texture" / relative, omsiRoot / relative, map.rootPath / relative}) {
+        if (candidate.empty()) {
+            continue;
+        }
         const auto texture = openbus::assets::resolveCaseInsensitivePath(candidate);
         if (!std::filesystem::is_regular_file(texture)) {
             continue;

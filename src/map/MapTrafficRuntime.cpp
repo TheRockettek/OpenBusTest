@@ -2680,8 +2680,8 @@ bool mapTrafficRouteSegmentClearsWater(const MapTrafficRouteSegment& segment,
                             [](float height) { return !std::isfinite(height); })) {
                 throw std::invalid_argument("Water surface has a non-finite corner height");
             }
-            const double height = x >= y ? h[0] * (1.0 - x) + h[1] * (x - y) + h[2] * y
-                                         : h[0] * (1.0 - y) + h[2] * x + h[3] * (y - x);
+            const double height = x >= y ? h[0] * (1.0 - x) + h[1] * (x - y) + h[3] * y
+                                         : h[0] * (1.0 - y) + h[3] * x + h[2] * (y - x);
             waterHeight = (std::max)(waterHeight, height);
         }
         return pose->position[2] >= waterHeight + clearanceMeters;

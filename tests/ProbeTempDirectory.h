@@ -40,17 +40,20 @@ inline void removeProbeFile(const std::filesystem::path& path) noexcept {
     std::filesystem::remove(path, error);
 }
 
-// Creates an empty directory under the system temp path that is unique to this process,
-// first sweeping (best-effort) directories left behind by earlier runs of the same probe.
-[[nodiscard]] inline std::filesystem::path makeProbeDirectory(std::string_view name) {
+// Creates an empty directory unique to this process. Disable the best-effort sweep
+// when multiple instances of a probe can run concurrently.
+[[nodiscard]] inline std::filesystem::path makeProbeDirectory(std::string_view name,
+                                                              bool sweepOtherRuns = true) {
     const std::filesystem::path tempRoot = std::filesystem::temp_directory_path();
     const std::string prefix = std::string(name) + "-";
-    const std::filesystem::path::string_type nativePrefix = std::filesystem::path(prefix).native();
-    std::error_code iterateError;
-    for (std::filesystem::directory_iterator entry(tempRoot, iterateError), end;
-         !iterateError && entry != end; entry.increment(iterateError)) {
-        if (entry->path().filename().native().starts_with(nativePrefix)) {
-            removeProbeDirectory(entry->path());
+    if (sweepOtherRuns) {
+        const auto nativePrefix = std::filesystem::path(prefix).native();
+        std::error_code iterateError;
+        for (std::filesystem::directory_iterator entry(tempRoot, iterateError), end;
+             !iterateError && entry != end; entry.increment(iterateError)) {
+            if (entry->path().filename().native().starts_with(nativePrefix)) {
+                removeProbeDirectory(entry->path());
+            }
         }
     }
     const std::filesystem::path path = tempRoot / (prefix + std::to_string(OPENBUS_PROBE_PID()));
