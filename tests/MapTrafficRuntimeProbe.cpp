@@ -1688,6 +1688,19 @@ void verifyPassengerServiceBehavior() {
                     riderB->queueSlot == 0 && riderB->journey->routeIndex == 1 &&
                     riderB->journey->destinationStopId == 300,
                 "returned journeys and positions do not change when routes are added");
+        MapPassengerServiceRuntime multiBoarder(3);
+        require(multiBoarder.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 200}),
+                "multi-boarder service reaches its stop");
+        auto firstBoarder = network.nextPassenger(100, 0, multiBoarder);
+        network.advanceService(multiBoarder, 0, firstBoarder, 0.1, true, true, true);
+        auto secondBoarder = network.nextPassenger(100, 0, multiBoarder);
+        network.advanceService(multiBoarder, 0, secondBoarder, 0.1, true, true, true);
+        require(multiBoarder.boardingPassengers().size() == 2 &&
+                    !multiBoarder.canStartBoardingPassenger() && network.queues.at(100) == 2,
+                "two passengers can board concurrently while later passengers remain queued");
+        network.departService(multiBoarder);
+        require(network.queues.at(100) == 4 && network.waitingPassengers(100).size() == 4,
+                "departure restores both active boarding reservations to the shared queue");
         MapPassengerServiceRuntime unrelated(1);
         require(unrelated.arrive({.stopId = 100, .dwellSeconds = 5.0, .nextStopId = 400}),
                 "newly registered service can reach the same stop");
@@ -2243,6 +2256,35 @@ void verifyPassengerServiceBehavior() {
         service.advance(1.5, false, true, true, true, nullptr, true);
         requireNear(service.alightingProgress(), 0.5,
                     "the next alighter uses its own path duration");
+    }
+    {
+        MapPassengerServiceRuntime service(3);
+        service.setWaitingPassengers(907, 3);
+        require(service.arrive({.stopId = 907, .dwellSeconds = 10.0, .nextStopId = 908}),
+                "concurrent boarding fixture starts service");
+        service.advance(0.1, true, true, true, true, nullptr, true);
+        const auto firstSeat = service.boardingSeatIndex();
+        require(firstSeat.has_value(), "first passenger begins boarding");
+        service.setPassengerAnimationDurationForSeat(*firstSeat, 2.0);
+        const openbus::map::MapPassengerBoardingSelection secondPassenger{
+            .modelIndex = 777, .queueSlot = 1, .destinationStopId = 908};
+        service.advance(0.1, true, true, true, true, nullptr, true, &secondPassenger, true);
+        const auto boarding = service.boardingPassengers();
+        require(boarding.size() == 2 && service.waitingPassengers(907) == 1,
+                "a second passenger begins before the first reaches their seat");
+        const auto second = std::ranges::find_if(
+            boarding, [&](const auto& passenger) { return passenger.seatIndex != *firstSeat; });
+        require(second != boarding.end(), "the second passenger receives a separate seat");
+        service.setPassengerAnimationDurationForSeat(second->seatIndex, 1.0);
+        service.advance(0.5, true, true, true, true, nullptr, true);
+        requireNear(service.boardingProgressForSeat(*firstSeat), 0.3,
+                    "the first boarding animation progresses independently");
+        requireNear(service.boardingProgressForSeat(second->seatIndex), 0.5,
+                    "the second boarding animation progresses independently");
+        service.advance(0.5, true, true, true, true, nullptr, true);
+        require(service.boardingPassengers().size() == 1 && service.onboardPassengerCount() == 1 &&
+                    service.canStartBoardingPassenger(),
+                "a completed boarder frees a seat and a concurrency slot");
     }
     {
         VehicleConfig cabin;

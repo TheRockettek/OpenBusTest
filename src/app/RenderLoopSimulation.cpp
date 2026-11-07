@@ -702,7 +702,10 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                                             .at(*nextPassenger))) {
                     nextPassenger.reset();
                 }
-                if (nextPassenger && !service.boardingPassenger()) {
+                if (nextPassenger && !service.canStartBoardingPassenger()) {
+                    nextPassenger.reset();
+                }
+                if (nextPassenger) {
                     const auto& rider =
                         passengerNetwork_.waitingPassengers(activeStop->second)[*nextPassenger];
                     if (!rider.journey) {
@@ -902,7 +905,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
             bool passengerReady = true;
             bool passengerTicketSalePending = false;
             if (activeStop != sharedQueueStops.end() && queue != passengerNetwork_.queues.end() &&
-                nextPassenger && !service.boardingPassenger() && !service.alightingPassenger()) {
+                nextPassenger && service.canStartBoardingPassenger() &&
+                !service.alightingPassenger()) {
                 const auto& rider =
                     passengerNetwork_.waitingPassengers(activeStop->second)[*nextPassenger];
                 auto& approach = passengerApproachProgress_[vehicle.get()];
@@ -1418,22 +1422,19 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                     const auto curb = passengerCurbPose(*stopPose, mapRenderer_->leftHandTraffic(),
                                                         laneOffset, vehicleWidth);
                     const auto& cabin = vehicle->passengers->configuration();
-                    const bool boarding = service.boardingPassenger();
-                    const auto seat =
-                        boarding ? service.boardingSeatIndex() : service.alightingSeatIndex();
-                    if (!seat || *seat >= cabin.passengerPositions.size()) {
-                        throw std::logic_error("Active passenger has no configured seat");
-                    }
-                    const auto& position = cabin.passengerPositions[*seat];
-                    const auto seatPose = passengerCabinSeatPose(busPose, position);
-                    if (boarding) {
-                        const auto initialQueue =
-                            passengerNetwork_.initialQueues.find(activeStop->second);
-                        const std::size_t initialCount =
-                            initialQueue == passengerNetwork_.initialQueues.end()
-                                ? 0
-                                : initialQueue->second;
-                        const auto slot = service.boardingPassengerQueueSlot(initialCount);
+                    const auto initialQueue =
+                        passengerNetwork_.initialQueues.find(activeStop->second);
+                    const std::size_t initialCount =
+                        initialQueue == passengerNetwork_.initialQueues.end()
+                            ? 0
+                            : initialQueue->second;
+                    for (const auto& boarding : service.boardingPassengers()) {
+                        if (boarding.seatIndex >= cabin.passengerPositions.size()) {
+                            throw std::logic_error("Boarding passenger has no configured seat");
+                        }
+                        const auto& position = cabin.passengerPositions[boarding.seatIndex];
+                        const auto slot = service.boardingPassengerQueueSlotForSeat(
+                            boarding.seatIndex, initialCount);
                         if (!slot) {
                             throw std::logic_error("Boarding passenger has no reserved queue slot");
                         }
@@ -1446,8 +1447,15 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                         updatePassengerCabinPathOccupancy(
                             service, cabin, busPose, outside.position,
                             passengerCabinStandingPoint(position.position, position.seatHeight),
-                            true, *seat, vehicle->passengers->entryDoor(), curb.position);
-                    } else {
+                            true, boarding.seatIndex, vehicle->passengers->entryDoor(),
+                            curb.position);
+                    }
+                    if (const auto alightingSeat = service.alightingSeatIndex()) {
+                        if (*alightingSeat >= cabin.passengerPositions.size()) {
+                            throw std::logic_error("Alighting passenger has no configured seat");
+                        }
+                        const auto& position = cabin.passengerPositions[*alightingSeat];
+                        const auto seatPose = passengerCabinSeatPose(busPose, position);
                         const auto outside =
                             passengerConfiguredDoorQueuePose(
                                 *vehicle, busPose, mapRenderer_->leftHandTraffic(),
@@ -1455,8 +1463,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                                 .value_or(curb);
                         updatePassengerCabinPathOccupancy(
                             service, cabin, busPose, seatPose.position,
-                            passengerCabinLocalPoint(busPose, outside.position), false, *seat,
-                            vehicle->passengers->exitDoor());
+                            passengerCabinLocalPoint(busPose, outside.position), false,
+                            *alightingSeat, vehicle->passengers->exitDoor());
                         const auto& queuedSeats = service.queuedAlightingSeatIndices();
                         for (std::size_t queueIndex = 0; queueIndex < queuedSeats.size();
                              ++queueIndex) {

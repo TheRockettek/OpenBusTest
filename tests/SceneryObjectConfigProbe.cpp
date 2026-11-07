@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path polePath = directory / "pole.sco";
     const std::filesystem::path invalidPolePath = directory / "invalid-pole.sco";
     const std::filesystem::path nonFinitePolePath = directory / "non-finite-pole.sco";
+    const std::filesystem::path invalidMapLightPath = directory / "invalid-map-light.sco";
     const std::filesystem::path editorStopPath = directory / "editor-stop.sco";
     const std::filesystem::path editorPassengersPath = directory / "editor-passengers.sco";
     const std::filesystem::path carParkPath = directory / "car-park.sco";
@@ -220,6 +221,10 @@ int main(int argc, char** argv) {
         output << "[crashmode_pole]\nnan\n1.2\n";
     }
     {
+        std::ofstream output(invalidMapLightPath);
+        output << "[maplight]\n0\n0\n0\n1\n1\n1\n0\n";
+    }
+    {
         std::ofstream output(editorStopPath);
         output << "[onlyeditor]\n[mesh]\nstop.x\n[busstop]\n"
                   "[boundingbox]\n1\n2\n3\n0\n0\n1.5\n";
@@ -281,7 +286,7 @@ int main(int argc, char** argv) {
                   "[friendlyname]\neditor name\n"
                   "[complexity]\n2\n"
                   "[nightmapmode]\n1\n"
-                  "[maplight]\n0\n0\n0\n0\n0\n0\n0\n"
+                  "[maplight]\n0\n0\n0\n0.9\n1\n0.776\n7\n"
                   "[unknown_probe_keyword]\n";
     }
     {
@@ -309,6 +314,8 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig invalidPoleConfiguration = loadSceneryObjectFile(invalidPolePath);
     const SceneryObjectConfig nonFinitePoleConfiguration =
         loadSceneryObjectFile(nonFinitePolePath);
+    const SceneryObjectConfig invalidMapLightConfiguration =
+        loadSceneryObjectFile(invalidMapLightPath);
     const SceneryObjectConfig editorStop = loadSceneryObjectFile(editorStopPath);
     const SceneryObjectConfig editorPassengers = loadSceneryObjectFile(editorPassengersPath);
     const SceneryObjectConfig carPark = loadSceneryObjectFile(carParkPath);
@@ -352,8 +359,15 @@ int main(int argc, char** argv) {
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
     valid &= require(statusConfiguration.busStop && !statusConfiguration.diagnostics.hasErrors() &&
-                         statusLogOpened,
+                         statusConfiguration.mapLights.size() == 1 && statusLogOpened,
                      "SCO configuration statuses distinguish active, ignored, and unknown tags");
+    valid &= require(statusConfiguration.mapLights[0].position ==
+                             std::array<double, 3>{0.0, 0.0, 0.0} &&
+                         statusConfiguration.mapLights[0].color ==
+                             std::array<double, 3>{0.9, 1.0, 0.776} &&
+                         statusConfiguration.mapLights[0].radius == 7.0 &&
+                         invalidMapLightConfiguration.diagnostics.hasErrors(),
+                     "maplight fields are retained and invalid radii are rejected");
     valid &= require(statusLog.find("Configuration tag [busstop] recognized and active") !=
                          std::string::npos,
                      "SCO active status is logged");
@@ -369,7 +383,7 @@ int main(int argc, char** argv) {
                              std::string::npos &&
                          statusLog.find("Configuration tag [nightmapmode] recognized but ignored") !=
                              std::string::npos &&
-                         statusLog.find("Configuration tag [maplight] recognized but ignored") !=
+                         statusLog.find("Configuration tag [maplight] recognized and active") !=
                              std::string::npos &&
                          statusLog.find("Configuration tag [puddles] recognized and active") !=
                              std::string::npos &&

@@ -284,10 +284,12 @@ void PassengerNetwork::syncQueue(int stopId) {
     for (const auto& passenger : state.passengers) {
         occupied.insert(passenger.queueSlot);
     }
-    for (const auto& [service, reservation] : reservations_) {
+    for (const auto& [service, serviceReservations] : reservations_) {
         (void)service;
-        if (reservation.stopId == stopId) {
-            occupied.insert(reservation.passenger.queueSlot);
+        for (const auto& reservation : serviceReservations) {
+            if (reservation.stopId == stopId) {
+                occupied.insert(reservation.passenger.queueSlot);
+            }
         }
     }
     std::size_t slot = 0;
@@ -436,12 +438,23 @@ void PassengerNetwork::advanceService(openbus::map::MapPassengerServiceRuntime& 
     const int stopId = service.currentStopId();
     const auto& passengers = waitingPassengers(stopId);
     auto& count = queues.at(stopId);
-    const bool wasBoarding = service.boardingPassenger();
-    if (wasBoarding != reservations_.contains(&service)) {
+    const auto previousBoardings = service.boardingPassengers();
+    const auto reservationEntry = reservations_.find(&service);
+    if (previousBoardings.size() !=
+        (reservationEntry == reservations_.end() ? 0 : reservationEntry->second.size())) {
         throw std::logic_error("Passenger boarding reservation does not match the service");
     }
+    if (reservationEntry != reservations_.end()) {
+        for (const auto& boarding : previousBoardings) {
+            if (std::ranges::none_of(reservationEntry->second, [&](const Reservation& reservation) {
+                    return reservation.passenger.modelIndex == boarding.modelIndex;
+                })) {
+                throw std::logic_error("Passenger boarding reservation identity does not match");
+            }
+        }
+    }
     std::optional<openbus::map::MapPassengerBoardingSelection> selection;
-    if (!wasBoarding && passengerIndex) {
+    if (service.canStartBoardingPassenger() && passengerIndex) {
         if (*passengerIndex >= passengers.size() ||
             !passengerMatchesService(passengers[*passengerIndex], routeIndex, service,
                                      currentStopIndex)) {
@@ -456,15 +469,30 @@ void PassengerNetwork::advanceService(openbus::map::MapPassengerServiceRuntime& 
     service.advance(elapsedSeconds, allowBoarding, allowAlighting, holdAtStop, true, nullptr, true,
                     selection ? &*selection : nullptr, true, pauseDwellTimer);
     auto& state = queueStates_.at(stopId);
-    if (!wasBoarding && service.boardingPassenger()) {
+    auto activeBoardings = service.boardingPassengers();
+    if (selection &&
+        std::ranges::any_of(
+            activeBoardings,
+            [&](const auto& boarding) { return boarding.modelIndex == selection->modelIndex; }) &&
+        std::ranges::none_of(previousBoardings, [&](const auto& boarding) {
+            return boarding.modelIndex == selection->modelIndex;
+        })) {
         if (!passengerIndex || !selection) {
             throw std::logic_error("Passenger boarded without a journey reservation");
         }
-        reservations_.emplace(&service, Reservation{stopId, state.passengers[*passengerIndex]});
+        reservations_[&service].push_back(Reservation{stopId, state.passengers[*passengerIndex]});
         state.passengers.erase(state.passengers.begin() +
                                static_cast<std::ptrdiff_t>(*passengerIndex));
-    } else if (wasBoarding && !service.boardingPassenger()) {
-        reservations_.erase(&service);
+    }
+    if (auto reservation = reservations_.find(&service); reservation != reservations_.end()) {
+        std::erase_if(reservation->second, [&](const Reservation& candidate) {
+            return std::ranges::none_of(activeBoardings, [&](const auto& boarding) {
+                return boarding.modelIndex == candidate.passenger.modelIndex;
+            });
+        });
+        if (reservation->second.empty()) {
+            reservations_.erase(reservation);
+        }
     }
     count = service.waitingPassengers(stopId);
     std::size_t eligible = 0;
@@ -482,7 +510,8 @@ void PassengerNetwork::restoreReservation(openbus::map::MapPassengerServiceRunti
     syncQueue(stopId);
     auto& count = queues.at(stopId);
     const auto reservation = reservations_.find(&service);
-    if (service.boardingPassenger() != (reservation != reservations_.end())) {
+    const auto boardings = service.boardingPassengers();
+    if (boardings.size() != (reservation == reservations_.end() ? 0 : reservation->second.size())) {
         throw std::logic_error("Passenger cancellation has no matching reservation");
     }
     service.setWaitingPassengers(stopId, count);
@@ -492,11 +521,15 @@ void PassengerNetwork::restoreReservation(openbus::map::MapPassengerServiceRunti
         service.depart();
     }
     if (reservation != reservations_.end()) {
-        if (reservation->second.stopId != stopId ||
-            service.waitingPassengers(stopId) != count + 1) {
-            throw std::logic_error("Passenger cancellation did not return its reserved rider");
+        if (service.waitingPassengers(stopId) != count + reservation->second.size()) {
+            throw std::logic_error("Passenger cancellation did not return its reserved riders");
         }
-        queueStates_.at(stopId).passengers.push_back(reservation->second.passenger);
+        for (const auto& reserved : reservation->second) {
+            if (reserved.stopId != stopId) {
+                throw std::logic_error("Passenger reservation belongs to another stop");
+            }
+            queueStates_.at(stopId).passengers.push_back(reserved.passenger);
+        }
         reservations_.erase(reservation);
     }
     count = service.waitingPassengers(stopId);

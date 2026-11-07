@@ -14,6 +14,12 @@
 #ifndef GL_NUM_EXTENSIONS
 #define GL_NUM_EXTENSIONS 0x821D
 #endif
+#ifndef GL_UNIFORM_BUFFER
+#define GL_UNIFORM_BUFFER 0x8A11
+#endif
+#ifndef GL_DYNAMIC_DRAW
+#define GL_DYNAMIC_DRAW 0x88E8
+#endif
 
 #ifndef GL_VERTEX_SHADER
 #define GL_VERTEX_SHADER 0x8B31
@@ -55,6 +61,8 @@ using GetProgramInfoLogProc = void (*)(GLuint, GLsizei, GLsizei*, char*);
 using DeleteProgramProc = void (*)(GLuint);
 using UseProgramProc = void (*)(GLuint);
 using GetUniformLocationProc = GLint (*)(GLuint, const char*);
+using GetUniformBlockIndexProc = GLuint(APIENTRY*)(GLuint, const char*);
+using UniformBlockBindingProc = void(APIENTRY*)(GLuint, GLuint, GLuint);
 using UniformMatrix4fvProc = void (*)(GLint, GLsizei, GLboolean, const GLfloat*);
 using Uniform1iProc = void (*)(GLint, GLint);
 using Uniform1fProc = void (*)(GLint, GLfloat);
@@ -104,6 +112,8 @@ extern GetProgramInfoLogProc pglGetProgramInfoLog;
 extern DeleteProgramProc pglDeleteProgram;
 extern UseProgramProc pglUseProgram;
 extern GetUniformLocationProc pglGetUniformLocation;
+extern GetUniformBlockIndexProc pglGetUniformBlockIndex;
+extern UniformBlockBindingProc pglUniformBlockBinding;
 extern UniformMatrix4fvProc pglUniformMatrix4fv;
 extern Uniform1iProc pglUniform1i;
 extern Uniform1fProc pglUniform1f;

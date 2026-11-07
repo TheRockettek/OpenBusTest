@@ -139,7 +139,8 @@ struct PassengerNetwork {
         WaitingPassenger passenger;
     };
     std::unordered_map<int, QueueState> queueStates_;
-    std::unordered_map<const openbus::map::MapPassengerServiceRuntime*, Reservation> reservations_;
+    std::unordered_map<const openbus::map::MapPassengerServiceRuntime*, std::vector<Reservation>>
+        reservations_;
     void syncQueue(int stopId);
     void restoreReservation(openbus::map::MapPassengerServiceRuntime& service, bool endService);
 };

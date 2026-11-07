@@ -27,6 +27,10 @@ are placed beside their assigned call. Before boarding, a rider is assigned a
 destination 15–45 m forward on a nearby directed human spline where available.
 If no suitable spline exists, the mapped stop is used instead and the fallback
 is logged.
+Up to two riders may be in the cabin-entry/aisle boarding animation at once,
+with separate seat reservations, route progress, and queue identities. Later
+riders remain queued while both boarding slots are occupied; boarding remains
+gated on the configured entry door and any active ticket-sale flow.
 When the human lane network is still being prepared, an eligible scheduled bus
 holds its dwell rather than departing solely because destination selection is
 pending. If no located mapped journey is available, the rider waits and the

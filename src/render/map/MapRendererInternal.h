@@ -325,6 +325,11 @@ struct MapRenderer::Impl {
         std::size_t instanceIndex = 0;
     };
 
+    struct SceneryMapLight {
+        std::uint64_t sourceTileKey = 0;
+        MapPointLight light;
+    };
+
     struct SceneryRuntimeDefinition {
         VehicleConfig configuration;
         std::vector<ModelScriptTexture> scriptTextures;
@@ -394,6 +399,7 @@ struct MapRenderer::Impl {
     std::unordered_map<std::string, std::shared_future<std::shared_ptr<Image>>>
         humanTextureRequests;
     std::vector<std::vector<double>> sceneryLodThresholdSets;
+    std::vector<SceneryMapLight> sceneryMapLights;
     std::vector<std::unique_ptr<SceneryScriptState>> sceneryScriptStates;
     std::vector<std::size_t> activeSceneryScriptStateIndices;
     std::unordered_map<std::uint64_t, std::vector<std::size_t>> sceneryScriptStatesByTile;

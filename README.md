@@ -404,7 +404,11 @@ have not been independently verified, so this is a conservative renderer
 interpretation; `[spline_terrain_align_2]` remains unsupported. Scenery
 `[texttexture]` and `[scripttexture]` materials are bound per placed instance,
 with independent live texture state and transparent text blending; visual parity
-against installed directional-sign assets still needs validation. Supported
+against installed directional-sign assets still needs validation. Vehicle and
+scenery text updates share successfully loaded fonts for the lifetime of the
+process. Restart OpenBus after editing a loaded font definition or image;
+missing or failed fonts are retried on later refreshes. Cached font images
+remain in memory until exit. Supported
 scenery meshes include O3D and static text, binary, and MSZIP-compressed `.x`;
 configured nonzero LOD parts are selected by distance using the vehicle LOD
 threshold mapping. Animated/skinned `.x` content remains unsupported, and
@@ -905,11 +909,19 @@ materials remain lit. Scenery scripts that set `nightlighta` control their
 nightmaps instead of weather brightness. Scenery text and free/script textures
 also follow daylight brightness unless their materials are emissive.
 Vehicle `[spotlight]` definitions selected by `Spot_Select` approximately
-illuminate model and road surfaces, including in mirrors. Up to eight nearest
-vehicle spotlights are used per view; beams do not cast shadows, and attenuation
-and cone behavior approximate the native Direct3D spotlight parameters.
+illuminate model and road surfaces, including in mirrors. Up to 128 nearest
+vehicle spotlights are used per view; reflection cameras build their own
+camera-relative selection. Beams do not cast shadows, and attenuation and cone
+behavior approximate the native Direct3D spotlight parameters.
+The bus model defines the beam positions and parameters; vehicle scripts select
+which definition is active through `Spot_Select`. Low- and high-beam behavior
+therefore depends on the bus's spotlight definitions and script logic rather
+than a separate hard-coded high-beam renderer.
 Scenery `[maplight]` sources and scenery `[light_enh]`/`[light_enh_2]`
-fixtures do not yet illuminate the map or render their light effects.
+sources now illuminate map and vehicle geometry with radius-based point lighting at night.
+The nearest 128 sources in active scenery tiles are evaluated per view, including
+in mirrors; this approximation has no shadows. Scenery `[light_enh]`/`[light_enh_2]` fixture
+effects are not yet rendered.
 
 The simulation clock drives approximate seasonal solar altitude, direction and
 daylight. `OPENBUS_SOLAR_LATITUDE` sets latitude in degrees from `-90` to `90`

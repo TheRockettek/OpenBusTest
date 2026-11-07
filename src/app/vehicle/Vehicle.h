@@ -812,6 +812,7 @@ struct Vehicle {
 
     void applyInteriorLightMaterial(const Batch& batch,
                                     openbus::rendering::ModelMaterial& material) const;
+    void applyPassengerInteriorLights(openbus::rendering::ModelMaterial& material) const;
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
                    const std::array<double, 3>* overrideColor = nullptr, int alphaModeOverride = -1,

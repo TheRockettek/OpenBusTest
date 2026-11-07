@@ -13,7 +13,8 @@
 namespace openbus::rendering {
 
 constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
-constexpr std::size_t MAX_VEHICLE_SPOTLIGHTS = 8;
+constexpr std::size_t MAX_VEHICLE_SPOTLIGHTS = 128;
+constexpr std::size_t MAX_MAP_LIGHTS = 128;
 
 struct VehicleSpotlight {
     std::array<double, 3> position = {};
@@ -22,6 +23,12 @@ struct VehicleSpotlight {
     double range = 0.0;
     double innerAngleDegrees = 0.0;
     double outerAngleDegrees = 0.0;
+};
+
+struct MapPointLight {
+    std::array<double, 3> position = {};
+    std::array<double, 3> color = {};
+    double radius = 0.0;
 };
 
 enum class HumanBoneSlot : std::uint8_t {
@@ -163,6 +170,8 @@ void setLightingViewMatrix(const Matrix4& view,
                            std::optional<std::array<double, 3>> sunDirection = std::nullopt);
 // Positions and directions are in the current view space.
 void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights);
+// Map-light positions are in the current view space; strength normally follows darkness.
+void setMapLights(const std::vector<MapPointLight>& lights, double strength);
 // An absent brightness preserves the renderer's default daylight appearance.
 std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness);
 void setWeatherLighting(std::optional<double> brightness);

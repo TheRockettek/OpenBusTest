@@ -252,14 +252,24 @@ inline void updatePassengerCabinPathOccupancy(
                           passengerCabinWorldPoint(vehiclePose, endLocal)};
         path.segmentLinkIndices = {std::nullopt, std::nullopt};
     }
-    service.setPassengerAnimationDuration(passengerCabinTravelDuration(
-        path, startWorld, passengerCabinWorldPoint(vehiclePose, endLocal), hasSeat));
+    const double duration = passengerCabinTravelDuration(
+        path, startWorld, passengerCabinWorldPoint(vehiclePose, endLocal), hasSeat);
+    if (boarding) {
+        service.setPassengerAnimationDurationForSeat(seatIndex, duration);
+    } else {
+        service.setAlightingPassengerAnimationDuration(duration);
+    }
     if (!boarding) {
         service.setAlightingDoorWaitProgress(passengerAlightingDoorWaitProgress(path, hasSeat));
     }
-    service.setPassengerPathLinkProgressProfile(passengerSeatPathLinkProfile(
+    auto profile = passengerSeatPathLinkProfile(
         passengerPathLinkProgressProfile(path.positions, path.segmentLinkIndices), boarding,
-        hasSeat));
+        hasSeat);
+    if (boarding) {
+        service.setPassengerPathLinkProgressProfileForSeat(seatIndex, std::move(profile));
+    } else {
+        service.setAlightingPassengerPathLinkProgressProfile(std::move(profile));
+    }
 }
 
 } // namespace openbus::app

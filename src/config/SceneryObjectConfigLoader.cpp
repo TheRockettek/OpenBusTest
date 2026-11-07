@@ -151,9 +151,6 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                     ignoredReason = "flag is retained but has no runtime behavior";
                 } else if (keyword == "groups" || keyword == "friendlyname") {
                     ignoredReason = "editor metadata is not used at runtime";
-                } else if (keyword == "maplight") {
-                    ignoredReason =
-                        "map-light data is parsed but map-light rendering is not implemented";
                 } else if (keyword == "complexity") {
                     ignoredReason =
                         "value retained but scenery detail filtering is not implemented";
@@ -472,7 +469,26 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         }
         if (keyword == "maplight") {
             std::vector<double> values;
-            readDoubles(reader, keyword, 7, values, result.diagnostics);
+            if (readDoubles(reader, keyword, 7, values, result.diagnostics)) {
+                const bool validPosition =
+                    std::all_of(values.begin(), values.begin() + 3,
+                                [](double value) { return std::isfinite(value); });
+                const bool validColor =
+                    std::all_of(values.begin() + 3, values.begin() + 6, [](double value) {
+                        return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+                    });
+                if (!validPosition || !validColor || !std::isfinite(values[6]) ||
+                    values[6] <= 0.0) {
+                    result.diagnostics.error(
+                        line.number, keyword,
+                        "position must be finite, RGB values must be between zero and one, "
+                        "and radius must be finite and greater than zero");
+                } else {
+                    result.mapLights.push_back({{values[0], values[1], values[2]},
+                                                {values[3], values[4], values[5]},
+                                                values[6]});
+                }
+            }
             continue;
         }
         if (keyword == "complexity" || keyword == "nightmapmode") {

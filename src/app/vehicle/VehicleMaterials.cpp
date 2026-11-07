@@ -3,6 +3,49 @@
 #include "app/vehicle/Vehicle.h"
 #include "app/vehicle/VehicleMaterialSelection.h"
 
+namespace {
+
+template <typename IncludeLight>
+void populateInteriorLightMaterial(openbus::rendering::ModelMaterial& material,
+                                   const std::vector<ModelInteriorLight>& lights,
+                                   const std::vector<Vehicle::InteriorLightController>& controllers,
+                                   const Variables& variables, const Matrix4& rootModelView,
+                                   IncludeLight includeLight) {
+    material.interiorLightCount = 0;
+    material.interiorLightViewPositions = {};
+    material.interiorLightColors = {};
+    material.interiorLightStrengths = {};
+    for (std::size_t index = 0; index < lights.size(); ++index) {
+        if (!includeLight(index) || index >= controllers.size() ||
+            material.interiorLightCount >=
+                static_cast<int>(openbus::rendering::MAX_INTERIOR_LIGHTS)) {
+            continue;
+        }
+        const ModelInteriorLight& light = lights[index];
+        const Vehicle::InteriorLightController& controller = controllers[index];
+        const double brightness = std::max(
+            0.0, controller.isNumeric ? controller.numericValue : variables.get(light.controller));
+        const double strength = brightness * std::max(0.0, light.intensity);
+        if (strength <= 0.0) {
+            continue;
+        }
+        const int outputIndex = material.interiorLightCount++;
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            material.interiorLightColors[outputIndex][channel] =
+                static_cast<float>(std::clamp(light.color[channel] / 255.0, 0.0, 1.0));
+        }
+        const std::array<double, 3> viewPosition =
+            openbus::rendering::interiorLightPositionInViewSpace(rootModelView, light.position);
+        material.interiorLightViewPositions[outputIndex] = {static_cast<float>(viewPosition[0]),
+                                                            static_cast<float>(viewPosition[1]),
+                                                            static_cast<float>(viewPosition[2])};
+        material.interiorLightStrengths[outputIndex] = static_cast<float>(strength);
+    }
+    material.useInteriorLight = material.interiorLightCount > 0;
+}
+
+} // namespace
+
 std::string Vehicle::resolveCtcTextureName(const std::string& textureName) const {
     return openbus::app::vehicle::resolveCtcTextureName(textureName, ctcTextureReplacements);
 }
@@ -111,40 +154,15 @@ float Vehicle::alphaScale(const Batch& batch) const {
 
 void Vehicle::applyInteriorLightMaterial(const Batch& batch,
                                          openbus::rendering::ModelMaterial& material) const {
-    material.interiorLightCount = 0;
-    material.interiorLightViewPositions = {};
-    material.interiorLightColors = {};
-    material.interiorLightStrengths = {};
-    for (const int lightIndex : batch.interiorLightIndexes) {
-        if (lightIndex < 0 || static_cast<std::size_t>(lightIndex) >= interiorLights.size()) {
-            continue;
-        }
-        const std::size_t index = static_cast<std::size_t>(lightIndex);
-        const ModelInteriorLight& light = interiorLights[index];
-        const InteriorLightController& controller = interiorLightControllers[index];
-        const double brightness = std::max(
-            0.0, controller.isNumeric ? controller.numericValue : variables.get(light.controller));
-        const double strength = brightness * std::max(0.0, light.intensity);
-        if (strength <= 0.0 || material.interiorLightCount >=
-                                   static_cast<int>(openbus::rendering::MAX_INTERIOR_LIGHTS)) {
-            continue;
-        }
-        const int outputIndex = material.interiorLightCount++;
-        for (std::size_t channel = 0; channel < 3; ++channel) {
-            material.interiorLightColors[outputIndex][channel] =
-                static_cast<float>(std::clamp(light.color[channel] / 255.0, 0.0, 1.0));
-        }
-        // Light locations are model-root positions, independent of the
-        // receiving mesh's animation. Transform to view space once from
-        // the vehicle root so the shader can compare them to view-space
-        // fragment positions without inheriting a door/panel animation.
-        const std::array<double, 3> viewPosition =
-            openbus::rendering::interiorLightPositionInViewSpace(interiorLightRootModelView,
-                                                                 light.position);
-        material.interiorLightViewPositions[outputIndex] = {static_cast<float>(viewPosition[0]),
-                                                            static_cast<float>(viewPosition[1]),
-                                                            static_cast<float>(viewPosition[2])};
-        material.interiorLightStrengths[outputIndex] = static_cast<float>(strength);
-    }
-    material.useInteriorLight = material.interiorLightCount > 0;
+    populateInteriorLightMaterial(
+        material, interiorLights, interiorLightControllers, variables, interiorLightRootModelView,
+        [&batch](std::size_t index) {
+            return std::find(batch.interiorLightIndexes.begin(), batch.interiorLightIndexes.end(),
+                             static_cast<int>(index)) != batch.interiorLightIndexes.end();
+        });
+}
+
+void Vehicle::applyPassengerInteriorLights(openbus::rendering::ModelMaterial& material) const {
+    populateInteriorLightMaterial(material, interiorLights, interiorLightControllers, variables,
+                                  interiorLightRootModelView, [](std::size_t) { return true; });
 }

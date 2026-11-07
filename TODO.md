@@ -264,6 +264,8 @@ it.
   omnidirectional billboards with camera alignment modes and cone-angle
   brightness. A hidden-GL probe verifies authored color/mask and cone rejection.
   Vehicle `[spotlight]` records now provide approximate, script-selected beams.
+  Scenery `[maplight]` records now illuminate map geometry with a bounded
+  per-view point-light pass; scenery light-effect billboards remain incomplete.
   Starburst/fog/effect-only behavior, fog scattering, spotlight shadows and
   attenuation, and OMSI intensity/sunlight parity remain incomplete.
 - [~] A focused E400 display/light regression remains blocked on the external
@@ -754,7 +756,8 @@ for alignment is not mistaken for supporting it.
   `[moisture]`, `[surface]`, and `[NightMapMode]`. Wetness markers and
   validated surface types 0-7 are retained; runtime texture discovery,
   wetness/material physics, night-map behavior, and SCO `[maplight]` lightmap
-  generation remain unimplemented.
+  generation remain unimplemented. SCO `[maplight]` runtime point sources are
+  parsed and rendered separately.
 - [~] Passenger-cabin `[noticketsale]`, `[ticket_sale]`,
   `[ticket_sale_money_point_2]`, and `[ticket_sale_change_point_2]` locations
   and parameters are retained with unsupported-behavior diagnostics. Ticket

@@ -292,6 +292,7 @@ void Vehicle::load(const SharedVehicleDefinition& definition) {
     interiorLights = result.interiorLights;
     enhancedLights = result.enhancedLights;
     spotlights = result.spotlights;
+    variables.set("spot_select", -1.0F);
     interiorLightControllers.clear();
     interiorLightControllers.reserve(interiorLights.size());
     for (const ModelInteriorLight& light : interiorLights) {

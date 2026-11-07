@@ -684,6 +684,27 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           LogLevel::Info);
             return;
         }
+        if (!batchIndexes.empty() && objectMetadata != nullptr) {
+            openbus::map::MapSceneryPose pose;
+            pose.x = worldX;
+            pose.y = worldY;
+            pose.z = worldZ;
+            pose.rotationDegrees = rotationDegrees;
+            pose.rotationCount = rotationCount;
+            if (orientationMatrix != nullptr) {
+                pose.orientationMatrix = *orientationMatrix;
+                pose.hasOrientationMatrix = true;
+            }
+            for (const SceneryObjectMapLight& source : objectMetadata->mapLights) {
+                const auto offset = openbus::map::transformMapSceneryVector(pose, source.position);
+                Impl::SceneryMapLight light;
+                light.sourceTileKey = tileKey(tileX, tileY);
+                light.light.position = {worldX + offset[0], worldY + offset[1], worldZ + offset[2]};
+                light.light.color = source.color;
+                light.light.radius = source.radius;
+                impl_->sceneryMapLights.push_back(light);
+            }
+        }
         if (batchIndexes.empty()) {
             recordSkipped(skipped, "scenery placements with no renderable asset batches",
                           description + " config=" + openbus::pathToUtf8(configPath.filename()));

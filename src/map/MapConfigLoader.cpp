@@ -593,6 +593,8 @@ struct TimetableSource {
 
 void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                             MapAiTrafficData& aiTraffic, ConfigurationDiagnostics& diagnostics) {
+    openbus::rendering::TraceScope discoveryTrace("map",
+                                                  "MapConfigLoader.timetables.discoverFiles");
     std::unordered_map<std::string, std::filesystem::path> trackFiles;
     std::unordered_map<std::string, std::filesystem::path> tripsByName;
     std::unordered_map<std::string, std::filesystem::path> linesByName;
@@ -630,7 +632,9 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         lineFiles.push_back(path);
     std::sort(tripFiles.begin(), tripFiles.end());
     std::sort(lineFiles.begin(), lineFiles.end());
+    discoveryTrace.finish();
 
+    openbus::rendering::TraceScope busStopsTrace("map", "MapConfigLoader.timetables.parseBusStops");
     for (const auto& busStopsPath : busStopsPaths) {
         const std::size_t oldCount = aiTraffic.busStops.size();
         const std::vector<std::string> lines = splitLines(decodeText(busStopsPath));
@@ -689,7 +693,10 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                            [&](const auto& stop) { return overriddenIds.contains(stop.id); }),
             oldEnd);
     }
+    busStopsTrace.finish();
 
+    openbus::rendering::TraceScope stationLinksTrace(
+        "map", "MapConfigLoader.timetables.parseStationLinks");
     for (const auto& stationLinksPath : stationLinksPaths) {
         const std::size_t oldCount = aiTraffic.stationLinks.size();
         const std::vector<std::string> lines = splitLines(decodeText(stationLinksPath));
@@ -779,8 +786,18 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                                                     }),
                                      oldEnd);
     }
+    stationLinksTrace.finish();
 
+    openbus::rendering::TraceScope tripsTrace("map",
+                                              "MapConfigLoader.timetables.parseTripsAndTracks");
     for (const std::filesystem::path& tripPath : tripFiles) {
+        std::string tripTraceName;
+        if (openbus::rendering::IsRecording()) {
+            tripTraceName = "MapConfigLoader.timetables.trip." + pathToUtf8(tripPath.filename());
+        }
+        openbus::rendering::TraceScope tripTrace("map", tripTraceName.empty()
+                                                            ? "MapConfigLoader.timetables.trip"
+                                                            : tripTraceName.c_str());
         const std::vector<std::string> tripLines = splitLines(decodeText(tripPath));
         MapAiTimetableRoute route;
         MapAiPassengerTimetable passengerTimetable;
@@ -1011,8 +1028,18 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             aiTraffic.passengerTimetables.push_back(std::move(passengerTimetable));
         }
     }
+    tripsTrace.finish();
 
+    openbus::rendering::TraceScope coursesTrace("map", "MapConfigLoader.timetables.parseCourses");
     for (const std::filesystem::path& linePath : lineFiles) {
+        std::string courseTraceName;
+        if (openbus::rendering::IsRecording()) {
+            courseTraceName =
+                "MapConfigLoader.timetables.course." + pathToUtf8(linePath.filename());
+        }
+        openbus::rendering::TraceScope courseTrace("map", courseTraceName.empty()
+                                                              ? "MapConfigLoader.timetables.course"
+                                                              : courseTraceName.c_str());
         const std::vector<std::string> lineLines = splitLines(decodeText(linePath));
         MapAiTimetableCourse course;
         course.name = pathToUtf8(linePath.stem());
@@ -1082,6 +1109,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             aiTraffic.timetableCourses.push_back(std::move(course));
         }
     }
+    coursesTrace.finish();
     const auto sortDepartures = [](std::vector<double>& minutes, std::vector<int>& profileIndices) {
         if (minutes.size() != profileIndices.size()) {
             throw std::logic_error("Timetable departures and profile indices lost alignment");
@@ -1099,12 +1127,20 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             profileIndices[index] = departures[index].second;
         }
     };
+    openbus::rendering::TraceScope departureSortTrace("map",
+                                                      "MapConfigLoader.timetables.sortDepartures");
     for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
         sortDepartures(route.scheduledDepartureMinutes, route.scheduledDepartureProfileIndices);
     }
     for (MapAiPassengerTimetable& timetable : aiTraffic.passengerTimetables) {
         sortDepartures(timetable.scheduledDepartureMinutes,
                        timetable.scheduledDepartureProfileIndices);
+    }
+    departureSortTrace.finish();
+
+    openbus::rendering::TraceScope passengerRoutesTrace(
+        "map", "MapConfigLoader.timetables.resolvePassengerRoutes");
+    for (MapAiPassengerTimetable& timetable : aiTraffic.passengerTimetables) {
         if (!mapAiPassengerTimetableHasResolvedLinks(aiTraffic, timetable)) {
             diagnostics.warning(
                 0, "passenger_timetable",
@@ -1277,7 +1313,10 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         }
         aiTraffic.timetableRoutes.push_back(std::move(route));
     }
+    passengerRoutesTrace.finish();
 
+    openbus::rendering::TraceScope profileTimingTrace(
+        "map", "MapConfigLoader.timetables.generateRouteTimingProfiles");
     for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
         if (route.profiles.empty()) {
             route.profiles.emplace_back();
@@ -1405,6 +1444,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             }
         }
     }
+    profileTimingTrace.finish();
 }
 
 void parseDriverListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
@@ -2541,10 +2581,14 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                " tiles; loading AI lists and population schedules.");
     openbus::rendering::TraceScope trafficTrace("map", "MapConfigLoader.loadTrafficSchedules");
     if (std::filesystem::is_regular_file(aiListPath)) {
+        openbus::rendering::TraceScope aiListTrace("map",
+                                                   "MapConfigLoader.loadTrafficSchedules.aiList");
         parseAiListFile(aiListPath, definition.aiTraffic);
     }
     const std::filesystem::path unscheduledGroupsPath = mapDirectory / "unsched_vehgroups.txt";
     if (std::filesystem::is_regular_file(unscheduledGroupsPath)) {
+        openbus::rendering::TraceScope groupsTrace(
+            "map", "MapConfigLoader.loadTrafficSchedules.unscheduledGroups");
         parseUnscheduledVehicleGroups(unscheduledGroupsPath, definition.aiTraffic);
         for (const MapAiVehicleGroup& group : definition.aiTraffic.vehicleGroups) {
             if (!isSupportedRoadAiGroup(group.name)) {
@@ -2572,19 +2616,27 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     const std::filesystem::path unscheduledTrafficDensityPath =
         mapDirectory / "unsched_trafficdens.txt";
     if (std::filesystem::is_regular_file(unscheduledTrafficDensityPath)) {
+        openbus::rendering::TraceScope densityTrace(
+            "map", "MapConfigLoader.loadTrafficSchedules.unscheduledDensities");
         parseUnscheduledTrafficDensities(unscheduledTrafficDensityPath, definition.aiTraffic,
                                          definition.diagnostics);
     }
     mapLog.Log("Loading AI timetables: " + pathToUtf8(mapDirectory / "TTData"));
+    openbus::rendering::TraceScope timetablesTrace(
+        "map", "MapConfigLoader.loadTrafficSchedules.timetables");
     parseAiTimetableRoutes({{mapDirectory / "TTData", {}}}, definition.aiTraffic,
                            definition.diagnostics);
     mapLog.Log("AI timetables loaded; loading driver and pedestrian lists.");
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
     if (std::filesystem::is_regular_file(driverListPath)) {
+        openbus::rendering::TraceScope driversTrace("map",
+                                                    "MapConfigLoader.loadTrafficSchedules.drivers");
         parseDriverListFile(driverListPath, definition.aiTraffic);
     }
     const std::filesystem::path humanListPath = mapDirectory / "humans.txt";
     if (std::filesystem::is_regular_file(humanListPath)) {
+        openbus::rendering::TraceScope humansTrace("map",
+                                                   "MapConfigLoader.loadTrafficSchedules.humans");
         parseHumanListFile(humanListPath, definition.aiTraffic);
     }
     trafficTrace.finish();

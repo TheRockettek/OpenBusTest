@@ -37,6 +37,8 @@ GetProgramInfoLogProc pglGetProgramInfoLog = nullptr;
 DeleteProgramProc pglDeleteProgram = nullptr;
 UseProgramProc pglUseProgram = nullptr;
 GetUniformLocationProc pglGetUniformLocation = nullptr;
+GetUniformBlockIndexProc pglGetUniformBlockIndex = nullptr;
+UniformBlockBindingProc pglUniformBlockBinding = nullptr;
 UniformMatrix4fvProc pglUniformMatrix4fv = nullptr;
 Uniform1iProc pglUniform1i = nullptr;
 Uniform1fProc pglUniform1f = nullptr;
@@ -120,6 +122,10 @@ bool loadOpenGLFunctions() {
     pglUseProgram = reinterpret_cast<UseProgramProc>(glfwGetProcAddress("glUseProgram"));
     pglGetUniformLocation =
         reinterpret_cast<GetUniformLocationProc>(glfwGetProcAddress("glGetUniformLocation"));
+    pglGetUniformBlockIndex =
+        reinterpret_cast<GetUniformBlockIndexProc>(glfwGetProcAddress("glGetUniformBlockIndex"));
+    pglUniformBlockBinding =
+        reinterpret_cast<UniformBlockBindingProc>(glfwGetProcAddress("glUniformBlockBinding"));
     pglUniformMatrix4fv =
         reinterpret_cast<UniformMatrix4fvProc>(glfwGetProcAddress("glUniformMatrix4fv"));
     pglUniform1i = reinterpret_cast<Uniform1iProc>(glfwGetProcAddress("glUniform1i"));
@@ -154,9 +160,10 @@ bool loadOpenGLFunctions() {
         pglVertexAttribPointer && pglCreateShader && pglShaderSource && pglCompileShader &&
         pglGetShaderiv && pglGetShaderInfoLog && pglDeleteShader && pglCreateProgram &&
         pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
-        pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglUniformMatrix4fv &&
-        pglUniform1i && pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f &&
-        pglUniform4fv && pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
+        pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglGetUniformBlockIndex &&
+        pglUniformBlockBinding && pglBindBufferBase && pglUniformMatrix4fv && pglUniform1i &&
+        pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f && pglUniform4fv &&
+        pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
         pglFramebufferTexture2D && pglCheckFramebufferStatus;
     if (!available) {
         gameLog.Error("Failed to load required OpenGL VBO functions");

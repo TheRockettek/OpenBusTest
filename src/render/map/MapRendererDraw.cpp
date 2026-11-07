@@ -61,7 +61,8 @@ bool depthOcclusionQueriesAvailable() {
 void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                         const openbus::map::MapTrafficPose& pose,
                                         double gaitPhaseRadians, double gaitWeight,
-                                        std::optional<HumanSeatPose> seat) const {
+                                        std::optional<HumanSeatPose> seat,
+                                        const ModelMaterial* passengerLighting) const {
     const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     auto model = impl_->humanTrafficModels.find(cacheKey);
     if (model == impl_->humanTrafficModels.end()) {
@@ -179,8 +180,16 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
                                             ? batch.seatedSkinWeightBuffer
                                             : batch.skinWeightBuffer;
             const HumanSkinDraw skin{weightBuffer, palette ? &*palette : nullptr};
-            drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
-                           batch.alpha, batch.alphaMode, batch.cullBackFaces, gait, 1.0,
+            ModelMaterial material = batch.material;
+            if (passengerLighting != nullptr) {
+                material.useInteriorLight = passengerLighting->useInteriorLight;
+                material.interiorLightCount = passengerLighting->interiorLightCount;
+                material.interiorLightViewPositions = passengerLighting->interiorLightViewPositions;
+                material.interiorLightColors = passengerLighting->interiorLightColors;
+                material.interiorLightStrengths = passengerLighting->interiorLightStrengths;
+            }
+            drawModelBatch(batch.buffer, batch.vertexCount, material, batch.color, batch.alpha,
+                           batch.alphaMode, batch.cullBackFaces, gait, 1.0,
                            weightBuffer != 0 && palette ? &skin : nullptr);
         }
     };
@@ -210,6 +219,44 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     const double cameraX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
     const double cameraY = -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]);
     const double cameraZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
+    std::vector<std::pair<double, MapPointLight>> nearestMapLights;
+    nearestMapLights.reserve(MAX_MAP_LIGHTS);
+    for (const Impl::SceneryMapLight& source : impl_->sceneryMapLights) {
+        if (!impl_->activeTileKeys.contains(source.sourceTileKey)) {
+            continue;
+        }
+        const auto& position = source.light.position;
+        const double dx = position[0] - cameraX;
+        const double dy = position[1] - cameraY;
+        const double dz = position[2] - cameraZ;
+        const double distanceSquared = dx * dx + dy * dy + dz * dz;
+        if (nearestMapLights.size() == MAX_MAP_LIGHTS) {
+            const auto farthest = std::max_element(
+                nearestMapLights.begin(), nearestMapLights.end(),
+                [](const auto& left, const auto& right) { return left.first < right.first; });
+            if (distanceSquared >= farthest->first) {
+                continue;
+            }
+            *farthest = {distanceSquared, source.light};
+        } else {
+            nearestMapLights.emplace_back(distanceSquared, source.light);
+        }
+    }
+    std::vector<MapPointLight> viewMapLights;
+    viewMapLights.reserve(nearestMapLights.size());
+    for (const auto& [distanceSquared, light] : nearestMapLights) {
+        static_cast<void>(distanceSquared);
+        MapPointLight viewLight = light;
+        const auto viewPosition =
+            transformPoint(view, {light.position[0], light.position[1], light.position[2], 1.0});
+        viewLight.position = {viewPosition[0], viewPosition[1], viewPosition[2]};
+        viewMapLights.push_back(viewLight);
+    }
+    const auto weatherBrightness =
+        impl_->simulationState->sharedVariables().environmentBrightness();
+    const double mapLightStrength =
+        weatherBrightness.has_value() ? 1.0 - std::clamp(*weatherBrightness, 0.0, 1.0) : 0.0;
+    setMapLights(viewMapLights, mapLightStrength);
     const bool depthOcclusionQueries =
         depthOcclusionQueriesRequested() && depthOcclusionQueriesAvailable();
     const bool transparentOcclusionQueries =

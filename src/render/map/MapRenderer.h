@@ -22,6 +22,7 @@ namespace openbus::rendering {
 class MapSceneLoader;
 class AssetRequestManager;
 struct HumanGaitParameters;
+struct ModelMaterial;
 
 struct HumanSeatPose {
     double seatHeight = 0.0;
@@ -164,8 +165,8 @@ class MapRenderer {
     void loadHumanTrafficModel(const std::filesystem::path& humanConfigPath);
     void drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                const openbus::map::MapTrafficPose& pose, double gaitPhaseRadians,
-                               double gaitWeight,
-                               std::optional<HumanSeatPose> seat = std::nullopt) const;
+                               double gaitWeight, std::optional<HumanSeatPose> seat = std::nullopt,
+                               const ModelMaterial* passengerLighting = nullptr) const;
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
     trafficSignalControllers() const;
     std::vector<openbus::map::MapTrafficSignalRequest>

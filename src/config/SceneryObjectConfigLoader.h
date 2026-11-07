@@ -48,6 +48,12 @@ struct SceneryPoleCrashConfiguration {
     double breakAngleRadians = 0.0;
 };
 
+struct SceneryObjectMapLight {
+    std::array<double, 3> position = {};
+    std::array<double, 3> color = {};
+    double radius = 0.0;
+};
+
 struct SceneryObjectConfig {
     std::filesystem::path sourcePath;
     std::filesystem::path modelPath;
@@ -76,6 +82,7 @@ struct SceneryObjectConfig {
     VehicleConfig scriptConfiguration;
     std::vector<SceneryTreeDefinition> trees;
     std::vector<SceneryObjectTrafficPath> trafficPaths;
+    std::vector<SceneryObjectMapLight> mapLights;
     double trafficLightsGroupDurationSeconds = 0.0;
     std::vector<SceneryObjectTrafficLight> trafficLights;
     std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>> trafficLightSchedules;

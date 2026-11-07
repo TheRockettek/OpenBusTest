@@ -99,10 +99,8 @@ struct Uniforms {
     GLint ambientLight = -1;
     GLint diffuseLight = -1;
     GLint spotlightCount = -1;
-    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightPosition = {};
-    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightDirection = {};
-    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightColor = {};
-    std::array<GLint, MAX_VEHICLE_SPOTLIGHTS> spotlightParameters = {};
+    GLint mapLightCount = -1;
+    GLint mapLightStrength = -1;
     GLint fogDensity = -1;
     GLint fogColor = -1;
     GLint weatherBrightness = -1;
@@ -144,6 +142,20 @@ struct Uniforms {
     GLint environmentAlpha = -1;
     GLint useEnvironment = -1;
 };
+
+struct alignas(16) GpuVehicleSpotlightData {
+    std::array<std::array<float, 4>, MAX_VEHICLE_SPOTLIGHTS> positionRange = {};
+    std::array<std::array<float, 4>, MAX_VEHICLE_SPOTLIGHTS> directionInner = {};
+    std::array<std::array<float, 4>, MAX_VEHICLE_SPOTLIGHTS> colorOuter = {};
+};
+
+struct alignas(16) GpuMapLightData {
+    std::array<std::array<float, 4>, MAX_MAP_LIGHTS> positionRadius = {};
+    std::array<std::array<float, 4>, MAX_MAP_LIGHTS> color = {};
+};
+
+static_assert(sizeof(GpuVehicleSpotlightData) == MAX_VEHICLE_SPOTLIGHTS * 48);
+static_assert(sizeof(GpuMapLightData) == MAX_MAP_LIGHTS * 32);
 
 struct ModelUniformState {
     bool valid = false;
@@ -200,6 +212,10 @@ GLuint precipitationVertexArray = 0;
 GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
+GLuint vehicleSpotlightBuffer = 0;
+GLuint mapLightBuffer = 0;
+constexpr GLuint vehicleSpotlightBinding = 0;
+constexpr GLuint mapLightBinding = 1;
 std::vector<GLuint> staticPrimitiveBuffers;
 std::uint64_t rendererGeneration = 0;
 GLuint textureQuadVertexArray = 0;
@@ -686,6 +702,7 @@ void main() {
     }
     if (!uUseTextTexture || uWeatherLitDynamicTexture) {
         color.rgb += diffuseReflectance * vehicleSpotlightLighting(vViewPosition, normalize(vNormal));
+        color.rgb += diffuseReflectance * mapLightLighting(vViewPosition, normalize(vNormal));
     }
     if (!uUseTextTexture && uUseEnvironment) {
         vec3 reflection = reflect(-viewDirection, normalize(vNormal));
@@ -752,6 +769,7 @@ void main() {
     vec3 reflectance = color.rgb;
     color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
     color.rgb += reflectance * vehicleSpotlightLighting(vViewPosition, surfaceNormal);
+    color.rgb += reflectance * mapLightLighting(vViewPosition, surfaceNormal);
     if (uFogDensity > 0.0) {
         float transmission = weatherFogTransmission(vViewPosition);
         color.rgb = mix(uFogColor, color.rgb, transmission);
@@ -954,31 +972,55 @@ float weatherFogTransmission(vec3 viewPosition) {
 )GLSL";
 
 const char* vehicleSpotlightShaderFunctions = R"GLSL(
+layout(std140) uniform VehicleSpotlightData {
+    vec4 uSpotlightPositionRange[128];
+    vec4 uSpotlightDirectionInner[128];
+    vec4 uSpotlightColorOuter[128];
+};
 uniform int uSpotlightCount;
-uniform vec3 uSpotlightPosition[8];
-uniform vec3 uSpotlightDirection[8];
-uniform vec3 uSpotlightColor[8];
-uniform vec3 uSpotlightParameters[8];
 vec3 vehicleSpotlightLighting(vec3 position, vec3 normal) {
     vec3 result = vec3(0.0);
     for (int i = 0; i < uSpotlightCount; ++i) {
-        vec3 displacement = position - uSpotlightPosition[i];
+        vec3 displacement = position - uSpotlightPositionRange[i].xyz;
         float distanceToLight = length(displacement);
-        float range = uSpotlightParameters[i].x;
+        float range = uSpotlightPositionRange[i].w;
         if (distanceToLight <= 0.0001 || distanceToLight / range >= 4.0) continue;
         vec3 ray = displacement / distanceToLight;
-        float angle = dot(ray, uSpotlightDirection[i]);
-        float inner = uSpotlightParameters[i].y;
-        float outer = uSpotlightParameters[i].z;
+        float angle = dot(ray, uSpotlightDirectionInner[i].xyz);
+        float inner = uSpotlightDirectionInner[i].w;
+        float outer = uSpotlightColorOuter[i].w;
         float cone = inner > outer ? clamp((angle - outer) / (inner - outer), 0.0, 1.0)
                                    : step(inner, angle);
         float relativeDistance = distanceToLight / range;
         float attenuation = 1.0 /
             (0.2 + relativeDistance + 40.0 * relativeDistance * relativeDistance);
         float diffuse = max(dot(normal, -ray), 0.0);
-        result += uSpotlightColor[i] * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
+        result += uSpotlightColorOuter[i].rgb * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
     }
     return result;
+}
+)GLSL";
+
+const char* mapLightShaderFunctions = R"GLSL(
+layout(std140) uniform MapLightData {
+    vec4 uMapLightPositionRadius[128];
+    vec4 uMapLightColor[128];
+};
+uniform int uMapLightCount;
+uniform float uMapLightStrength;
+vec3 mapLightLighting(vec3 position, vec3 normal) {
+    vec3 result = vec3(0.0);
+    for (int i = 0; i < uMapLightCount; ++i) {
+        vec3 displacement = position - uMapLightPositionRadius[i].xyz;
+        float distanceToLight = length(displacement);
+        if (distanceToLight <= 0.0001) continue;
+        float radius = uMapLightPositionRadius[i].w;
+        float falloff = distanceToLight <= radius ? 1.0 : (radius * radius) /
+                                                           (distanceToLight * distanceToLight);
+        float diffuse = max(dot(normal, -displacement / distanceToLight), 0.0);
+        result += uMapLightColor[i].rgb * falloff * (0.12 + 0.88 * diffuse);
+    }
+    return result * uMapLightStrength;
 }
 )GLSL";
 
@@ -1002,7 +1044,8 @@ GLuint compileShader(GLenum type, const char* source) {
 }
 
 GLuint createProgram(const char* vertexSource, const char* fragmentSource,
-                     bool usesWeatherFog = false, bool usesVehicleSpotlights = false) {
+                     bool usesWeatherFog = false, bool usesVehicleSpotlights = false,
+                     bool usesMapLights = false) {
     const GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
     std::string fragment(fragmentSource);
     if (usesWeatherFog) {
@@ -1016,6 +1059,12 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
         if (versionEnd == std::string::npos)
             throw std::runtime_error("Spotlight shader is missing a version directive");
         fragment.insert(versionEnd + 1, vehicleSpotlightShaderFunctions);
+    }
+    if (usesMapLights) {
+        const auto versionEnd = fragment.find('\n', fragment.find("#version"));
+        if (versionEnd == std::string::npos)
+            throw std::runtime_error("Map-light shader is missing a version directive");
+        fragment.insert(versionEnd + 1, mapLightShaderFunctions);
     }
     const GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragment.c_str());
     if (vertexShader == 0 || fragmentShader == 0) {
@@ -1050,16 +1099,21 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
 
 void findSpotlightUniforms(GLuint program, Uniforms& uniforms) {
     uniforms.spotlightCount = pglGetUniformLocation(program, "uSpotlightCount");
-    for (std::size_t index = 0; index < MAX_VEHICLE_SPOTLIGHTS; ++index) {
-        const std::string suffix = "[" + std::to_string(index) + "]";
-        uniforms.spotlightPosition[index] =
-            pglGetUniformLocation(program, ("uSpotlightPosition" + suffix).c_str());
-        uniforms.spotlightDirection[index] =
-            pglGetUniformLocation(program, ("uSpotlightDirection" + suffix).c_str());
-        uniforms.spotlightColor[index] =
-            pglGetUniformLocation(program, ("uSpotlightColor" + suffix).c_str());
-        uniforms.spotlightParameters[index] =
-            pglGetUniformLocation(program, ("uSpotlightParameters" + suffix).c_str());
+}
+
+void findMapLightUniforms(GLuint program, Uniforms& uniforms) {
+    uniforms.mapLightCount = pglGetUniformLocation(program, "uMapLightCount");
+    uniforms.mapLightStrength = pglGetUniformLocation(program, "uMapLightStrength");
+}
+
+void bindLightUniformBlocks(GLuint program) {
+    const GLuint spotlightBlock = pglGetUniformBlockIndex(program, "VehicleSpotlightData");
+    if (spotlightBlock != (std::numeric_limits<GLuint>::max)()) {
+        pglUniformBlockBinding(program, spotlightBlock, vehicleSpotlightBinding);
+    }
+    const GLuint mapLightBlock = pglGetUniformBlockIndex(program, "MapLightData");
+    if (mapLightBlock != (std::numeric_limits<GLuint>::max)()) {
+        pglUniformBlockBinding(program, mapLightBlock, mapLightBinding);
     }
 }
 
@@ -1075,6 +1129,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.environmentAlpha = pglGetUniformLocation(program, "uEnvironmentAlpha");
     } else {
         findSpotlightUniforms(program, uniforms);
+        findMapLightUniforms(program, uniforms);
         uniforms.texture = pglGetUniformLocation(program, "uTexture");
         uniforms.textureArray = pglGetUniformLocation(program, "uTextureArray");
         uniforms.textureScale = pglGetUniformLocation(program, "uTextureScale");
@@ -1172,6 +1227,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
 Uniforms materialUniformsFor(GLuint program) {
     Uniforms uniforms;
     findSpotlightUniforms(program, uniforms);
+    findMapLightUniforms(program, uniforms);
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
     uniforms.fogDensity = pglGetUniformLocation(program, "uFogDensity");
@@ -1470,8 +1526,8 @@ void setFrameTriangleCountReflectionPass(bool reflectionPass) {
 }
 
 bool initializeCoreRenderer() {
-    modelProgram = createProgram(modelVertexShader, modelFragmentShader, true, true);
-    materialProgram = createProgram(modelVertexShader, materialFragmentShader, true, true);
+    modelProgram = createProgram(modelVertexShader, modelFragmentShader, true, true, true);
+    materialProgram = createProgram(modelVertexShader, materialFragmentShader, true, true, true);
     environmentProgram = createProgram(modelVertexShader, environmentFragmentShader, true);
     primitiveProgram = createProgram(primitiveVertexShader, primitiveFragmentShader);
     textureQuadProgram = createProgram(textureQuadVertexShader, textureQuadFragmentShader);
@@ -1488,6 +1544,8 @@ bool initializeCoreRenderer() {
     materialUniforms = materialUniformsFor(materialProgram);
     environmentUniforms = modelUniformsFor(environmentProgram, true);
     primitiveUniforms = modelUniformsFor(primitiveProgram, false);
+    bindLightUniformBlocks(modelProgram);
+    bindLightUniformBlocks(materialProgram);
     textureQuadRect = pglGetUniformLocation(textureQuadProgram, "uRect");
     textureQuadTexture = pglGetUniformLocation(textureQuadProgram, "uTexture");
     textureQuadFlipTextureY = pglGetUniformLocation(textureQuadProgram, "uFlipTextureY");
@@ -1518,10 +1576,20 @@ bool initializeCoreRenderer() {
     pglGenVertexArrays(1, &primitiveVertexArray);
     pglGenVertexArrays(1, &precipitationVertexArray);
     pglGenBuffers(1, &primitiveBuffer);
+    pglGenBuffers(1, &vehicleSpotlightBuffer);
+    pglGenBuffers(1, &mapLightBuffer);
     pglGenVertexArrays(1, &textureQuadVertexArray);
     pglGenBuffers(1, &textureQuadBuffer);
     if (modelVertexArray != 0 && primitiveVertexArray != 0 && precipitationVertexArray != 0 &&
-        primitiveBuffer != 0 && textureQuadVertexArray != 0 && textureQuadBuffer != 0) {
+        primitiveBuffer != 0 && vehicleSpotlightBuffer != 0 && mapLightBuffer != 0 &&
+        textureQuadVertexArray != 0 && textureQuadBuffer != 0) {
+        pglBindBuffer(GL_UNIFORM_BUFFER, vehicleSpotlightBuffer);
+        pglBufferData(GL_UNIFORM_BUFFER, sizeof(GpuVehicleSpotlightData), nullptr, GL_DYNAMIC_DRAW);
+        pglBindBufferBase(GL_UNIFORM_BUFFER, vehicleSpotlightBinding, vehicleSpotlightBuffer);
+        pglBindBuffer(GL_UNIFORM_BUFFER, mapLightBuffer);
+        pglBufferData(GL_UNIFORM_BUFFER, sizeof(GpuMapLightData), nullptr, GL_DYNAMIC_DRAW);
+        pglBindBufferBase(GL_UNIFORM_BUFFER, mapLightBinding, mapLightBuffer);
+        pglBindBuffer(GL_UNIFORM_BUFFER, 0);
         pglBindVertexArray(modelVertexArray);
         pglEnableVertexAttribArray(0);
         pglEnableVertexAttribArray(1);
@@ -1610,6 +1678,14 @@ void shutdownCoreRenderer() {
         pglDeleteBuffers(1, &primitiveBuffer);
         primitiveBuffer = 0;
     }
+    if (vehicleSpotlightBuffer != 0) {
+        pglDeleteBuffers(1, &vehicleSpotlightBuffer);
+        vehicleSpotlightBuffer = 0;
+    }
+    if (mapLightBuffer != 0) {
+        pglDeleteBuffers(1, &mapLightBuffer);
+        mapLightBuffer = 0;
+    }
     if (textureQuadBuffer != 0) {
         pglDeleteBuffers(1, &textureQuadBuffer);
         textureQuadBuffer = 0;
@@ -1695,9 +1771,10 @@ void setLightingViewMatrix(const Matrix4& view, std::optional<std::array<double,
 }
 
 void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
-    if (lights.size() > MAX_VEHICLE_SPOTLIGHTS) {
-        throw std::invalid_argument("Too many vehicle spotlights");
+    if (lights.size() > MAX_VEHICLE_SPOTLIGHTS || vehicleSpotlightBuffer == 0) {
+        throw std::invalid_argument("Invalid vehicle spotlight collection");
     }
+    GpuVehicleSpotlightData gpuLights;
     for (const VehicleSpotlight& light : lights) {
         const auto finite = [](double value) {
             return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
@@ -1715,31 +1792,34 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
             throw std::invalid_argument("Invalid vehicle spotlight");
         }
     }
+    for (std::size_t index = 0; index < lights.size(); ++index) {
+        const VehicleSpotlight& light = lights[index];
+        const double length =
+            std::hypot(light.direction[0], light.direction[1], light.direction[2]);
+        gpuLights.positionRange[index] = {
+            static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
+            static_cast<float>(light.position[2]), static_cast<float>(light.range)};
+        constexpr double halfDegreesToRadians = 3.14159265358979323846 / 360.0;
+        gpuLights.directionInner[index] = {
+            static_cast<float>(light.direction[0] / length),
+            static_cast<float>(light.direction[1] / length),
+            static_cast<float>(light.direction[2] / length),
+            static_cast<float>(std::cos(light.innerAngleDegrees * halfDegreesToRadians))};
+        gpuLights.colorOuter[index] = {
+            static_cast<float>(light.color[0]), static_cast<float>(light.color[1]),
+            static_cast<float>(light.color[2]),
+            static_cast<float>(std::cos(light.outerAngleDegrees * halfDegreesToRadians))};
+    }
+    pglBindBuffer(GL_UNIFORM_BUFFER, vehicleSpotlightBuffer);
+    pglBufferData(GL_UNIFORM_BUFFER, sizeof(gpuLights), &gpuLights, GL_DYNAMIC_DRAW);
+    pglBindBufferBase(GL_UNIFORM_BUFFER, vehicleSpotlightBinding, vehicleSpotlightBuffer);
+    pglBindBuffer(GL_UNIFORM_BUFFER, 0);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
         useProgram(entry.first);
         const Uniforms& uniforms = *entry.second;
         pglUniform1i(uniforms.spotlightCount, static_cast<GLint>(lights.size()));
-        for (std::size_t index = 0; index < lights.size(); ++index) {
-            const VehicleSpotlight& light = lights[index];
-            const double length =
-                std::hypot(light.direction[0], light.direction[1], light.direction[2]);
-            pglUniform3f(uniforms.spotlightPosition[index], static_cast<float>(light.position[0]),
-                         static_cast<float>(light.position[1]),
-                         static_cast<float>(light.position[2]));
-            pglUniform3f(uniforms.spotlightDirection[index],
-                         static_cast<float>(light.direction[0] / length),
-                         static_cast<float>(light.direction[1] / length),
-                         static_cast<float>(light.direction[2] / length));
-            pglUniform3f(uniforms.spotlightColor[index], static_cast<float>(light.color[0]),
-                         static_cast<float>(light.color[1]), static_cast<float>(light.color[2]));
-            constexpr double halfDegreesToRadians = 3.14159265358979323846 / 360.0;
-            pglUniform3f(
-                uniforms.spotlightParameters[index], static_cast<float>(light.range),
-                static_cast<float>(std::cos(light.innerAngleDegrees * halfDegreesToRadians)),
-                static_cast<float>(std::cos(light.outerAngleDegrees * halfDegreesToRadians)));
-        }
     }
     useProgram(previousProgram);
 }
@@ -1786,6 +1866,49 @@ void setWeatherFogView(const Matrix4& view, double groundHeightMeters) {
         pglUniform1f(entry.cameraHeight, static_cast<float>(height));
         pglUniform3f(entry.worldUp, static_cast<float>(view[8]), static_cast<float>(view[9]),
                      static_cast<float>(view[10]));
+    }
+    useProgram(previousProgram);
+}
+
+void setMapLights(const std::vector<MapPointLight>& lights, double strength) {
+    const auto finite = [](double value) {
+        return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
+    };
+    if (lights.size() > MAX_MAP_LIGHTS || !finite(strength) || strength < 0.0 || strength > 1.0 ||
+        mapLightBuffer == 0) {
+        throw std::invalid_argument("Invalid map-light collection");
+    }
+    for (const MapPointLight& light : lights) {
+        if (!std::all_of(light.position.begin(), light.position.end(), finite) ||
+            !std::all_of(light.color.begin(), light.color.end(),
+                         [](double value) {
+                             return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+                         }) ||
+            !finite(light.radius) || light.radius <= 0.0) {
+            throw std::invalid_argument("Invalid map light");
+        }
+    }
+    GpuMapLightData gpuLights;
+    for (std::size_t index = 0; index < lights.size(); ++index) {
+        const MapPointLight& light = lights[index];
+        gpuLights.positionRadius[index] = {
+            static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
+            static_cast<float>(light.position[2]), static_cast<float>(light.radius)};
+        gpuLights.color[index] = {static_cast<float>(light.color[0]),
+                                  static_cast<float>(light.color[1]),
+                                  static_cast<float>(light.color[2]), 0.0F};
+    }
+    pglBindBuffer(GL_UNIFORM_BUFFER, mapLightBuffer);
+    pglBufferData(GL_UNIFORM_BUFFER, sizeof(gpuLights), &gpuLights, GL_DYNAMIC_DRAW);
+    pglBindBufferBase(GL_UNIFORM_BUFFER, mapLightBinding, mapLightBuffer);
+    pglBindBuffer(GL_UNIFORM_BUFFER, 0);
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry :
+         {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
+        useProgram(entry.first);
+        const Uniforms& uniforms = *entry.second;
+        pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(lights.size()));
+        pglUniform1f(uniforms.mapLightStrength, static_cast<float>(strength));
     }
     useProgram(previousProgram);
 }

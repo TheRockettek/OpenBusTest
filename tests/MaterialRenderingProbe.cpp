@@ -642,6 +642,13 @@ int main() {
         const auto unlit = spotlightPixel(multiMaterial);
         setVehicleSpotlights({testSpotlight});
         const auto illuminated = spotlightPixel(multiMaterial);
+        std::vector<VehicleSpotlight> fullSpotlightBudget(MAX_VEHICLE_SPOTLIGHTS, testSpotlight);
+        for (auto& light : fullSpotlightBudget) {
+            light.color = {0, 0, 0};
+        }
+        fullSpotlightBudget.back() = testSpotlight;
+        setVehicleSpotlights(fullSpotlightBudget);
+        const auto lastSpotlightSlot = spotlightPixel(multiMaterial);
         VehicleSpotlight coneEdge = testSpotlight;
         coneEdge.direction = {0.5, 0, 0.866025403784};
         setVehicleSpotlights({coneEdge});
@@ -666,6 +673,9 @@ int main() {
         if (illuminated[0] <= unlit[0] + 30 || illuminated[1] <= unlit[1] + 10 ||
             illuminated[0] <= illuminated[1] || illuminated[1] <= illuminated[2] ||
             std::abs((illuminated[0] - unlit[0]) - expectedRedIncrease) > 3 ||
+            std::abs(static_cast<int>(lastSpotlightSlot[0]) - illuminated[0]) > 1 ||
+            std::abs(static_cast<int>(lastSpotlightSlot[1]) - illuminated[1]) > 1 ||
+            std::abs(static_cast<int>(lastSpotlightSlot[2]) - illuminated[2]) > 1 ||
             softenedCone[0] <= unlit[0] + 2 || softenedCone[0] >= illuminated[0] - 5 ||
             attenuated[0] <= unlit[0] + 2 || attenuated[0] >= illuminated[0] - 5 ||
             outsideCone != unlit || outsideRange != unlit || illuminated[3] != unlit[3]) {
@@ -675,6 +685,37 @@ int main() {
         }
     }
     setVehicleSpotlights({});
+    const MapPointLight testMapLight{{0, 0, -2}, {1, 0.5, 0.25}, 2.0};
+    const MapPointLight attenuatedMapLight{{0, 0, -2}, {1, 0.5, 0.25}, 0.25};
+    for (const bool multiMaterial : {false, true}) {
+        setMapLights({}, 0.0);
+        const auto unlit = spotlightPixel(multiMaterial);
+        setMapLights({testMapLight}, 1.0);
+        const auto illuminated = spotlightPixel(multiMaterial);
+        std::vector<MapPointLight> fullMapLightBudget(MAX_MAP_LIGHTS, testMapLight);
+        for (auto& light : fullMapLightBudget) {
+            light.color = {0, 0, 0};
+        }
+        fullMapLightBudget.back() = testMapLight;
+        setMapLights(fullMapLightBudget, 1.0);
+        const auto lastMapLightSlot = spotlightPixel(multiMaterial);
+        setMapLights({attenuatedMapLight}, 1.0);
+        const auto attenuated = spotlightPixel(multiMaterial);
+        setMapLights({testMapLight}, 0.0);
+        const auto daylight = spotlightPixel(multiMaterial);
+        if (illuminated[0] <= unlit[0] + 30 || illuminated[1] <= unlit[1] + 10 ||
+            illuminated[0] <= illuminated[1] || illuminated[1] <= illuminated[2] ||
+            std::abs(static_cast<int>(lastMapLightSlot[0]) - illuminated[0]) > 1 ||
+            std::abs(static_cast<int>(lastMapLightSlot[1]) - illuminated[1]) > 1 ||
+            std::abs(static_cast<int>(lastMapLightSlot[2]) - illuminated[2]) > 1 ||
+            attenuated[0] <= unlit[0] || attenuated[0] >= illuminated[0] ||
+            daylight != unlit || illuminated[3] != unlit[3]) {
+            std::cerr << "map point-light color, radius attenuation, or strength failed for "
+                      << (multiMaterial ? "material" : "model") << " shader\n";
+            passed = false;
+        }
+    }
+    setMapLights({}, 0.0);
     setWeatherLighting(std::nullopt);
     const auto fogSample = [&](bool multiMaterial, double distance) {
         setModelViewMatrix(translationMatrix({0, 0, 1.0 - distance}));
