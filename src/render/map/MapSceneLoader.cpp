@@ -2012,6 +2012,8 @@ void MapSceneLoader::indexMapContent() {
     }
     std::unordered_set<int> requiredSplineAttachmentIds;
     std::unordered_map<std::string, bool> splineAttachmentTrafficPathsByAsset;
+    std::unordered_map<std::string, const openbus::map::MapSplineProfile*> indexedSplineProfiles;
+    std::size_t splineProfileLookups = 0;
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
                                       const std::string& tileName, int tileX, int tileY) {
         mapObjectTileKeysById.try_emplace(objectId, tileKey(tileX, tileY));
@@ -2033,6 +2035,7 @@ void MapSceneLoader::indexMapContent() {
                       openbus::pathToUtf8(tileReference.textPath) +
                       "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
+        TraceScope tileTrace("map", "MapSceneLoader.indexMapContent.indexTile");
         const std::string tileName = tileLabel(tileReference.x, tileReference.y);
         std::optional<openbus::map::WaterData> trafficWater;
         if (tile.hasWaterMarker && tileReference.hasWaterFile) {
@@ -2051,9 +2054,18 @@ void MapSceneLoader::indexMapContent() {
                                                   map.coordinates);
         std::vector<openbus::map::MapSplinePlacement> roadTrafficSplines;
         std::vector<openbus::map::MapSplinePlacement> humanTrafficSplines;
+        TraceScope splineTrace("map", "MapSceneLoader.indexMapContent.indexSplines");
         for (const auto& spline : tile.splines) {
-            const auto* profile =
-                cachedSplineProfile(resolveSplineProfile(map, omsiRoot, spline.assetPath));
+            ++splineProfileLookups;
+            auto profileEntry = indexedSplineProfiles.find(spline.assetPath);
+            if (profileEntry == indexedSplineProfiles.end()) {
+                TraceScope resolveTrace("map",
+                                        "MapSceneLoader.indexMapContent.resolveSplineProfile");
+                const auto* resolved =
+                    cachedSplineProfile(resolveSplineProfile(map, omsiRoot, spline.assetPath));
+                profileEntry = indexedSplineProfiles.emplace(spline.assetPath, resolved).first;
+            }
+            const auto* profile = profileEntry->second;
             if (profile != nullptr) {
                 if (openbus::map::mapSplineProfileHasPathType(
                         *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD)) {
@@ -2131,6 +2143,7 @@ void MapSceneLoader::indexMapContent() {
                 }
             }
         }
+        splineTrace.finish();
         impl_->roadTrafficRouteNetwork.addTileSplines(roadTrafficSplines, tileReference.x,
                                                       tileReference.y, map.coordinates);
         impl_->humanTrafficRouteNetwork.addTileSplines(humanTrafficSplines, tileReference.x,
@@ -2231,12 +2244,16 @@ void MapSceneLoader::indexMapContent() {
             ++tile;
         }
     }
+    TraceScope attachmentTrace("map", "MapSceneLoader.indexMapContent.sceneryTrafficPaths");
     indexSceneryTrafficPathsMapWide();
+    attachmentTrace.finish();
     gameLog.Log("Map tile index parsed; connecting road and traffic route networks.");
+    TraceScope finalizeTrace("map", "MapSceneLoader.indexMapContent.finalizeNetworks");
     roadConnections.finalize();
     impl_->trafficRouteNetwork.finalize();
     impl_->roadTrafficRouteNetwork.finalize();
     impl_->humanTrafficRouteNetwork.finalize();
+    finalizeTrace.finish();
     roadTrafficLaneNetworkDirty = true;
     humanTrafficLaneNetworkDirty = true;
     if (submergedTrafficLaneCount > 0) {
@@ -2244,7 +2261,9 @@ void MapSceneLoader::indexMapContent() {
                     " road lanes without 0.25 m of clearance above water.");
     }
     gameLog.Log("Map index phase complete: " + std::to_string(map.tiles.size()) + " tiles in " +
-                std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
+                std::to_string(elapsedMilliseconds(indexStart)) +
+                " ms; spline profile lookups=" + std::to_string(splineProfileLookups) +
+                ", unique asset paths=" + std::to_string(indexedSplineProfiles.size()) + ".");
 }
 
 bool MapSceneLoader::uploadRoadBatches(bool waitForCompletion) {

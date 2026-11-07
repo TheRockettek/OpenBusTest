@@ -294,6 +294,8 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
         result.bestCommonSplineIds.assign(line.splineIds.begin() + commonRun.firstStartIndex,
                                           line.splineIds.begin() + timetableNextIndex);
     };
+    openbus::rendering::TraceScope entriesTrace("startup",
+                                                "main.searchScheduledBusRoutes.collectEntries");
     std::vector<openbus::map::MapTrafficLaneStart> candidateEntries = renderer.trafficEntryLanes();
     for (const openbus::map::MapAiTimetableRoute& line : traffic.timetableRoutes) {
         if (line.trackEntries.empty() || line.scheduledDepartureMinutes.empty()) {
@@ -312,6 +314,9 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
             }
         }
     }
+    entriesTrace.finish();
+    openbus::rendering::TraceScope completeTrace("startup",
+                                                 "main.searchScheduledBusRoutes.completeRoutes");
     for (const auto& entry : candidateEntries) {
         if (matchedTimetableRoutes.size() == eligibleTimetableRouteCount) {
             break;
@@ -369,6 +374,9 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
             break;
         }
     }
+    completeTrace.finish();
+    openbus::rendering::TraceScope prefixTrace("startup",
+                                               "main.searchScheduledBusRoutes.prefixFallback");
     for (std::size_t lineIndex = 0; lineIndex < traffic.timetableRoutes.size(); ++lineIndex) {
         if (matchedTimetableRoutes.contains(lineIndex)) {
             continue;
@@ -437,6 +445,9 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
             matchedTimetableRoutes.insert(lineIndex);
         }
     }
+    prefixTrace.finish();
+    openbus::rendering::TraceScope coverageTrace(
+        "startup", "main.searchScheduledBusRoutes.missingCheckpointCoverage");
     for (std::size_t lineIndex = 0; lineIndex < traffic.timetableRoutes.size(); ++lineIndex) {
         if (matchedTimetableRoutes.contains(lineIndex)) {
             continue;
@@ -524,6 +535,9 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                 " timetable checkpoint(s) with no lane data.");
         }
     }
+    coverageTrace.finish();
+    openbus::rendering::TraceScope diagnosticTrace("startup",
+                                                   "main.searchScheduledBusRoutes.diagnostics");
     for (std::size_t lineIndex = 0; lineIndex < traffic.timetableRoutes.size(); ++lineIndex) {
         const auto& line = traffic.timetableRoutes[lineIndex];
         if (line.trackEntries.size() < minimumLineSplineCount ||
@@ -692,6 +706,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
         }
         result.timetableOriginDiagnostics.push_back(std::move(diagnostic));
     }
+    diagnosticTrace.finish();
     for (const int splineId : candidateSplineIds) {
         if (timetableSplineIds.contains(splineId)) {
             ++result.sharedTimetableSplineIds;
@@ -2038,7 +2053,7 @@ int main() {
                 preFrameSetupTrace.finish();
 
                 renderer.showStartupStatus(
-                    "Finishing spawn-area collision before the first frame.");
+                    "Finishing spawn-area collision.");
                 {
                     openbus::rendering::TraceScope waitCollisionTrace("startup",
                                                                       "main.waitForSpawnCollision");

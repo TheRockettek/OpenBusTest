@@ -190,7 +190,7 @@ std::size_t matchingPlayerTimetableRouteCount(const std::vector<PassengerStopRou
     const PreparedHof prepared(hof);
     std::unordered_set<std::string> matchedTimetables;
     for (const PassengerStopRouteState& route : routes) {
-        if (!route.stops.empty() &&
+        if (!route.stops.empty() && !matchedTimetables.contains(route.timetableKey) &&
             analyzePreparedPassengerRouteHof(route, prepared).route != nullptr) {
             matchedTimetables.insert(route.timetableKey);
         }

@@ -350,6 +350,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             addBounds(&tile, x, y, tile.minZ, x + impl_->coordinates.tileSize,
                       y + impl_->coordinates.tileSize, tile.maxZ, tile.indexCount);
         };
+        TraceScope geometryTrace("map", "MapRenderer::draw.computeCulling.geometryCandidates");
         if (!renderTypeFourOnly) {
             for (const auto& tile : impl_->terrainBuffers)
                 addTile(tile);
@@ -363,6 +364,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 }
             }
         }
+        geometryTrace.finish();
+        TraceScope sceneryTrace("map", "MapRenderer::draw.computeCulling.sceneryCandidates");
         for (const Impl::ActiveSceneryChunk& active : activeSceneryChunks) {
             const Impl::SceneryChunk& chunk = *active.chunk;
             // Broad-phase chunk rejection avoids CPU material/resource work for
@@ -403,6 +406,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                           instance.y + instance.boundingRadius, batch.vertexCount);
             }
         }
+        sceneryTrace.finish();
         indirect = indirectBatch.dispatch(cullingItems, cullingPlanes, lodBoundaries, projectedSize,
                                           depthOcclusionQueries);
         gpuCulling = indirect;
@@ -999,6 +1003,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             return 4;
         }
     };
+    TraceScope groupTrace("map", "MapRenderer::draw.groupScenery");
     for (std::size_t group = 0; group < Impl::SCENERY_DRAW_GROUP_COUNT; ++group) {
         impl_->opaqueSceneryScratch[group].clear();
         impl_->transparentSceneryScratch[group].clear();
@@ -1011,10 +1016,20 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             impl_->opaqueSceneryScratch[group].push_back(&scenery);
         }
     }
+    groupTrace.finish();
 
     using SceneryDraw = Impl::SceneryDraw;
     const auto drawSceneryTypes = [&](std::size_t group) {
-        TraceScope phase("map", "MapRenderer::draw.submitScenery");
+        static constexpr std::array<const char*, Impl::SCENERY_DRAW_GROUP_COUNT> traceNames = {
+            "MapRenderer::draw.submitScenery.renderTypeMinus1",
+            "MapRenderer::draw.submitScenery.renderTypeMinus2",
+            "MapRenderer::draw.submitScenery.renderTypeMinus3",
+            "MapRenderer::draw.submitScenery.renderType1",
+            "MapRenderer::draw.submitScenery.otherRenderTypes",
+            "MapRenderer::draw.submitScenery.renderType3",
+            "MapRenderer::draw.submitScenery.renderType4",
+        };
+        TraceScope phase("map", traceNames.at(group));
         std::vector<const SceneryDraw*>& opaqueScenery = impl_->opaqueSceneryScratch[group];
         std::vector<const SceneryDraw*>& transparentScenery =
             impl_->transparentSceneryScratch[group];

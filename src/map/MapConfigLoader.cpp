@@ -3518,7 +3518,9 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapTile");
     MapTileData data;
     data.reference = tile;
+    openbus::rendering::TraceScope readTrace("map", "MapConfigLoader::loadMapTile.readAndDecode");
     const std::vector<std::string> lines = splitLines(decodeText(tile.textPath));
+    readTrace.finish();
     if (chronoData != nullptr) {
         chronoData->rawLines = lines;
         if (!lines.empty()) {

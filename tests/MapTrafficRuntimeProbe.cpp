@@ -839,6 +839,19 @@ void verifyPlayerTimetableController() {
     unrelatedHof.routes = {{"9001", 0, false, {"UNRELATED_A", "UNRELATED_B"}, "Other", "900"}};
     require(matchingPlayerTimetableRouteCount({independentRoute}, unrelatedHof) == 0,
             "HOF auto-matching rejects files with no compatible map timetable route");
+    auto unmatchedSameKey = independentRoute;
+    auto unmatchedStops = hofStops;
+    unmatchedStops[0].name = "Unrelated origin";
+    unmatchedStops[1].name = "Unrelated destination";
+    unmatchedSameKey.stops = PassengerStops(unmatchedStops);
+    unmatchedSameKey.lineName = "900";
+    auto differentKey = independentRoute;
+    differentKey.timetableKey = "other-trip";
+    require(!passengerRouteMatchesHof(unmatchedSameKey, hof),
+            "the first variant of the timetable key does not match");
+    require(matchingPlayerTimetableRouteCount(
+                {unmatchedSameKey, independentRoute, independentRoute, differentKey}, hof) == 2,
+            "HOF auto-matching counts distinct keys and checks later variants after a non-match");
     const std::vector<openbus::map::MapAiTimetableCourse> independentCourses{
         {"course", {{"hof-trip", 0, 480.0}}, true}};
     PlayerTimetableCatalog independentCatalog;

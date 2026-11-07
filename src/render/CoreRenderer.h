@@ -174,7 +174,7 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights);
 void setMapLights(const std::vector<MapPointLight>& lights, double strength);
 // An absent brightness preserves the renderer's default daylight appearance.
 std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness);
-void setWeatherLighting(std::optional<double> brightness);
+void setWeatherLighting(std::optional<double> brightness, bool reflectionPass = false);
 // Visibility is the distance at which approximately 2% of scene contrast remains.
 // An absent value disables fog.
 void setWeatherFog(std::optional<double> visibilityMeters,

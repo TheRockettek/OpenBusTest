@@ -24,13 +24,30 @@ struct CompressedDds {
     std::vector<std::vector<std::uint8_t>> levels;
 };
 
+enum class TextureFileFormat {
+    Unknown,
+    Bmp,
+    Dds,
+    Jpeg,
+    Png,
+    Tga,
+    Tiff,
+};
+
 class TextureLoader {
   public:
+    static TextureFileFormat detectFormat(const std::filesystem::path& path);
     static bool readImage(const std::filesystem::path& path, Image& image);
+    static bool readImage(const std::filesystem::path& path, Image& image,
+                          TextureFileFormat format);
     static bool isSafeCompressedDds(const std::filesystem::path& path);
     static bool isDxt5Dds(const std::filesystem::path& path);
     static bool isDdsTextureArray(const std::filesystem::path& path);
     static bool readDxt5CompressedDds(const std::filesystem::path& path, CompressedDds& image);
+
+  private:
+    static bool readImageWithFormat(const std::filesystem::path& path, Image& image,
+                                    TextureFileFormat format);
 };
 
 } // namespace openbus::rendering

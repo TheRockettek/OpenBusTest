@@ -84,6 +84,8 @@ std::vector<std::uint8_t> rgb16Tiff() {
 
 int main(int argc, char** argv) {
     bool valid = true;
+    const auto signatureDirectory =
+        openbus::probe::makeProbeDirectory("openbus_texture_signature");
     const std::filesystem::path texturePathDirectory =
         openbus::probe::makeProbeDirectory("openbus_texture_path");
     const std::filesystem::path configuredGroundTexture =
@@ -293,6 +295,18 @@ int main(int argc, char** argv) {
                          compressedDds.levels[0] ==
                              std::vector<std::uint8_t>(dxt5Block.begin(), dxt5Block.end()),
                      "DXT5 compressed block data is retained");
+    const auto renamedDdsPath = signatureDirectory / "compressed.data";
+    valid &= require(writeBytes(renamedDdsPath, dxt5Bytes), "write renamed DDS fixture");
+    openbus::rendering::TextureAsset renamedDds;
+    valid &= require(openbus::rendering::loadTextureAsset(renamedDdsPath, renamedDds) &&
+                         renamedDds.compressedDds && renamedDds.compressedDds->width == 4 &&
+                         renamedDds.compressedDds->levels.size() == 1 &&
+                         renamedDds.compressedDds->levels[0] ==
+                             std::vector<std::uint8_t>(dxt5Block.begin(), dxt5Block.end()),
+                     "DDS signature preserves compressed upload without a DDS extension");
+    valid &= require(openbus::rendering::TextureLoader::readImage(renamedDdsPath, image) &&
+                         image.width == 4 && image.height == 4 && image.rgba[3] == 185,
+                     "DDS signature selects the CPU decoder without a DDS extension");
     openbus::probe::removeProbeFile(dxt5Path);
 
     const std::filesystem::path mislabeledBmpPath =
@@ -333,6 +347,14 @@ int main(int argc, char** argv) {
                          image.rgba[0] == 30 && image.rgba[1] == 20 && image.rgba[2] == 10 &&
                          image.rgba[3] == 255,
                      "palettized BMP palette is expanded to opaque RGBA");
+    const auto renamedBmpPath = signatureDirectory / "bitmap.png";
+    std::vector<std::uint8_t> bmpBytes = bmpHeader;
+    bmpBytes.insert(bmpBytes.end(), {1, 0, 0, 0});
+    valid &= require(writeBytes(renamedBmpPath, bmpBytes), "write renamed BMP fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(renamedBmpPath, image) &&
+                         image.width == 1 && image.height == 1 &&
+                         image.rgba == std::vector<std::uint8_t>({30, 20, 10, 255}),
+                     "BMP signature overrides a misleading PNG extension");
     openbus::probe::removeProbeFile(mislabeledBmpPath);
 
     const std::filesystem::path tgaPath =
@@ -354,6 +376,26 @@ int main(int argc, char** argv) {
                      "32-bit TGA with zero descriptor attribute bits loads");
     valid &= require(image.rgba.size() == 4 && image.rgba[1] == 255 && image.rgba[3] == 0,
                      "32-bit TGA alpha channel is preserved when descriptor bits are unset");
+    std::vector<std::uint8_t> tgaBytes(tgaHeader.begin(), tgaHeader.end());
+    tgaBytes.insert(tgaBytes.end(), {0, 255, 0, 0});
+    const auto renamedTgaPath = signatureDirectory / "legacy-tga.data";
+    valid &= require(writeBytes(renamedTgaPath, tgaBytes), "write renamed legacy TGA fixture");
+    valid &= require(!openbus::rendering::TextureLoader::readImage(renamedTgaPath, image),
+                     "signatureless TGA is not guessed from an unknown extension");
+    tgaBytes.insert(tgaBytes.end(), 8, 0);
+    constexpr std::array<std::uint8_t, 18> tgaFooter = {
+        'T', 'R', 'U', 'E', 'V', 'I', 'S', 'I', 'O', 'N', '-', 'X', 'F', 'I', 'L', 'E', '.', 0};
+    tgaBytes.insert(tgaBytes.end(), tgaFooter.begin(), tgaFooter.end());
+    valid &= require(writeBytes(renamedTgaPath, tgaBytes), "write TGA 2.0 footer fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(renamedTgaPath, image) &&
+                         image.rgba == std::vector<std::uint8_t>({0, 255, 0, 0}),
+                     "TGA 2.0 footer selects the TGA decoder without a TGA extension");
+    const auto invalidTgaPath = signatureDirectory / "invalid-tga.data";
+    valid &= require(writeBytes(invalidTgaPath,
+                                std::vector<std::uint8_t>(tgaFooter.begin(), tgaFooter.end())),
+                     "write truncated TGA footer fixture");
+    valid &= require(!openbus::rendering::TextureLoader::readImage(invalidTgaPath, image),
+                     "TGA footer alone does not decode as a valid image");
     openbus::probe::removeProbeFile(tgaPath);
 
     const std::filesystem::path pngPath =
@@ -371,9 +413,13 @@ int main(int argc, char** argv) {
                          image.rgba[0] == 12 && image.rgba[1] == 34 && image.rgba[2] == 56 &&
                          image.rgba[3] == 78,
                      "PNG RGBA channels decode unchanged");
+    const auto renamedPngPath = signatureDirectory / "png-as-tga.tga";
+    valid &= require(writeBytes(renamedPngPath, pngBytes), "write renamed PNG fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(renamedPngPath, image) &&
+                         image.rgba == std::vector<std::uint8_t>({12, 34, 56, 78}),
+                     "PNG signature overrides a misleading TGA extension");
     openbus::probe::removeProbeFile(pngPath);
 
-#if OPENBUS_HAVE_TIFF
     const std::filesystem::path tiffPath =
         std::filesystem::temp_directory_path() / "openbus_rgb16.tif";
     valid &= require(writeBytes(tiffPath, rgb16Tiff()), "write 16-bit RGB TIFF fixture");
@@ -383,8 +429,48 @@ int main(int argc, char** argv) {
                          image.rgba[0] == 255 && image.rgba[1] == 0 && image.rgba[2] == 128 &&
                          image.rgba[3] == 255,
                      "16-bit RGB TIFF samples convert to RGBA8");
+    const auto renamedTiffPath = signatureDirectory / "tiff-as-jpeg.jpg";
+    valid &= require(writeBytes(renamedTiffPath, rgb16Tiff()), "write renamed TIFF fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(renamedTiffPath, image) &&
+                         image.rgba == std::vector<std::uint8_t>({255, 0, 128, 255}),
+                     "TIFF signature overrides a misleading JPEG extension");
+    const auto unicodeTiffPath = signatureDirectory / std::filesystem::path(u8"tiff_\u4e2d.tif");
+    valid &= require(writeBytes(unicodeTiffPath, rgb16Tiff()), "write Unicode-named TIFF fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(unicodeTiffPath, image) &&
+                         image.rgba == std::vector<std::uint8_t>({255, 0, 128, 255}),
+                     "TIFF loader reads a Unicode path");
+    std::vector<std::uint8_t> deflateTiff = rgb16Tiff();
+    deflateTiff[54] = 8;
+    constexpr std::array<std::uint8_t, 14> deflatedPixels = {
+        0x78, 0x9c, 0xfb, 0xff, 0x9f, 0x81, 0x81, 0xa1, 0x01, 0x00, 0x0b, 0x7b, 0x02, 0x7f};
+    deflateTiff[114] = static_cast<std::uint8_t>(deflatedPixels.size());
+    deflateTiff.resize(140);
+    deflateTiff.insert(deflateTiff.end(), deflatedPixels.begin(), deflatedPixels.end());
+    const auto compressedTiffPath = signatureDirectory / "deflate.data";
+    valid &= require(writeBytes(compressedTiffPath, deflateTiff),
+                     "write ZIP-compressed TIFF fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(compressedTiffPath, image) &&
+                         image.rgba == std::vector<std::uint8_t>({255, 0, 128, 255}),
+                     "ZIP-compressed TIFF decodes without a TIFF extension");
+    std::vector<std::uint8_t> oversizedTiff = rgb16Tiff();
+    oversizedTiff[18] = oversizedTiff[19] = 0xff;
+    oversizedTiff[30] = oversizedTiff[31] = 0xff;
+    const auto oversizedTiffPath = signatureDirectory / "oversized.tif";
+    valid &= require(writeBytes(oversizedTiffPath, oversizedTiff), "write oversized TIFF fixture");
+    valid &= require(!openbus::rendering::TextureLoader::readImage(oversizedTiffPath, image),
+                     "oversized TIFF dimensions are rejected");
+    const auto truncatedTiffPath = signatureDirectory / "truncated.tif";
+    valid &= require(writeBytes(truncatedTiffPath, {'I', 'I', 42, 0}),
+                     "write truncated TIFF fixture");
+    valid &= require(!openbus::rendering::TextureLoader::readImage(truncatedTiffPath, image),
+                     "truncated TIFF fails to decode");
+    std::vector<std::uint8_t> truncatedTiffPixels = rgb16Tiff();
+    truncatedTiffPixels.resize(142);
+    valid &= require(writeBytes(truncatedTiffPath, truncatedTiffPixels),
+                     "write TIFF with truncated pixel data");
+    valid &= require(!openbus::rendering::TextureLoader::readImage(truncatedTiffPath, image),
+                     "TIFF with truncated pixel data fails instead of producing a partial image");
     openbus::probe::removeProbeFile(tiffPath);
-#endif
 
     const std::filesystem::path mislabeledPngPath =
         std::filesystem::temp_directory_path() / "openbus_png_payload.dds";
@@ -435,6 +521,22 @@ int main(int argc, char** argv) {
                     image.rgba[0] > 80 && image.rgba[0] < 112 && image.rgba[0] == image.rgba[1] &&
                     image.rgba[1] == image.rgba[2] && image.rgba[3] == 255,
                 "JPEG decodes to opaque grayscale RGBA pixels");
+    const auto renamedJpegPath = signatureDirectory / "jpeg.110002";
+    valid &= require(writeBytes(renamedJpegPath, jpegBytes), "write renamed JPEG fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(renamedJpegPath, image) &&
+                         image.width == 4 && image.height == 4 && image.rgba.size() == 64,
+                     "JPEG signature selects the decoder for an unknown extension");
+    const auto jpegAsDdsPath = signatureDirectory / "jpeg-as-dds.dds";
+    auto nonJfifJpeg = jpegBytes;
+    nonJfifJpeg[3] = 0xe1;
+    valid &= require(writeBytes(jpegAsDdsPath, nonJfifJpeg), "write non-JFIF JPEG fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(jpegAsDdsPath, image) &&
+                         image.width == 4 && image.height == 4,
+                     "JPEG detection does not require JFIF and overrides a DDS extension");
+    valid &= require(writeBytes(renamedJpegPath, {0xff, 0xd8, 0xff}),
+                     "write truncated JPEG signature");
+    valid &= require(!openbus::rendering::TextureLoader::readImage(renamedJpegPath, image),
+                     "a JPEG signature alone does not make truncated data valid");
     openbus::probe::removeProbeFile(jpegPath);
 
     const std::filesystem::path indexedTgaPath =
@@ -478,5 +580,6 @@ int main(int argc, char** argv) {
                          image.rgba[7] == 255,
                      "RLE indexed TGA repeats palette indices");
     openbus::probe::removeProbeFile(rleIndexedTgaPath);
+    openbus::probe::removeProbeDirectory(signatureDirectory);
     return valid ? 0 : 1;
 }

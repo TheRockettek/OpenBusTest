@@ -1921,9 +1921,11 @@ std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness) {
     return {0.45F * value, 0.65F * value, 0.88F * value};
 }
 
-void setWeatherLighting(std::optional<double> brightness) {
+void setWeatherLighting(std::optional<double> brightness, bool reflectionPass) {
     const auto color = weatherBackgroundColor(brightness);
     const float value = static_cast<float>(brightness.value_or(1.0));
+    const float ambientLight =
+        std::max(0.58F * value, reflectionPass ? 0.25F : 0.0F);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms},
@@ -1932,7 +1934,7 @@ void setWeatherLighting(std::optional<double> brightness) {
             continue;
         }
         useProgram(entry.first);
-        pglUniform1f(entry.second->ambientLight, 0.58F * value);
+        pglUniform1f(entry.second->ambientLight, ambientLight);
         pglUniform1f(entry.second->diffuseLight, 0.42F * value);
         pglUniform1f(entry.second->weatherBrightness, value);
         pglUniform3f(entry.second->fogColor, color[0], color[1], color[2]);

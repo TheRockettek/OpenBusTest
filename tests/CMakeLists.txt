@@ -100,8 +100,6 @@ openbus_add_probe(OpenBusVehicleInputBindingsProbe VehicleInputBindingsProbe.cpp
 
 # Assets
 openbus_add_probe(OpenBusTextureLoaderProbe TextureLoaderProbe.cpp LIBS openbus_assets)
-target_compile_definitions(OpenBusTextureLoaderProbe PRIVATE
-    OPENBUS_HAVE_TIFF=${OPENBUS_HAVE_TIFF})
 openbus_add_probe(OpenBusPreparedMapTexturesProbe PreparedMapTexturesProbe.cpp LIBS openbus_assets)
 openbus_add_probe(OpenBusPreparedTerrainTexturePathsProbe PreparedTerrainTexturePathsProbe.cpp
     LIBS openbus_assets)

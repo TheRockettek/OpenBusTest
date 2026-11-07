@@ -7,12 +7,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-#ifndef OPENBUS_HAVE_TIFF
-#define OPENBUS_HAVE_TIFF 0
-#endif
-#if OPENBUS_HAVE_TIFF
 #include <tiffio.h>
-#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -120,7 +115,6 @@ bool readStbImage(const std::filesystem::path& path, Image& image) {
     return true;
 }
 
-#if OPENBUS_HAVE_TIFF
 bool readTiffImage(const std::filesystem::path& path, Image& image) {
 #ifdef _WIN32
     std::unique_ptr<TIFF, decltype(&TIFFClose)> tiff(TIFFOpenW(path.c_str(), "r"), TIFFClose);
@@ -146,7 +140,7 @@ bool readTiffImage(const std::filesystem::path& path, Image& image) {
     }
     std::vector<std::uint32_t> raster(rgbaSize / 4);
     if (TIFFReadRGBAImageOriented(tiff.get(), width, height, raster.data(), ORIENTATION_TOPLEFT,
-                                  0) != 1) {
+                                  1) != 1) {
         return false;
     }
 
@@ -162,7 +156,6 @@ bool readTiffImage(const std::filesystem::path& path, Image& image) {
     image.rgba.swap(rgba);
     return true;
 }
-#endif
 
 bool readTgaImage(const std::filesystem::path& path, Image& image) {
     std::ifstream input(path, std::ios::binary);
@@ -658,31 +651,85 @@ bool checkedTextureBufferSize(std::size_t width, std::size_t height, std::size_t
     return checkedBufferSize(width, height, bytesPerPixel, size);
 }
 
+TextureFileFormat TextureLoader::detectFormat(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return TextureFileFormat::Unknown;
+    }
+    std::array<std::uint8_t, 8> magic = {};
+    input.read(reinterpret_cast<char*>(magic.data()), static_cast<std::streamsize>(magic.size()));
+    const std::streamsize count = input.gcount();
+    if (count >= 2 && magic[0] == 'B' && magic[1] == 'M') {
+        return TextureFileFormat::Bmp;
+    }
+    if (count >= 3 && magic[0] == 0xff && magic[1] == 0xd8 && magic[2] == 0xff) {
+        return TextureFileFormat::Jpeg;
+    }
+    if (count >= 4 && magic[0] == 'D' && magic[1] == 'D' && magic[2] == 'S' && magic[3] == ' ') {
+        return TextureFileFormat::Dds;
+    }
+    constexpr std::array<std::uint8_t, 8> pngMagic = {0x89, 0x50, 0x4e, 0x47,
+                                                      0x0d, 0x0a, 0x1a, 0x0a};
+    if (count == static_cast<std::streamsize>(pngMagic.size()) && magic == pngMagic) {
+        return TextureFileFormat::Png;
+    }
+    if (count >= 4 && ((magic[0] == 'I' && magic[1] == 'I' && (magic[2] == 42 || magic[2] == 43) &&
+                        magic[3] == 0) ||
+                       (magic[0] == 'M' && magic[1] == 'M' && magic[2] == 0 &&
+                        (magic[3] == 42 || magic[3] == 43)))) {
+        return TextureFileFormat::Tiff;
+    }
+    constexpr std::array<char, 18> tgaMagic = {'T', 'R', 'U', 'E', 'V', 'I', 'S', 'I', 'O',
+                                               'N', '-', 'X', 'F', 'I', 'L', 'E', '.', '\0'};
+    input.clear();
+    input.seekg(-static_cast<std::streamoff>(tgaMagic.size()), std::ios::end);
+    std::array<char, 18> footer = {};
+    if (input.read(footer.data(), static_cast<std::streamsize>(footer.size())) &&
+        footer == tgaMagic) {
+        return TextureFileFormat::Tga;
+    }
+    return TextureFileFormat::Unknown;
+}
+
 bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     TraceScope trace("texture", "readImage");
+    return readImageWithFormat(path, image, detectFormat(path));
+}
+
+bool TextureLoader::readImage(const std::filesystem::path& path, Image& image,
+                              TextureFileFormat format) {
+    TraceScope trace("texture", "readImage");
+    return readImageWithFormat(path, image, format);
+}
+
+bool TextureLoader::readImageWithFormat(const std::filesystem::path& path, Image& image,
+                                        TextureFileFormat format) {
     static const bool verboseTextureReadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"));
     if (verboseTextureReadLogs) {
         gameLog.Debug("Reading image from path: " + openbus::pathToUtf8(path));
     }
     const std::string extension = lower(path.extension().string());
-    if (extension == ".surf") {
-        return readBmpImage(path, image);
-    }
-    if (extension == ".dds") {
-        std::ifstream signature(path, std::ios::binary);
-        std::array<std::uint8_t, 8> magic = {};
-        signature.read(reinterpret_cast<char*>(magic.data()),
-                       static_cast<std::streamsize>(magic.size()));
-        // Some OMSI add-ons ship BMP or PNG data with a .dds extension.
-        if (signature && magic[0] == 'B' && magic[1] == 'M') {
+    switch (format) {
+    case TextureFileFormat::Bmp:
+        if (extension == ".dds" || extension == ".surf") {
             return readBmpImage(path, image);
         }
-        constexpr std::array<std::uint8_t, 8> pngMagic = {0x89, 0x50, 0x4e, 0x47,
-                                                          0x0d, 0x0a, 0x1a, 0x0a};
-        if (signature && magic == pngMagic) {
-            return readStbImage(path, image);
-        }
+        return readStbImage(path, image) || readBmpImage(path, image);
+    case TextureFileFormat::Dds:
+        return readDdsImage(path, image);
+    case TextureFileFormat::Jpeg:
+    case TextureFileFormat::Png:
+        return readStbImage(path, image);
+    case TextureFileFormat::Tga:
+        return readTgaImage(path, image);
+    case TextureFileFormat::Tiff:
+        return readTiffImage(path, image);
+    case TextureFileFormat::Unknown:
+        break;
+    }
+    if (extension == ".surf") {
+        return readBmpImage(path, image);
     }
     if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp") {
         if (readStbImage(path, image)) {
@@ -693,11 +740,7 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
         return readDdsImage(path, image);
     }
     if (extension == ".tif" || extension == ".tiff") {
-#if OPENBUS_HAVE_TIFF
         return readTiffImage(path, image);
-#else
-        return false;
-#endif
     }
     if (extension == ".tga") {
         return readTgaImage(path, image);

@@ -4,6 +4,7 @@
 #include "app/ImGuiLayer.h"
 #include "app/TrafficDebugDirection.h"
 #include "app/traffic/ScheduledBusTiming.h"
+#include "core/Environment.h"
 
 #include <imgui.h>
 #include "app/vehicle/VehiclePartLoading.h"
@@ -892,7 +893,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         simulationState_.sharedVariables().effectiveWeatherVisibilityMeters(),
         simulationState_.sharedVariables().weatherFogTopAboveGroundMeters());
     openbus::rendering::setWeatherLighting(
-        simulationState_.sharedVariables().environmentBrightness());
+        simulationState_.sharedVariables().environmentBrightness(), renderingReflection_);
     if (!renderingReflection_) {
         const auto background = openbus::rendering::weatherBackgroundColor(
             simulationState_.sharedVariables().environmentBrightness());
@@ -1306,11 +1307,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         }
         popMatrix();
     }
+    const auto& weatherVariables = simulationState_.sharedVariables();
     {
         TraceScope phase("render", "RenderLoop::draw.reflections");
         renderReflectionViews(simulation, world);
     }
-    const auto& weatherVariables = simulationState_.sharedVariables();
+    if (!renderingReflection_) {
+        openbus::rendering::setWeatherLighting(weatherVariables.environmentBrightness(), false);
+    }
     openbus::rendering::setWeatherFogView(modelViewMatrix(), playerGroundHeight);
     openbus::rendering::drawWeatherClouds(
         weatherVariables.weatherCloudType(), weatherVariables.weatherCloudBaseAboveGroundMeters(),
@@ -1363,7 +1367,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         viewSpotlights.resize(openbus::rendering::MAX_VEHICLE_SPOTLIGHTS);
     }
     openbus::rendering::setVehicleSpotlights(viewSpotlights);
-    refreshPassengerWaitingPositions();
+    {
+        TraceScope phase("passenger",
+                         "RenderLoop::draw.refreshPassengerWaitingPositions");
+        refreshPassengerWaitingPositions();
+    }
     const auto queuePose = [this](int stopId, std::size_t queueSlot) {
         return passengerQueuePose(stopId, queueSlot);
     };
@@ -1455,9 +1463,13 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             glDisable(GL_BLEND);
             glDisable(GL_CULL_FACE);
             glDisable(GL_POLYGON_OFFSET_FILL);
-            mapRenderer_->draw(false, renderingReflection_
-                                          ? reflectionMinimumObjectViewportFraction_
-                                          : mainViewMinimumObjectViewportFraction_);
+            {
+                TraceScope mapTrace("map", renderingReflection_ ? "RenderLoop::draw.map.reflection"
+                                                                : "RenderLoop::draw.map.main");
+                mapRenderer_->draw(false, renderingReflection_
+                                              ? reflectionMinimumObjectViewportFraction_
+                                              : mainViewMinimumObjectViewportFraction_);
+            }
             for (const HumanTrafficState& human : humanTrafficActors_) {
                 if (!human.populationEnabled) {
                     continue;
@@ -2117,6 +2129,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
+            TraceScope mapTrace("map", "RenderLoop::draw.map.typeFour");
             mapRenderer_->draw(true, mainViewMinimumObjectViewportFraction_);
         };
         drawVehicles(VehicleRenderPass::Opaque, false);
@@ -3829,18 +3842,36 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
 
 void RenderLoop::endFrame() {
     TraceScope trace("frame", "RenderLoop::endFrame.swapBuffers");
-    if (imguiEnabled_) {
-        drawOnFootUi();
-        drawPlayerTimetableUi();
-        drawPauseMenuUi();
-        drawDebugMenuUi();
-        imguiLayer_->render();
+    {
+        TraceScope phase("frame", "RenderLoop::endFrame.ui");
+        if (imguiEnabled_) {
+            drawOnFootUi();
+            drawPlayerTimetableUi();
+            drawPauseMenuUi();
+            drawDebugMenuUi();
+            imguiLayer_->render();
+        }
     }
-    glfwSwapBuffers(window_);
+    static const bool finishBeforeSwap =
+        openbus::rendering::parseEnabledFlag(openbus::getEnvironment(
+            "OPENBUS_GL_FINISH_BEFORE_SWAP"));
+    if (finishBeforeSwap) {
+        TraceScope phase("frame", "RenderLoop::endFrame.glFinishBeforeSwap");
+        glFinish();
+    }
+    {
+        TraceScope phase("frame", "RenderLoop::endFrame.present");
+        glfwSwapBuffers(window_);
+    }
     const auto background = openbus::rendering::weatherBackgroundColor(std::nullopt);
     glClearColor(background[0], background[1], background[2], 1.0F);
-    if (const auto deadline = frameTiming_.deadlineAfterFrame(std::chrono::steady_clock::now())) {
-        std::this_thread::sleep_until(*deadline);
+    {
+        TraceScope phase("frame", "RenderLoop::endFrame.framePacing");
+        if (const auto deadline =
+                frameTiming_.deadlineAfterFrame(std::chrono::steady_clock::now())) {
+            TraceScope wait("frame", "RenderLoop::endFrame.framePacing.sleep");
+            std::this_thread::sleep_until(*deadline);
+        }
     }
 }
 

@@ -519,6 +519,7 @@ from engine modules.
 - CMake 3.21 or newer (required for the configure-preset schema)
 - A C++23 compiler
 - zlib
+- libtiff
 - ODE
 - GLFW and OpenGL
 - OpenAL
@@ -529,7 +530,7 @@ On Windows with vcpkg, install standalone LLVM (for `clang-cl.exe`) and the
 Visual Studio C++ build tools (for the MSVC headers, libraries, and linker):
 
 ```powershell
-vcpkg install ode:x64-windows glfw3:x64-windows openal-soft:x64-windows zlib:x64-windows
+vcpkg install ode:x64-windows glfw3:x64-windows openal-soft:x64-windows zlib:x64-windows tiff:x64-windows
 ```
 
 Set `OPENBUS_VCPKG_ROOT` to the vcpkg installation directory when it is not
@@ -542,7 +543,7 @@ select specific installations.
 On Debian or Ubuntu, install the native development packages:
 
 ```bash
-sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev libcurl4-openssl-dev zlib1g-dev
+sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev libcurl4-openssl-dev zlib1g-dev libtiff-dev
 ```
 
 The Linux build uses the system GLFW/ODE packages when available and falls back
@@ -913,6 +914,8 @@ illuminate model and road surfaces, including in mirrors. Up to 128 nearest
 vehicle spotlights are used per view; reflection cameras build their own
 camera-relative selection. Beams do not cast shadows, and attenuation and cone
 behavior approximate the native Direct3D spotlight parameters.
+At night, mirror views retain a low ambient fill so scenery outside vehicle
+headlight beams remains visible; the main view keeps its normal night lighting.
 The bus model defines the beam positions and parameters; vehicle scripts select
 which definition is active through `Spot_Select`. Low- and high-beam behavior
 therefore depends on the bus's spotlight definitions and script logic rather
@@ -1269,9 +1272,11 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   the final OpenGL image-origin correction;
 - MAN DL05 OBJ lateral coordinates are mirrored into the simulator convention so
   the modeled right-side exit remains on the vehicle's right
-- TGA, BMP, PNG/JPEG, TIFF (when libtiff is available), and DXT1/DXT5 DDS
-  texture data are decoded for model materials, including BMP and PNG payloads
-  with a `.dds` filename
+- TGA, BMP, PNG/JPEG, TIFF, and DXT1/DXT5 DDS
+  texture data are decoded for model materials. Recognizable BMP, DDS, JPEG,
+  PNG, TIFF, and TGA 2.0 signatures take precedence over filename extensions;
+  legacy TGA files without a signature retain extension-based handling.
+  Compressed DDS data keeps its compressed upload path even under another name
 - OBJ `mtllib`/`usemtl` groups are rendered with their material textures;
   converter-generated texture extensions are resolved by filename stem
 - Window meshes use a depth-write-disabled, controlled translucent glass pass
@@ -1358,8 +1363,47 @@ and submission), and window-title updates. The HUD is the final overlay and
 restores the scene's depth-enabled, blend-disabled, culling-disabled state
 without querying the driver. Trace durations are CPU wall times, not GPU
 execution times: driver backpressure can appear in a GL call or in
-`RenderLoop::endFrame.swapBuffers`. Compare whole `main` frame times rather than
-treating a shorter draw scope as an equal FPS gain.
+`RenderLoop::endFrame.present`. Its UI, presentation, and frame-pacing sleep
+children distinguish overlay work, swap/presentation waits, and the explicit
+frame-rate cap. Compare whole `main` frame times rather than treating a shorter
+draw scope as an equal FPS gain.
+Set `OPENBUS_GL_FINISH_BEFORE_SWAP=1` to add
+`RenderLoop::endFrame.glFinishBeforeSwap` immediately before presentation. Its
+duration measures time waiting for queued GPU work; the following
+`RenderLoop::endFrame.present` duration then measures swap/presentation after
+that work has completed. This forces CPU/GPU synchronization and changes normal
+frame pacing, so use it only as a diagnostic; `profile.bat` enables it.
+
+`RenderLoop::updatePlayerVariables` includes passenger service, audio, scripts,
+and traffic work as well as player variables. Its child scopes separate waiting
+position refresh, passenger service and nearest-stop lookup, passenger mass,
+vehicle sound updates, coin animations, and traffic wheel animations.
+`RenderLoop::updatePlayerVariables.refreshPassengerWaitingPositions` and
+`RenderLoop::draw.refreshPassengerWaitingPositions` distinguish the update and
+draw call sites when checking for redundant refreshes.
+`RenderLoop::draw.map.main`, `.reflection`, and `.typeFour` distinguish map
+passes; the nested map culling scopes separate geometry and scenery candidate
+construction from indirect dispatch. Scenery submission scopes are split by
+render type to show which groups dominate. These scopes are inclusive and can
+be omitted when shorter than the configured trace threshold; do not sum nested
+durations. Tracing itself adds overhead, particularly for many short events.
+
+For large-map startup, `MapConfigLoader::loadMapTile.readAndDecode` separates
+file reading, decoding, and line splitting from the parent tile scope's parsing
+self time. Scene indexing reports per-tile spline indexing, profile resolution,
+map-wide scenery traffic paths, and network finalization. Its completion log
+also reports spline profile lookups and unique asset paths; profile resolution
+is reused per asset path during that indexing pass, including missing assets.
+Map-wide scenery traffic indexing has child scopes for ordinary objects,
+attached objects, and spline attachments.
+Scheduled bus search has separate entry collection, complete-route, prefix
+fallback, missing-checkpoint coverage, and diagnostic scopes. HOF auto-matching
+separates loading each HOF from matching its routes.
+
+Startup worker scopes may overlap each other and main-thread waits. Their
+aggregate durations are not additive startup time: inspect the timeline by
+thread and compare the wait and its contributing worker spans. As with other
+trace scopes, these measure CPU-side wall time, including I/O and scheduling.
 
 While tracing, the periodic `Physics collision profile` log breaks down
 `dCollide` calls and hit pairs by wheel/static, chassis/static, wheel/pole,

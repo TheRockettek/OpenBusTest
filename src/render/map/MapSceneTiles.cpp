@@ -75,18 +75,23 @@ void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
         }
     };
 
+    TraceScope sceneryTrace("map", "MapSceneLoader.indexSceneryTrafficPaths.sceneryObjects");
     for (const auto& [objectId, object] : sceneryObjectsById) {
         if (const auto placement = resolveMapSceneryPlacement(objectId, false)) {
             addPaths(objectId, object.tileX, object.tileY, placement->assetPath, placement->pose,
                      object.rules);
         }
     }
+    sceneryTrace.finish();
+    TraceScope attachedTrace("map", "MapSceneLoader.indexSceneryTrafficPaths.attachedObjects");
     for (const auto& [objectId, object] : attachedObjectsById) {
         if (const auto placement = resolveMapSceneryPlacement(objectId, false)) {
             addPaths(objectId, object.tileX, object.tileY, placement->assetPath, placement->pose,
                      object.rules);
         }
     }
+    attachedTrace.finish();
+    TraceScope splineTrace("map", "MapSceneLoader.indexSceneryTrafficPaths.splineAttachments");
     for (const auto& [tileIndex, tile] : splineAttachmentParentTiles) {
         for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
             if (ambiguousMapObjectIds.contains(attachment.id)) {

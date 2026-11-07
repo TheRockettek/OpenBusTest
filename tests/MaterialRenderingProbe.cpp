@@ -870,15 +870,21 @@ int main() {
         const auto twilight = fogSample(multiMaterial, 1.0);
         setWeatherLighting(0.0);
         const auto night = fogSample(multiMaterial, 1.0);
+        setWeatherLighting(0.0, true);
+        const auto reflectionNight = fogSample(multiMaterial, 1.0);
+        setWeatherLighting(0.0, false);
+        const auto restoredMainNight = fogSample(multiMaterial, 1.0);
         for (std::size_t channel = 0; channel < 3; ++channel) {
             if (!close(twilight[channel], static_cast<int>(std::lround(day[channel] * 0.5))) ||
-                night[channel] > 2) {
+                night[channel] > 2 || reflectionNight[channel] <= night[channel] + 8 ||
+                restoredMainNight[channel] != night[channel]) {
                 std::cerr << "weather brightness did not scale GPU surface lighting\n";
                 passed = false;
                 break;
             }
         }
-        if (night[3] != day[3] || twilight[3] != day[3]) {
+        if (night[3] != day[3] || twilight[3] != day[3] || reflectionNight[3] != day[3] ||
+            restoredMainNight[3] != day[3]) {
             std::cerr << "weather brightness changed surface opacity\n";
             passed = false;
         }

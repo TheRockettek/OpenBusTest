@@ -590,7 +590,12 @@ void RenderLoop::updateAutomaticMapHofSelection() {
     for (std::size_t index = 0; index < vehicleDepotCatalog_.size(); ++index) {
         const openbus::config::VehicleDepot& depot = vehicleDepotCatalog_[index];
         try {
-            const openbus::config::HofData hof = openbus::config::loadHofData(depot.path);
+            openbus::config::HofData hof;
+            {
+                TraceScope loadTrace("startup", "startup.autoMatchMapHof.loadHof");
+                hof = openbus::config::loadHofData(depot.path);
+            }
+            TraceScope matchTrace("startup", "startup.autoMatchMapHof.matchRoutes");
             const std::size_t matchedRoutes =
                 openbus::app::matchingPlayerTimetableRouteCount(passengerNetwork_.routes, hof);
             if (matchedRoutes > autoMapDepotMatchedRouteCount_) {

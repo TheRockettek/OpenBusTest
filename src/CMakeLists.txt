@@ -119,11 +119,8 @@ openbus_add_module(openbus_assets
         openbus_third_party_headers
     PRIVATE_DEPENDS
         ZLIB::ZLIB
+        TIFF::TIFF
 )
-target_compile_definitions(openbus_assets PRIVATE OPENBUS_HAVE_TIFF=${OPENBUS_HAVE_TIFF})
-if(OPENBUS_HAVE_TIFF)
-    target_link_libraries(openbus_assets PRIVATE TIFF::TIFF)
-endif()
 
 openbus_add_module(openbus_physics
     SOURCES

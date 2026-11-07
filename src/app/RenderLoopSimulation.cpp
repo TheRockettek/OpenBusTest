@@ -203,6 +203,7 @@ void RenderLoop::logDrivetrainDiagnosticVariables() const {
 }
 
 void RenderLoop::refreshPassengerWaitingPositions() {
+    TraceScope trace("passenger", "RenderLoop::refreshPassengerWaitingPositions");
     if (mapRenderer_ == nullptr) {
         return;
     }
@@ -358,14 +359,22 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
-    updateNonPlayerSoundListenerGain();
+    {
+        TraceScope soundTrace("audio", "RenderLoop::updatePlayerVariables.listenerGain");
+        updateNonPlayerSoundListenerGain();
+    }
     if (mapRenderer_ != nullptr) {
         TraceScope trafficActorTrace("traffic", "MapRenderer::updateTrafficActors");
         mapRenderer_->updateTrafficActors(std::clamp(frameTimeStep_, 0.0, 0.25));
     }
     updateTrafficDriving(simulation, std::clamp(frameTimeStep_, 0.0, 0.25));
-    refreshPassengerWaitingPositions();
+    {
+        TraceScope passengerTrace(
+            "passenger", "RenderLoop::updatePlayerVariables.refreshPassengerWaitingPositions");
+        refreshPassengerWaitingPositions();
+    }
     cancelMovingPlayerPassengerService(simulation);
+    TraceScope vehicleSoundTrace("audio", "RenderLoop::updatePlayerVariables.vehicleSounds");
     for (const auto& vehicle : vehicles_) {
         vehicle->soundViewContext =
             vehicle.get() == playerVehicle_ ? soundViewpoint_ : RenderViewContext::NonPlayer;
@@ -398,7 +407,10 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
         vehicle->soundBank.updateActiveSounds(soundEngine_, vehicle->variables,
                                               vehicle->soundViewContext);
     }
+    vehicleSoundTrace.finish();
     {
+        TraceScope passengerTrace("passenger",
+                                  "RenderLoop::updatePlayerVariables.passengerService");
         const double passengerServiceTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
         std::unordered_map<Vehicle*, int> sharedQueueStops;
         std::unordered_map<Vehicle*, const TrafficVehicleState*> scheduledStopVehicles;
@@ -529,6 +541,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                                                          passengerNetwork_.updateOffset);
         openbus::app::NearbyPassengerStop nearbyPlayerPassengerStop;
         if (playerVehicle_ != nullptr) {
+            TraceScope nearestTrace("passenger",
+                                    "RenderLoop::updatePlayerVariables.nearestPassengerStop");
             const auto chassis = simulation.chassisPose();
             const double heading = std::atan2(chassis.rotation[0], chassis.rotation[3]);
             nearbyPlayerPassengerStop = passengerNetwork_.findNearestStop(
@@ -1525,6 +1539,7 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                                                                     passengerServiceTimeStep);
         });
     }
+    TraceScope massTrace("passenger", "RenderLoop::updatePlayerVariables.passengerMass");
     std::vector<BusPassengerMassPoint> passengerMassPoints;
     if (playerVehicle_ != nullptr && playerVehicle_->passengers) {
         const auto& service = playerVehicle_->passengers->service;
@@ -1556,8 +1571,10 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
         }
     }
     simulation.setPassengerMassPoints(passengerMassPoints);
+    massTrace.finish();
     updateScripts();
     simulation.setRoadWeather(simulationState_.sharedVariables().roadWeather());
+    TraceScope coinsTrace("passenger", "RenderLoop::updatePlayerVariables.coinAnimations");
     const double simulationTime = simulation.simulationTime();
     std::erase_if(passengerCoinAnimations_,
                   [simulationTime](const PassengerCoinAnimation& animation) {
@@ -1632,6 +1649,8 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
     std::erase_if(observedPassengerCoinCounts_, [&observedCoinVehicles](const auto& entry) {
         return !observedCoinVehicles.contains(entry.first);
     });
+    coinsTrace.finish();
+    TraceScope wheelTrace("traffic", "RenderLoop::updatePlayerVariables.trafficWheelAnimations");
     for (TrafficVehicleState& trafficVehicle : trafficFleet_.vehicles) {
         if (!trafficVehicle.populationEnabled || trafficVehicle.vehicle == nullptr) {
             continue;
@@ -1643,6 +1662,7 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                                                trafficVehicle.actor.rearAxleOffsetMeters),
             trafficVehicle.actor.speedMetersPerSecond);
     }
+    wheelTrace.finish();
     if (drivetrainDiagnosticsEnabled_) {
         const double now = glfwGetTime();
         if (lastDrivetrainDiagnosticTime_ < 0.0 || now - lastDrivetrainDiagnosticTime_ >= 1.0) {
