@@ -141,8 +141,8 @@ class MapRenderer {
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     bool humanTrafficLaneNetworkReady() const noexcept;
     std::optional<openbus::map::MapPassengerPedestrianJourney>
-    passengerPedestrianJourneyNear(const std::array<double, 3>& stopPosition,
-                                   std::size_t seed) const;
+    passengerPedestrianJourneyNear(const std::array<double, 3>& stopPosition, std::size_t seed,
+                                   double maximumDistanceMeters = 25.0) const;
     std::optional<openbus::map::MapPassengerPedestrianJourney>
     passengerPedestrianJourneyBetween(const std::array<double, 3>& startPosition,
                                       const std::array<double, 3>& destinationPosition,

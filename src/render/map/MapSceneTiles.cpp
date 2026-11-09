@@ -5,6 +5,9 @@
 #include "core/Utf8Path.h"
 #include "map/MapCarparkList.h"
 
+#include <bit>
+#include <cstdint>
+
 namespace openbus::rendering {
 
 void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
@@ -389,8 +392,11 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 return;
             }
             const std::vector<std::string>& candidates = loadCarparkVehicleList(*listIndex);
+            const std::uint64_t placementSeed = std::bit_cast<std::uint64_t>(worldX) ^
+                                                std::rotl(std::bit_cast<std::uint64_t>(worldY), 23);
             const std::optional<std::size_t> selected = openbus::map::selectMapCarparkVehicle(
-                carParkChancePercent_, candidates.size(), tileX, tileY, mapObjectId.value_or(0));
+                carParkChancePercent_, candidates.size(), tileX, tileY, mapObjectId.value_or(0),
+                placementSeed);
             if (!selected.has_value()) {
                 return;
             }

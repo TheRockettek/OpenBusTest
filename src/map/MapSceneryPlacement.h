@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -69,7 +70,8 @@ std::size_t selectMapSceneryLod(const std::vector<double>& thresholds, double di
 // Duplicate candidates in the list retain their authored selection weight.
 std::optional<std::size_t> selectMapCarparkVehicle(double occupancyPercent,
                                                    std::size_t candidateCount, int tileX, int tileY,
-                                                   int objectId) noexcept;
+                                                   int objectId,
+                                                   std::uint64_t placementSeed = 0) noexcept;
 
 // Places a spline-attachment row on its spline and subsequent linked splines in the same tile.
 // A repeater resumes the row at the encoded first-object index on its own spline.

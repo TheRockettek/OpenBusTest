@@ -1597,16 +1597,40 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                 queueApproach = &riderApproach->second;
                             }
                         }
+                        if (queueApproach == nullptr) {
+                            for (const auto& [approachVehicleKey, approaches] :
+                                 passengerQueueApproachProgress_) {
+                                (void)approachVehicleKey;
+                                const auto riderApproach =
+                                    approaches.find(passengers[passenger].modelIndex);
+                                if (riderApproach != approaches.end() &&
+                                    riderApproach->second.stopId == stopId &&
+                                    riderApproach->second.routeIndex == candidate.routeIndex &&
+                                    riderApproach->second.stopCallIndex == candidate.stopIndex) {
+                                    queueApproach = &riderApproach->second;
+                                    break;
+                                }
+                            }
+                        }
                         const bool hasSelectedApproach =
                             approach != passengerApproachProgress_.end() &&
                             approach->second.stopId == stopId &&
                             approach->second.modelIndex == passengers[passenger].modelIndex &&
                             approach->second.routeIndex == candidate.routeIndex &&
                             approach->second.stopCallIndex == candidate.stopIndex;
-                        if (activePlayerCall && queueApproach &&
-                            passengerNetwork_.passengerMatchesService(
-                                passengers[passenger], *activePlayerPassengerStopRouteIndex_,
-                                playerVehicle_->passengers->service, candidate.stopIndex)) {
+                        if (queueApproach && queueApproach->returningToSpawn) {
+                            const double duration = passengerApproachDuration(
+                                queueApproach->originPose, queueApproach->destinationPose);
+                            gaitWeight = queueApproach->elapsedSeconds < duration
+                                             ? 1.0
+                                             : waitingPassengerIdleGaitWeight;
+                            passengerPose = passengerApproachPose(queueApproach->originPose,
+                                                                  queueApproach->destinationPose,
+                                                                  queueApproach->elapsedSeconds);
+                        } else if (activePlayerCall && queueApproach &&
+                                   passengerNetwork_.passengerMatchesService(
+                                       passengers[passenger], *activePlayerPassengerStopRouteIndex_,
+                                       playerVehicle_->passengers->service, candidate.stopIndex)) {
                             const auto destination = playerPassengerDoorQueuePose(
                                 *playerVehicle_, chassis, mapRenderer_->leftHandTraffic(),
                                 queueSlot);
@@ -1817,6 +1841,20 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                         approach->second.ticketMachineReturnSeconds);
                                 }
                             }
+                        } else if (queueApproach && !activePlayerCall && !playerQueueApproach) {
+                            const auto& approachStart = queueApproach->posesInitialized
+                                                            ? queueApproach->originPose
+                                                            : *passengerPose;
+                            const auto& approachDestination = queueApproach->destinationPose;
+                            gaitWeight = queueApproach->elapsedSeconds <
+                                                 passengerQueueApproachDuration(
+                                                     queueApproach->roadApproach, approachStart,
+                                                     approachDestination)
+                                             ? 1.0
+                                             : waitingPassengerIdleGaitWeight;
+                            passengerPose = passengerQueueApproachPose(
+                                queueApproach->roadApproach, approachStart, approachDestination,
+                                queueApproach->elapsedSeconds);
                         }
                         const std::size_t modelIndex = passengers[passenger].modelIndex %
                                                        scheduledPassengerHumanModels_.size();
@@ -1951,214 +1989,203 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 popMatrix();
             }
         };
-        const auto drawBusPassengerActors =
-            [&](Vehicle& bus, const openbus::map::MapTrafficPose& busPose, std::size_t modelOffset,
-                const openbus::map::MapTrafficActor* routeActor, const Vehicle* routeVehicle,
-                const openbus::map::MapTrafficPassengerStop* boardingStop,
-                std::optional<openbus::map::MapTrafficPose> playerStopPose) {
-                if (mapRenderer_ == nullptr || !bus.passengers) {
-                    return;
-                }
-                auto& service = bus.passengers->service;
-                const auto cabinSections = passengerCabinSectionPoses(bus, busPose, true);
-                const bool canDrawPassengers =
-                    !scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_;
-                const double busCameraDistance =
-                    canDrawPassengers
-                        ? std::hypot(busPose.position[0] - lastMainCameraPose_.position[0],
-                                     busPose.position[1] - lastMainCameraPose_.position[1])
-                        : std::numeric_limits<double>::infinity();
-                const bool busInRange = canDrawPassengers && busCameraDistance <= 75.0;
-                openbus::rendering::ModelMaterial passengerLighting;
-                bus.applyPassengerInteriorLights(passengerLighting);
-                const auto* passengerLightingForBus =
-                    passengerLighting.useInteriorLight ? &passengerLighting : nullptr;
-                const std::size_t seatCount = service.seatCount();
-                const auto alightingSeat = service.alightingSeatIndex();
-                std::vector<std::size_t> alightingSeats;
-                if (alightingSeat) {
-                    alightingSeats.push_back(*alightingSeat);
-                }
-                alightingSeats.insert(alightingSeats.end(),
-                                      service.queuedAlightingSeatIndices().begin(),
-                                      service.queuedAlightingSeatIndices().end());
-                if (busInRange) {
-                    for (std::size_t seatIndex = 0; seatIndex < seatCount; ++seatIndex) {
-                        if (service.passengerCountOnSeat(seatIndex) == 0 ||
-                            std::ranges::find(alightingSeats, seatIndex) != alightingSeats.end()) {
-                            continue;
-                        }
-                        const std::size_t sectionIndex =
-                            bus.passengers->sectionIndexForSeat(seatIndex);
-                        const auto& sectionCabin =
-                            bus.passengers->sectionConfiguration(sectionIndex);
-                        const auto& seat = sectionCabin.passengerPositions.at(
-                            bus.passengers->localSeatIndex(seatIndex));
-                        const auto passengerPose = passengerCabinSeatPose(
-                            cabinSections.at(sectionIndex).pose, seat);
-                        const std::size_t modelIndex =
-                            service.passengerModelIndexOnSeat(seatIndex).value_or(modelOffset +
-                                                                                  seatIndex) %
-                            scheduledPassengerHumanModels_.size();
-                        mapRenderer_->drawHumanTrafficActor(
-                            scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0, 0.0,
-                            openbus::rendering::HumanSeatPose{
-                                seat.seatHeight, 1.0},
-                            passengerLightingForBus);
+        const auto drawBusPassengerActors = [&](Vehicle& bus,
+                                                const openbus::map::MapTrafficPose& busPose,
+                                                std::size_t modelOffset,
+                                                const openbus::map::MapTrafficActor* routeActor,
+                                                const Vehicle* routeVehicle,
+                                                const openbus::map::MapTrafficPassengerStop*
+                                                    boardingStop,
+                                                std::optional<openbus::map::MapTrafficPose>
+                                                    playerStopPose) {
+            if (mapRenderer_ == nullptr || !bus.passengers) {
+                return;
+            }
+            auto& service = bus.passengers->service;
+            const auto cabinSections = passengerCabinSectionPoses(bus, busPose, true);
+            const bool canDrawPassengers =
+                !scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_;
+            const double busCameraDistance =
+                canDrawPassengers
+                    ? std::hypot(busPose.position[0] - lastMainCameraPose_.position[0],
+                                 busPose.position[1] - lastMainCameraPose_.position[1])
+                    : std::numeric_limits<double>::infinity();
+            const bool busInRange = canDrawPassengers && busCameraDistance <= 75.0;
+            openbus::rendering::ModelMaterial passengerLighting;
+            bus.applyPassengerInteriorLights(passengerLighting);
+            const auto* passengerLightingForBus =
+                passengerLighting.useInteriorLight ? &passengerLighting : nullptr;
+            const std::size_t seatCount = service.seatCount();
+            const auto alightingSeat = service.alightingSeatIndex();
+            std::vector<std::size_t> alightingSeats;
+            if (alightingSeat) {
+                alightingSeats.push_back(*alightingSeat);
+            }
+            alightingSeats.insert(alightingSeats.end(),
+                                  service.queuedAlightingSeatIndices().begin(),
+                                  service.queuedAlightingSeatIndices().end());
+            if (busInRange) {
+                for (std::size_t seatIndex = 0; seatIndex < seatCount; ++seatIndex) {
+                    if (service.passengerCountOnSeat(seatIndex) == 0 ||
+                        std::ranges::find(alightingSeats, seatIndex) != alightingSeats.end()) {
+                        continue;
                     }
+                    const std::size_t sectionIndex = bus.passengers->sectionIndexForSeat(seatIndex);
+                    const auto& sectionCabin = bus.passengers->sectionConfiguration(sectionIndex);
+                    const auto& seat = sectionCabin.passengerPositions.at(
+                        bus.passengers->localSeatIndex(seatIndex));
+                    const auto passengerPose =
+                        passengerCabinSeatPose(cabinSections.at(sectionIndex).pose, seat);
+                    const std::size_t modelIndex =
+                        service.passengerModelIndexOnSeat(seatIndex).value_or(modelOffset +
+                                                                              seatIndex) %
+                        scheduledPassengerHumanModels_.size();
+                    mapRenderer_->drawHumanTrafficActor(
+                        scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0, 0.0,
+                        openbus::rendering::HumanSeatPose{seat.seatHeight, 1.0},
+                        passengerLightingForBus);
                 }
-                if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId) {
-                    return;
+            }
+            if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId) {
+                return;
+            }
+            auto stopPose = routeActor
+                                ? openbus::map::sampleMapTrafficRoute(
+                                      routeActor->route, boardingStop->routeDistanceMeters, 0.0)
+                                : playerStopPose;
+            if (!stopPose) {
+                throw std::runtime_error("Cannot sample a bus passenger boarding pose");
+            }
+            if (!routeActor) {
+                if (const auto editorPosition =
+                        mapRenderer_->editorOnlyBusStopPosition(boardingStop->stopId)) {
+                    stopPose->position = *editorPosition;
                 }
-                auto stopPose = routeActor
-                                    ? openbus::map::sampleMapTrafficRoute(
-                                          routeActor->route, boardingStop->routeDistanceMeters, 0.0)
-                                    : playerStopPose;
-                if (!stopPose) {
-                    throw std::runtime_error("Cannot sample a bus passenger boarding pose");
+            }
+            const double stopCameraDistance =
+                canDrawPassengers
+                    ? std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
+                                 stopPose->position[1] - lastMainCameraPose_.position[1])
+                    : std::numeric_limits<double>::infinity();
+            const bool stopInRange = busInRange && stopCameraDistance <= 75.0;
+            const double laneOffset =
+                routeVehicle == &bus && routeActor ? routeActor->lateralOffsetMeters : 0.0;
+            const double vehicleWidth = routeVehicle == &bus && routeActor ? routeActor->widthMeters
+                                                                           : bus.trafficWidthMeters;
+            const auto curbPose = [&] {
+                return passengerCurbPose(*stopPose, mapRenderer_->leftHandTraffic(), laneOffset,
+                                         vehicleWidth);
+            };
+            const auto queuePoseForPassenger = [&](std::size_t seatIndex) {
+                const auto initialQueue =
+                    passengerNetwork_.initialQueues.find(boardingStop->stopId);
+                const std::size_t initialCount =
+                    initialQueue == passengerNetwork_.initialQueues.end() ? 0
+                                                                          : initialQueue->second;
+                const auto queueSlot =
+                    service.boardingPassengerQueueSlotForSeat(seatIndex, initialCount);
+                if (!queueSlot) {
+                    throw std::logic_error("Boarding passenger has no reserved queue slot");
                 }
-                if (!routeActor) {
-                    if (const auto editorPosition =
-                            mapRenderer_->editorOnlyBusStopPosition(boardingStop->stopId)) {
-                        stopPose->position = *editorPosition;
-                    }
+                if (&bus == playerVehicle_) {
+                    return playerPassengerDoorQueuePose(
+                        bus, chassis, mapRenderer_->leftHandTraffic(), *queueSlot);
                 }
-                const double stopCameraDistance =
-                    canDrawPassengers
-                        ? std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
-                                     stopPose->position[1] - lastMainCameraPose_.position[1])
-                        : std::numeric_limits<double>::infinity();
-                const bool stopInRange = busInRange && stopCameraDistance <= 75.0;
-                const double laneOffset =
-                    routeVehicle == &bus && routeActor ? routeActor->lateralOffsetMeters : 0.0;
-                const double vehicleWidth = routeVehicle == &bus && routeActor
-                                                ? routeActor->widthMeters
-                                                : bus.trafficWidthMeters;
-                const auto curbPose = [&] {
-                    return passengerCurbPose(*stopPose, mapRenderer_->leftHandTraffic(), laneOffset,
-                                             vehicleWidth);
-                };
-                const auto queuePoseForPassenger = [&](std::size_t seatIndex) {
-                    const auto initialQueue =
-                        passengerNetwork_.initialQueues.find(boardingStop->stopId);
-                    const std::size_t initialCount =
-                        initialQueue == passengerNetwork_.initialQueues.end()
-                            ? 0
-                            : initialQueue->second;
-                    const auto queueSlot =
-                        service.boardingPassengerQueueSlotForSeat(seatIndex, initialCount);
-                    if (!queueSlot) {
-                        throw std::logic_error("Boarding passenger has no reserved queue slot");
+                return queuePose(boardingStop->stopId, *queueSlot).value_or(curbPose());
+            };
+            const auto drawPassengerBetweenPoses = [&](const PassengerCabinTravelPathData& path,
+                                                       double progress, double startHeading,
+                                                       double endHeading, std::size_t modelIndex,
+                                                       double seatHeight, bool boarding) {
+                const bool hasSeat = seatHeight > 0.0;
+                const auto transition = passengerSeatTransition(progress, boarding, hasSeat);
+                if (stopInRange) {
+                    const auto passengerPose = samplePassengerTravelPath(
+                        path.positions, transition.pathProgress, startHeading, endHeading);
+                    double pathLength = 0.0;
+                    for (std::size_t index = 1; index < path.positions.size(); ++index) {
+                        pathLength +=
+                            std::hypot(path.positions[index][0] - path.positions[index - 1][0],
+                                       path.positions[index][1] - path.positions[index - 1][1],
+                                       path.positions[index][2] - path.positions[index - 1][2]);
                     }
-                    if (&bus == playerVehicle_) {
-                        return playerPassengerDoorQueuePose(
-                            bus, chassis, mapRenderer_->leftHandTraffic(), *queueSlot);
-                    }
-                    return queuePose(boardingStop->stopId, *queueSlot).value_or(curbPose());
-                };
-                const auto drawPassengerBetweenPoses = [&](const PassengerCabinTravelPathData& path,
-                                                           double progress, double startHeading,
-                                                           double endHeading,
-                                                           std::size_t modelIndex,
-                                                           double seatHeight, bool boarding) {
-                    const bool hasSeat = seatHeight > 0.0;
-                    const auto transition = passengerSeatTransition(progress, boarding, hasSeat);
-                    if (stopInRange) {
-                        const auto passengerPose = samplePassengerTravelPath(
-                            path.positions, transition.pathProgress, startHeading, endHeading);
-                        double pathLength = 0.0;
-                        for (std::size_t index = 1; index < path.positions.size(); ++index) {
-                            pathLength +=
-                                std::hypot(path.positions[index][0] - path.positions[index - 1][0],
-                                           path.positions[index][1] - path.positions[index - 1][1],
-                                           path.positions[index][2] - path.positions[index - 1][2]);
-                        }
-                        const double gaitPhase = openbus::app::passengerWalkingGaitPhase(
-                            pathLength * transition.pathProgress /
-                            openbus::app::passengerApproachSpeedMetersPerSecond);
-                        const double insideFraction =
-                            boarding ? transition.pathProgress : 1.0 - transition.pathProgress;
-                        mapRenderer_->drawHumanTrafficActor(
-                            scheduledPassengerHumanModels_[modelIndex], passengerPose, gaitPhase,
-                            1.0 - transition.seatedFraction,
-                            openbus::rendering::HumanSeatPose{seatHeight,
-                                                              transition.seatedFraction},
-                            insideFraction >= 0.5 ? passengerLightingForBus : nullptr);
-                    }
-                };
-                for (const std::size_t seat : alightingSeats) {
-                    if (seat < service.seatCount()) {
-                        const std::size_t sectionIndex =
-                            bus.passengers->sectionIndexForSeat(seat);
-                        const auto& sectionCabin =
-                            bus.passengers->sectionConfiguration(sectionIndex);
-                        const auto& position = sectionCabin.passengerPositions.at(
-                            bus.passengers->localSeatIndex(seat));
-                        const auto sectionPose = cabinSections.at(sectionIndex).pose;
-                        const auto seatPose = passengerCabinSeatPose(sectionPose, position);
-                        const auto exitDoor = bus.passengers->exitDoorForSeat(seat);
-                        const Vehicle* sectionVehicle =
-                            bus.passengers->sectionVehicle(sectionIndex);
-                        if (sectionVehicle == nullptr) {
-                            throw std::logic_error(
-                                "Alighting passenger has no owning vehicle section");
-                        }
-                        const auto outsidePose = passengerConfiguredDoorQueuePose(
-                                                     *sectionVehicle, sectionPose,
-                                                     mapRenderer_->leftHandTraffic(),
-                                                     sectionCabin.passengerExitPathPoints, exitDoor, 0)
-                                                     .value_or(curbPose());
-                        PassengerCabinTravelPathData path = passengerCabinTravelPath(
-                            cabinSections, sectionIndex, seatPose.position, sectionIndex,
-                            passengerCabinLocalPoint(sectionPose, outsidePose.position), false,
-                            sectionIndex, exitDoor);
-                        if (path.positions.empty()) {
-                            path.positions = {seatPose.position, outsidePose.position};
-                            path.segmentLinkIndices = {std::nullopt};
-                        }
-                        const std::size_t modelIndex =
-                            scheduledPassengerHumanModels_.empty()
-                                ? 0
-                                : service.passengerModelIndexOnSeat(seat).value_or(modelOffset +
-                                                                                   seat) %
-                                      scheduledPassengerHumanModels_.size();
-                        drawPassengerBetweenPoses(path, service.alightingProgressForSeat(seat),
-                                                  seatPose.headingRadians,
-                                                  outsidePose.headingRadians, modelIndex,
-                                                  position.seatHeight, false);
-                    }
+                    const double gaitPhase = openbus::app::passengerWalkingGaitPhase(
+                        pathLength * transition.pathProgress /
+                        openbus::app::passengerApproachSpeedMetersPerSecond);
+                    const double insideFraction =
+                        boarding ? transition.pathProgress : 1.0 - transition.pathProgress;
+                    mapRenderer_->drawHumanTrafficActor(
+                        scheduledPassengerHumanModels_[modelIndex], passengerPose, gaitPhase,
+                        1.0 - transition.seatedFraction,
+                        openbus::rendering::HumanSeatPose{seatHeight, transition.seatedFraction},
+                        insideFraction >= 0.5 ? passengerLightingForBus : nullptr);
                 }
-                for (const auto& boarding : service.boardingPassengers()) {
-                    if (boarding.seatIndex >= service.seatCount()) {
-                        throw std::logic_error("Boarding passenger has no configured seat");
+            };
+            for (const std::size_t seat : alightingSeats) {
+                if (seat < service.seatCount()) {
+                    const std::size_t sectionIndex = bus.passengers->sectionIndexForSeat(seat);
+                    const auto& sectionCabin = bus.passengers->sectionConfiguration(sectionIndex);
+                    const auto& position =
+                        sectionCabin.passengerPositions.at(bus.passengers->localSeatIndex(seat));
+                    const auto sectionPose = cabinSections.at(sectionIndex).pose;
+                    const auto seatPose = passengerCabinSeatPose(sectionPose, position);
+                    const auto exitDoor = bus.passengers->exitDoorForSeat(seat);
+                    const Vehicle* sectionVehicle = bus.passengers->sectionVehicle(sectionIndex);
+                    if (sectionVehicle == nullptr) {
+                        throw std::logic_error("Alighting passenger has no owning vehicle section");
                     }
-                    const std::size_t sectionIndex =
-                        bus.passengers->sectionIndexForSeat(boarding.seatIndex);
-                    const auto& sectionCabin =
-                        bus.passengers->sectionConfiguration(sectionIndex);
-                    const auto& position = sectionCabin.passengerPositions.at(
-                        bus.passengers->localSeatIndex(boarding.seatIndex));
-                    const auto seatPose =
-                        passengerCabinSeatPose(cabinSections.at(sectionIndex).pose, position);
-                    const auto outsidePose = queuePoseForPassenger(boarding.seatIndex);
+                    const auto outsidePose =
+                        passengerConfiguredDoorQueuePose(
+                            *sectionVehicle, sectionPose, mapRenderer_->leftHandTraffic(),
+                            sectionCabin.passengerExitPathPoints, exitDoor, 0)
+                            .value_or(curbPose());
                     PassengerCabinTravelPathData path = passengerCabinTravelPath(
-                        cabinSections, 0, outsidePose.position, sectionIndex,
-                        passengerCabinStandingPoint(position.position, position.seatHeight), true,
-                        0, bus.passengers->entryDoor());
+                        cabinSections, sectionIndex, seatPose.position, sectionIndex,
+                        passengerCabinLocalPoint(sectionPose, outsidePose.position), false,
+                        sectionIndex, exitDoor);
                     if (path.positions.empty()) {
-                        path.positions = {outsidePose.position, curbPose().position,
-                                          seatPose.position};
-                        path.segmentLinkIndices = {std::nullopt, std::nullopt};
+                        path.positions = {seatPose.position, outsidePose.position};
+                        path.segmentLinkIndices = {std::nullopt};
                     }
                     const std::size_t modelIndex =
                         scheduledPassengerHumanModels_.empty()
                             ? 0
-                            : boarding.modelIndex % scheduledPassengerHumanModels_.size();
-                    drawPassengerBetweenPoses(path, boarding.progress, outsidePose.headingRadians,
-                                              seatPose.headingRadians, modelIndex,
-                                              position.seatHeight, true);
+                            : service.passengerModelIndexOnSeat(seat).value_or(modelOffset + seat) %
+                                  scheduledPassengerHumanModels_.size();
+                    drawPassengerBetweenPoses(path, service.alightingProgressForSeat(seat),
+                                              seatPose.headingRadians, outsidePose.headingRadians,
+                                              modelIndex, position.seatHeight, false);
                 }
-            };
+            }
+            for (const auto& boarding : service.boardingPassengers()) {
+                if (boarding.seatIndex >= service.seatCount()) {
+                    throw std::logic_error("Boarding passenger has no configured seat");
+                }
+                const std::size_t sectionIndex =
+                    bus.passengers->sectionIndexForSeat(boarding.seatIndex);
+                const auto& sectionCabin = bus.passengers->sectionConfiguration(sectionIndex);
+                const auto& position = sectionCabin.passengerPositions.at(
+                    bus.passengers->localSeatIndex(boarding.seatIndex));
+                const auto seatPose =
+                    passengerCabinSeatPose(cabinSections.at(sectionIndex).pose, position);
+                const auto outsidePose = queuePoseForPassenger(boarding.seatIndex);
+                PassengerCabinTravelPathData path = passengerCabinTravelPath(
+                    cabinSections, 0, outsidePose.position, sectionIndex,
+                    passengerCabinStandingPoint(position.position, position.seatHeight), true, 0,
+                    bus.passengers->entryDoor());
+                if (path.positions.empty()) {
+                    path.positions = {outsidePose.position, curbPose().position, seatPose.position};
+                    path.segmentLinkIndices = {std::nullopt, std::nullopt};
+                }
+                const std::size_t modelIndex =
+                    scheduledPassengerHumanModels_.empty()
+                        ? 0
+                        : boarding.modelIndex % scheduledPassengerHumanModels_.size();
+                drawPassengerBetweenPoses(path, boarding.progress, outsidePose.headingRadians,
+                                          seatPose.headingRadians, modelIndex, position.seatHeight,
+                                          true);
+            }
+        };
         const auto drawTypeFourScenery = [&]() {
             if (mapRenderer_ == nullptr || renderingReflection_) {
                 return;
@@ -3700,6 +3727,34 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 }
                 drawWorldLabel(labelPosition, label, IM_COL32(255, 255, 255, 255),
                                IM_COL32(22, 100, 45, 230));
+                for (const auto& passenger : waitingPassengers) {
+                    if (!passenger.journey) {
+                        continue;
+                    }
+                    const auto passengerPose =
+                        renderedWaitingPassengerPoses.find({stopId, passenger.modelIndex});
+                    const auto worldPose = passengerPose != renderedWaitingPassengerPoses.end()
+                                               ? std::optional{passengerPose->second}
+                                               : passengerQueuePose(stopId, passenger);
+                    if (!worldPose) {
+                        continue;
+                    }
+                    const PassengerStopRouteState& route =
+                        passengerNetwork_.routes.at(passenger.journey->routeIndex);
+                    const std::string& line =
+                        route.lineName.empty() ? route.timetableKey : route.lineName;
+                    const std::string serviceName = line.empty() ? "unknown" : line;
+                    const std::string destination =
+                        route.destinationName.empty()
+                            ? "stop " + std::to_string(passenger.journey->destinationStopId)
+                            : route.destinationName;
+                    std::array<double, 3> passengerLabelPosition = worldPose->position;
+                    passengerLabelPosition[2] += 1.9;
+                    const std::string passengerLabel = "P" + std::to_string(passenger.modelIndex) +
+                                                       " " + serviceName + " -> " + destination;
+                    drawWorldLabel(passengerLabelPosition, passengerLabel,
+                                   IM_COL32(255, 255, 255, 255), IM_COL32(26, 55, 110, 230));
+                }
             }
             for (const auto* object : activeEditorPassengerObjects) {
                 std::array<double, 3> labelPosition = {};

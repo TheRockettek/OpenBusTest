@@ -472,6 +472,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         if (!needsUpload && !wrapChanged) {
             return texture.texture;
         }
+        TraceScope uploadTrace("texture", textTexture ? "MapRenderer::uploadTextTexture"
+                                                      : "MapRenderer::uploadScriptTexture");
         if (needsUpload) {
             const std::size_t expectedBytes = static_cast<std::size_t>(snapshot.width) *
                                               static_cast<std::size_t>(snapshot.height) * 4U;

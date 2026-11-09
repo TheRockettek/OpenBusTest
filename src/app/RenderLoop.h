@@ -619,6 +619,7 @@ class RenderLoop {
         openbus::map::MapTrafficPose originPose;
         openbus::map::MapTrafficPose destinationPose;
         bool posesInitialized = false;
+        bool returningToSpawn = false;
     };
     std::unordered_map<Vehicle*, std::unordered_map<std::size_t, PassengerQueueApproachProgress>>
         passengerQueueApproachProgress_;

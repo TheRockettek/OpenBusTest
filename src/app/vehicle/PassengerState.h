@@ -105,8 +105,7 @@ struct PassengerState {
     [[nodiscard]] std::size_t exitSectionIndexForSeat(std::size_t seatIndex) const {
         return sectionIndexForSeat(seatIndex);
     }
-    [[nodiscard]] std::optional<std::size_t>
-    entryDoorForSection(std::size_t sectionIndex) const {
+    [[nodiscard]] std::optional<std::size_t> entryDoorForSection(std::size_t sectionIndex) const {
         return sectionConfiguration(sectionIndex).passengerEntryPathPoints.empty()
                    ? std::nullopt
                    : std::optional<std::size_t>{0};

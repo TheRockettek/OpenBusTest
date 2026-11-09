@@ -147,9 +147,10 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     {
         TraceScope submit("render", "Vehicle::drawBatch.submit");
         if (materialBatch) {
-            drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
-                              *materialTextureIds, batch.materialTextureFlips,
-                              transparentIndexBuffer, visibilityFade);
+            drawMaterialBatch(
+                batch.buffer, batch.vertexCount, batch.materialColors, *materialTextureIds,
+                batch.materialTextureFlips, transparentIndexBuffer, visibilityFade,
+                batch.textTextureIndex >= 0 ? batch.freeTexture : 0, batch.textTextureIndex >= 0);
         } else if (transparentIndexBuffer != 0) {
             openbus::rendering::drawIndexedModelBatch(
                 batch.buffer, transparentIndexBuffer, batch.vertexCount, material, color, alpha,

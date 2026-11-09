@@ -81,6 +81,7 @@ struct ReflectionRenderer::Impl {
         if (target.width == size && target.height == size) {
             return;
         }
+        TraceScope trace("texture", "ReflectionRenderer::resizeTarget");
         target.width = size;
         target.height = size;
 

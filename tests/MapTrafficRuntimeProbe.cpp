@@ -1365,12 +1365,10 @@ void verifyPassengerServiceBehavior() {
         const auto strictStart = sampleMapTrafficRoute(
             *strictJourney->route, strictJourney->startDistanceMeters, 0.0);
         require(strictStart.has_value(), "strict alternate-route start can be sampled");
-        MapTrafficPose alternateBusPose;
-        alternateBusPose.position = {5.0, 0.0, 2.0};
         require(openbus::app::makePassengerPedestrianHandoff(
-                    *strictJourney, *strictStart, alternateBusPose, false, 22)
+                    *strictJourney, *strictStart, 22)
                     .has_value(),
-                "alternate route passes the existing conservative curb-side handoff checks");
+                "a nearby passenger spline accepts the alighter");
         require(!destinationLanes.passengerJourneyBetween(
                     {9910, 9911}, {5.0, 0.0, 2.0}, {15.0, 10.0, 2.0}, 4, 0.5, 50.0),
                 "strict handoff lookup rejects a connector outside its safety limit");
@@ -1380,14 +1378,11 @@ void verifyPassengerServiceBehavior() {
         const auto laneStart = sampleMapTrafficRoute(*journey->route, journey->startDistanceMeters, 0.0);
         require(laneStart.has_value(), "pedestrian handoff start can be sampled");
         const auto side = mapTrafficPassengerWorldOffset(false, 0.0, 1.0, 0.0);
-        MapTrafficPose busPose = *laneStart;
         MapTrafficPose exitPose = *laneStart;
         for (std::size_t axis = 0; axis < 2; ++axis) {
-            busPose.position[axis] -= 2.0 * side[axis];
             exitPose.position[axis] -= 0.25 * side[axis];
         }
-        auto handoff = openbus::app::makePassengerPedestrianHandoff(*journey, exitPose, busPose,
-                                                                    false, 17);
+        auto handoff = openbus::app::makePassengerPedestrianHandoff(*journey, exitPose, 17);
         require(handoff && handoff->modelIndex == 17,
                 "nearby forward pedestrian route accepts the alighter and preserves its model");
         const auto initialPose = openbus::app::passengerPedestrianHandoffPose(*handoff);
@@ -1408,37 +1403,38 @@ void verifyPassengerServiceBehavior() {
         const auto fartherLanePose = sampleMapTrafficRoute(
             *longJourney->route, longJourney->startDistanceMeters + 30.0, 0.0);
         require(fartherLanePose.has_value(), "farther handoff point can be sampled");
-        auto fartherBusPose = *fartherLanePose;
         auto fartherExitPose = *fartherLanePose;
         for (std::size_t axis = 0; axis < 2; ++axis) {
-            fartherBusPose.position[axis] -= 2.0 * side[axis];
             fartherExitPose.position[axis] -= 0.25 * side[axis];
         }
         require(openbus::app::makePassengerPedestrianHandoff(
-                    *longJourney, fartherExitPose, fartherBusPose, false, 18)
+                    *longJourney, fartherExitPose, 18)
                     .has_value(),
                 "handoff can use a farther point along the assigned sidewalk route");
         auto unsafeExit = exitPose;
         unsafeExit.position[2] += 1.0;
-        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
-                                                               false, 17),
+        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, 17),
                 "handoff rejects vertically separated paths");
         unsafeExit = exitPose;
         for (std::size_t axis = 0; axis < 2; ++axis) {
-            unsafeExit.position[axis] += side[axis] * 0.75;
+            unsafeExit.position[axis] += side[axis] * 2.5;
         }
-        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
-                                                               false, 17),
-                "handoff rejects connectors toward the bus");
+        require(openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, 17)
+                    .has_value(),
+                "handoff accepts the nearest passenger spline within three metres");
+        unsafeExit = exitPose;
+        for (std::size_t axis = 0; axis < 2; ++axis) {
+            unsafeExit.position[axis] += side[axis] * 3.5;
+        }
+        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, 17),
+                "handoff rejects passenger splines farther than three metres");
         unsafeExit = exitPose;
         unsafeExit.position[1] += 40.0;
-        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, busPose,
-                                                               false, 17),
+        require(!openbus::app::makePassengerPedestrianHandoff(*journey, unsafeExit, 17),
                 "handoff rejects distant paths and points beyond the destination");
         auto missingRoute = *journey;
         missingRoute.route.reset();
-        require(!openbus::app::makePassengerPedestrianHandoff(missingRoute, exitPose, busPose,
-                                                               false, 17),
+        require(!openbus::app::makePassengerPedestrianHandoff(missingRoute, exitPose, 17),
                 "missing pedestrian routes do not create a handoff");
         MapPassengerServiceRuntime loadingService(1);
         require(loadingService.arrive({.stopId = 100, .waitingPassengers = 1,
@@ -2183,6 +2179,25 @@ void verifyPassengerServiceBehavior() {
         const auto seat = openbus::app::passengerCabinSeatPose(bus, cabin.passengerPositions[0]);
         const auto seatLocal = openbus::app::passengerCabinStandingPoint(
             cabin.passengerPositions[0].position, cabin.passengerPositions[0].seatHeight);
+        auto tiltedBus = bus;
+        tiltedBus.pitchRadians = 0.1;
+        tiltedBus.rollRadians = -0.05;
+        const auto tiltedWorldPoint =
+            openbus::app::passengerCabinWorldPoint(tiltedBus, cabin.passengerPositions[0].position);
+        const auto recoveredLocalPoint =
+            openbus::app::passengerCabinLocalPoint(tiltedBus, tiltedWorldPoint);
+        for (std::size_t axis = 0; axis < recoveredLocalPoint.size(); ++axis) {
+            requireNear(recoveredLocalPoint[axis], cabin.passengerPositions[0].position[axis],
+                        "tilted cabin point transforms round-trip through world coordinates");
+        }
+        const auto tiltedSeat =
+            openbus::app::passengerCabinSeatPose(tiltedBus, cabin.passengerPositions[0]);
+        const auto expectedTiltedSeatPosition =
+            openbus::app::passengerCabinWorldPoint(tiltedBus, seatLocal);
+        requireNear(tiltedSeat.position[2], expectedTiltedSeatPosition[2],
+                    "seated passengers follow pitch and roll in the cabin");
+        require(std::abs(tiltedSeat.position[2] - seat.position[2]) > 0.1,
+                "vehicle pitch changes seat world height along the cabin");
         const openbus::app::PassengerCabinTravelPathData directPath;
         requireNear(openbus::app::passengerCabinTravelDuration(
                         directPath, {0.0, 0.0, 0.0}, {0.0, 14.0, 0.0}, false),
@@ -2989,7 +3004,7 @@ void verifyIntegratedPassengerJourney() {
             "integrated rider leaves the bus at the assigned destination");
 
     auto handoff = openbus::app::makePassengerPedestrianHandoff(
-        *pedestrian, exitPose, busPose, false, *seatedModelIndex);
+        *pedestrian, exitPose, *seatedModelIndex);
     require(handoff && !openbus::app::advancePassengerPedestrianHandoff(*handoff, 100.0),
             "the alighted rider completes the directed pedestrian handoff");
 }

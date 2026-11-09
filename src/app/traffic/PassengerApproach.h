@@ -350,23 +350,18 @@ struct PassengerPedestrianHandoff {
 inline std::optional<PassengerPedestrianHandoff>
 makePassengerPedestrianHandoff(const openbus::map::MapPassengerPedestrianJourney& journey,
                                const openbus::map::MapTrafficPose& exitPose,
-                               const openbus::map::MapTrafficPose& busPose, bool leftHandTraffic,
                                std::size_t modelIndex) {
     if (!journey.route || journey.destinationDistanceMeters <= journey.startDistanceMeters) {
         return std::nullopt;
     }
     constexpr double backwardSearchRangeMeters = 25.0;
-    constexpr double maximumConnectorMeters = 0.5;
+    constexpr double maximumConnectorMeters = 3.0;
     const double first = std::max(0.0, journey.startDistanceMeters - backwardSearchRangeMeters);
     const double last =
         std::min(journey.destinationDistanceMeters - 0.01, journey.route->totalLength);
     if (last < first) {
         return std::nullopt;
     }
-    const auto side = openbus::map::mapTrafficPassengerWorldOffset(
-        leftHandTraffic, busPose.headingRadians, 1.0, 0.0);
-    const double exitLateral = (exitPose.position[0] - busPose.position[0]) * side[0] +
-                               (exitPose.position[1] - busPose.position[1]) * side[1];
     std::optional<double> nearest;
     double nearestDistance = maximumConnectorMeters;
     const std::size_t samples =
@@ -378,12 +373,9 @@ makePassengerPedestrianHandoff(const openbus::map::MapPassengerPedestrianJourney
         if (!pose) {
             throw std::runtime_error("Cannot sample passenger pedestrian handoff route");
         }
-        const double lateral = (pose->position[0] - busPose.position[0]) * side[0] +
-                               (pose->position[1] - busPose.position[1]) * side[1];
         const double separation = std::hypot(pose->position[0] - exitPose.position[0],
                                              pose->position[1] - exitPose.position[1]);
-        if (lateral >= exitLateral - 0.05 &&
-            std::abs(pose->position[2] - exitPose.position[2]) <= 0.5 &&
+        if (std::abs(pose->position[2] - exitPose.position[2]) <= 0.5 &&
             separation <= nearestDistance) {
             nearest = distance;
             nearestDistance = separation;

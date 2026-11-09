@@ -476,11 +476,14 @@ bool MapRenderer::humanTrafficLaneNetworkReady() const noexcept {
 
 std::optional<openbus::map::MapPassengerPedestrianJourney>
 MapRenderer::passengerPedestrianJourneyNear(const std::array<double, 3>& stopPosition,
-                                            std::size_t seed) const {
+                                            std::size_t seed, double maximumDistanceMeters) const {
     if (!humanTrafficLaneNetworkReady()) {
         throw std::logic_error("Pedestrian lane network is not ready");
     }
-    constexpr double radius = 25.0;
+    if (!std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0) {
+        throw std::invalid_argument("Pedestrian lane search radius is invalid");
+    }
+    const double radius = maximumDistanceMeters;
     const int minX =
         openbus::map::mapWorldTile(stopPosition[0] - radius, impl_->coordinates.tileSize);
     const int maxX =

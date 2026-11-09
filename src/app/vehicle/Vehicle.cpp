@@ -22,18 +22,17 @@ void Vehicle::attachPassengerServiceSection(Vehicle& section) {
         throw std::logic_error("Articulated passenger sections require loaded vehicle definitions");
     }
     if (!passengers) {
-        passengers =
-            openbus::app::vehicle::makePassengerState(sharedDefinition, true);
+        passengers = openbus::app::vehicle::makePassengerState(sharedDefinition, true);
         passengers->bindSectionVehicle(0, this);
     }
-    for (std::size_t sectionIndex = 1; sectionIndex < passengers->sections.size();
-         ++sectionIndex) {
+    for (std::size_t sectionIndex = 1; sectionIndex < passengers->sections.size(); ++sectionIndex) {
         const auto& existingSection = passengers->sections[sectionIndex];
         if (existingSection.definition->cacheKey != section.sharedDefinition->cacheKey) {
             continue;
         }
         if (existingSection.vehicle != nullptr && existingSection.vehicle != &section) {
-            throw std::logic_error("Passenger cabin section is already attached to another vehicle");
+            throw std::logic_error(
+                "Passenger cabin section is already attached to another vehicle");
         }
         passengers->bindSectionVehicle(sectionIndex, &section);
         section.passengers = passengers;
@@ -50,8 +49,7 @@ void Vehicle::detachPassengerServiceSection(Vehicle& section) {
     if (!passengers || passengers != section.passengers) {
         return;
     }
-    for (std::size_t sectionIndex = 1; sectionIndex < passengers->sections.size();
-         ++sectionIndex) {
+    for (std::size_t sectionIndex = 1; sectionIndex < passengers->sections.size(); ++sectionIndex) {
         if (passengers->sectionVehicle(sectionIndex) == &section) {
             passengers->bindSectionVehicle(sectionIndex, nullptr);
         }
@@ -70,11 +68,10 @@ void Vehicle::updateScripts(bool isAiVehicle) {
         TraceScope passengerVariables("script", "Vehicle::updateScripts.passengerVariables");
         const auto& cabin = passengers->sectionConfiguration(passengerCabinSectionIndex);
         const auto& cabinSection = passengers->sections.at(passengerCabinSectionIndex);
-        for (std::size_t localSeatIndex = 0;
-             localSeatIndex < cabin.passengerPositions.size(); ++localSeatIndex) {
+        for (std::size_t localSeatIndex = 0; localSeatIndex < cabin.passengerPositions.size();
+             ++localSeatIndex) {
             const std::size_t seatIndex = cabinSection.firstSeatIndex + localSeatIndex;
-            const std::size_t passengerCount =
-                passengers->service.passengerCountOnSeat(seatIndex);
+            const std::size_t passengerCount = passengers->service.passengerCountOnSeat(seatIndex);
             variables.set("human_count_on_seat_" + std::to_string(localSeatIndex),
                           static_cast<float>(passengerCount));
         }
@@ -90,9 +87,8 @@ void Vehicle::updateScripts(bool isAiVehicle) {
         variables.set("humans_count", onboardPassengerCount);
         const auto activeAlightingSeat = passengers->service.alightingSeatIndex();
         const auto sectionExitDoor =
-            activeAlightingSeat &&
-                    passengers->exitSectionIndexForSeat(*activeAlightingSeat) ==
-                        passengerCabinSectionIndex
+            activeAlightingSeat && passengers->exitSectionIndexForSeat(*activeAlightingSeat) ==
+                                       passengerCabinSectionIndex
                 ? passengers->exitDoorForSeat(*activeAlightingSeat)
                 : std::nullopt;
         requests = openbus::app::vehicle::passengerServiceRequestVariables(

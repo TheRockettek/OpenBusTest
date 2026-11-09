@@ -940,6 +940,8 @@ in vec3 vViewPosition;
 uniform vec4 uMaterialColors[128];
 uniform sampler2D uMaterialTextures[8];
 uniform bool uFlipTextureY[8];
+uniform sampler2D uTextTexture;
+uniform bool uUseTextTexture;
 uniform vec3 uLightDirection;
 uniform float uAmbientLight;
 uniform float uDiffuseLight;
@@ -953,7 +955,12 @@ void main() {
                             ? vec2(vTexCoord.x, 1.0 - vTexCoord.y)
                             : vTexCoord.xy;
     vec4 color = uMaterialColors[materialIndex];
-    if (textureIndex == 0) {
+    if (uUseTextTexture) {
+        color *= texture(uTextTexture, vTexCoord.xy);
+        if (color.a <= 0.01) {
+            discard;
+        }
+    } else if (textureIndex == 0) {
         color *= texture(uMaterialTextures[0], textureCoord);
     } else if (textureIndex == 1) {
         color *= texture(uMaterialTextures[1], textureCoord);
@@ -1452,6 +1459,8 @@ Uniforms materialUniformsFor(GLuint program) {
         uniforms.materialTextures[index] = pglGetUniformLocation(
             program, ("uMaterialTextures[" + std::to_string(index) + "]").c_str());
     }
+    uniforms.textTexture = pglGetUniformLocation(program, "uTextTexture");
+    uniforms.useTextTexture = pglGetUniformLocation(program, "uUseTextTexture");
     return uniforms;
 }
 
@@ -1851,6 +1860,7 @@ bool initializeCoreRenderer() {
         for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
             pglUniform1i(materialUniforms.materialTextures[index], static_cast<GLint>(index));
         }
+        pglUniform1i(materialUniforms.textTexture, 8);
         useProgram(environmentProgram);
         pglUniform1i(environmentUniforms.environment, 0);
         useProgram(primitiveProgram);
@@ -2119,26 +2129,29 @@ void setMapLights(const std::vector<MapPointLight>& lights, double strength) {
             throw std::invalid_argument("Invalid map light");
         }
     }
-    GpuMapLightData gpuLights;
-    for (std::size_t index = 0; index < lights.size(); ++index) {
-        const MapPointLight& light = lights[index];
-        gpuLights.positionRadius[index] = {
-            static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
-            static_cast<float>(light.position[2]), static_cast<float>(light.radius)};
-        gpuLights.color[index] = {static_cast<float>(light.color[0]),
-                                  static_cast<float>(light.color[1]),
-                                  static_cast<float>(light.color[2]), 0.0F};
+    const std::size_t activeLightCount = strength > 0.0 ? lights.size() : 0;
+    if (activeLightCount > 0) {
+        GpuMapLightData gpuLights;
+        for (std::size_t index = 0; index < activeLightCount; ++index) {
+            const MapPointLight& light = lights[index];
+            gpuLights.positionRadius[index] = {
+                static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
+                static_cast<float>(light.position[2]), static_cast<float>(light.radius)};
+            gpuLights.color[index] = {static_cast<float>(light.color[0]),
+                                      static_cast<float>(light.color[1]),
+                                      static_cast<float>(light.color[2]), 0.0F};
+        }
+        pglBindBuffer(GL_UNIFORM_BUFFER, mapLightBuffer);
+        pglBufferData(GL_UNIFORM_BUFFER, sizeof(gpuLights), &gpuLights, GL_DYNAMIC_DRAW);
+        pglBindBufferBase(GL_UNIFORM_BUFFER, mapLightBinding, mapLightBuffer);
+        pglBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
-    pglBindBuffer(GL_UNIFORM_BUFFER, mapLightBuffer);
-    pglBufferData(GL_UNIFORM_BUFFER, sizeof(gpuLights), &gpuLights, GL_DYNAMIC_DRAW);
-    pglBindBufferBase(GL_UNIFORM_BUFFER, mapLightBinding, mapLightBuffer);
-    pglBindBuffer(GL_UNIFORM_BUFFER, 0);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
         useProgram(entry.first);
         const Uniforms& uniforms = *entry.second;
-        pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(lights.size()));
+        pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(activeLightCount));
         pglUniform1f(uniforms.mapLightStrength, static_cast<float>(strength));
     }
     useProgram(previousProgram);
@@ -2569,7 +2582,8 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
                        const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY,
-                       GLuint indexBuffer, double visibilityFade) {
+                       GLuint indexBuffer, double visibilityFade, GLuint textTexture,
+                       bool useTextTexture) {
     TraceScope trace("render", "CoreRenderer::drawMaterialBatch");
     if (materialProgram == 0 || buffer == 0 || vertexCount == 0 || colors.empty() ||
         textures.empty()) {
@@ -2597,6 +2611,10 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
         selectTextureUnit(GL_TEXTURE0 + static_cast<GLenum>(index));
         bindTexture(GL_TEXTURE_2D, textures[index]);
     }
+    const bool textTextureEnabled = useTextTexture && textTexture != 0;
+    pglUniform1i(materialUniforms.useTextTexture, textTextureEnabled ? 1 : 0);
+    selectTextureUnit(GL_TEXTURE0 + 8);
+    bindTexture(GL_TEXTURE_2D, textTextureEnabled ? textTexture : 0);
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     if (indexBuffer != 0) {

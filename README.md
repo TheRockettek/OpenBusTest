@@ -1449,6 +1449,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   `render_benchmark_gpu_timing.csv`. For benchmark runs, use `--gpu-timing` or
   `--gpu-timing-sample-every-n-frames 5`; the latter also enables timing and
   overrides the inherited GPU sample stride.
+- CPU traces include texture-upload scopes for vehicle, map, dynamic script/text,
+  and reflection-target uploads. These measure render-thread time around GL
+  resource calls, not GPU execution; use the GPU timer queries above or a GPU
+  capture tool to measure execution on the device.
 - Set `OPENBUS_TRACE_TRAFFIC_DETAIL=1` while tracing to split individual traffic
   lookahead samples into curve/speed-limit and clearance scopes. This can
   produce many events and add profiling overhead; leave it unset for normal

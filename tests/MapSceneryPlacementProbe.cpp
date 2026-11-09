@@ -79,13 +79,21 @@ void runProbe() {
                     selectMapCarparkVehicle(100.0, 5, 2, -3, 42),
             "full occupancy selects a stable in-range park-list entry");
     std::size_t halfFullSelections = 0;
+    std::vector<std::size_t> carparkCandidateSelections(5, 0);
     for (int objectId = 0; objectId < 10000; ++objectId) {
-        if (selectMapCarparkVehicle(50.0, 1, 0, 0, objectId).has_value()) {
+        const auto selected =
+            selectMapCarparkVehicle(50.0, carparkCandidateSelections.size(), 0, 0, 0,
+                                    static_cast<std::uint64_t>(objectId + 1));
+        if (selected.has_value()) {
             ++halfFullSelections;
+            ++carparkCandidateSelections[*selected];
         }
     }
     require(halfFullSelections > 4700 && halfFullSelections < 5300,
-            "car-park occupancy follows the configured percentage across placements");
+            "car-park occupancy follows the configured percentage across placement positions");
+    require(std::ranges::all_of(carparkCandidateSelections,
+                                [](std::size_t count) { return count > 0; }),
+            "car-park placements vary the selected vehicle across candidates");
 
     MapSceneryPlacement ordinaryObject;
     ordinaryObject.localPosition = {12.5, -3.25, 4.75};

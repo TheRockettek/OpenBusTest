@@ -304,7 +304,8 @@ std::uint64_t mixCarparkSeed(std::uint64_t value) noexcept {
 
 std::optional<std::size_t> selectMapCarparkVehicle(double occupancyPercent,
                                                    std::size_t candidateCount, int tileX, int tileY,
-                                                   int objectId) noexcept {
+                                                   int objectId,
+                                                   std::uint64_t placementSeed) noexcept {
     if (!std::isfinite(occupancyPercent) || occupancyPercent < 0.0 || occupancyPercent > 100.0 ||
         occupancyPercent == 0.0 || candidateCount == 0) {
         return std::nullopt;
@@ -314,6 +315,7 @@ std::optional<std::size_t> selectMapCarparkVehicle(double occupancyPercent,
     seed = mixCarparkSeed(seed ^
                           (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tileY)) << 32));
     seed = mixCarparkSeed(seed ^ static_cast<std::uint32_t>(objectId));
+    seed = mixCarparkSeed(seed ^ placementSeed);
     constexpr std::uint64_t probabilityScale = 1'000'000;
     const std::uint64_t occupancyRoll =
         mixCarparkSeed(seed ^ 0xA0761D6478BD642FULL) % probabilityScale;

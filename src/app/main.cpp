@@ -2583,9 +2583,8 @@ int main() {
                                 replacementRear.coupling.reset();
                                 if (replacementRear.vehicle != nullptr) {
                                     if (replacementRear.frontVehicle != nullptr) {
-                                        replacementRear.frontVehicle
-                                            ->detachPassengerServiceSection(
-                                                *replacementRear.vehicle);
+                                        replacementRear.frontVehicle->detachPassengerServiceSection(
+                                            *replacementRear.vehicle);
                                     }
                                     renderer.RemoveCoupledVehicle(replacementRear.vehicle);
                                 }

@@ -399,6 +399,7 @@ void Vehicle::updateFreeTexture(Batch& batch) {
 void Vehicle::uploadDynamicTexture(const ScriptRuntime::ScriptTextureSnapshot& snapshot,
                                    GLuint& texture, int& width, int& height,
                                    std::uint64_t& revision, GLenum wrapS, GLenum wrapT) {
+    TraceScope trace("texture", "Vehicle::uploadDynamicTexture");
     const bool dimensionsChanged = width != snapshot.width || height != snapshot.height;
     const bool textureCreated = texture == 0;
     if (textureCreated) {

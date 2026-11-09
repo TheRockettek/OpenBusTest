@@ -1454,6 +1454,16 @@ int main() {
         const auto baseline = drawLighting();
         if (source == 2) {
             arrayMaterialBatchBaseline = baseline;
+            const GLuint textTexture = texture({255, 0, 0, 255});
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawMaterialBatch(buffer, 3, batchColors, batchTextures, {}, 0, 1.0, textTexture,
+                              true);
+            std::array<std::uint8_t, 4> textPixel = {};
+            glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, textPixel.data());
+            if (textPixel[0] <= textPixel[1] + 30 || textPixel[0] <= textPixel[2] + 30) {
+                std::cerr << "material batches did not sample their dynamic text texture\n";
+                passed = false;
+            }
         } else if (source == 4 && baseline != arrayMaterialBatchBaseline) {
             std::cerr << "indexed material batch changed directional shading\n";
             passed = false;

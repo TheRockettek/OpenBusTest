@@ -81,6 +81,7 @@ GLuint loadTexture(const std::filesystem::path& path, bool repeat) {
 }
 
 GLuint uploadTextureImage(const Image& image, bool repeat) {
+    TraceScope trace("texture", "MapRenderer::uploadTextureImage");
     if (image.width <= 0 || image.height <= 0 ||
         image.rgba.size() <
             static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U) {

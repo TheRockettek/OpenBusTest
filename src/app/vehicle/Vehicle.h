@@ -594,9 +594,8 @@ struct Vehicle {
                      bool passengerServiceRequired = false)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey + "|" + selectedSetupOptions.appearanceKey),
-          sharedDefinition(definition),
-          assets(&manager), placement(configuredPlacement), modelOffsetZ(configuredModelOffsetZ),
-          setupOptions(std::move(selectedSetupOptions)),
+          sharedDefinition(definition), assets(&manager), placement(configuredPlacement),
+          modelOffsetZ(configuredModelOffsetZ), setupOptions(std::move(selectedSetupOptions)),
           wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
         TraceScope constructionTrace("startup", "Vehicle::Vehicle.initialize");
         if (const char* scale = openbus::getEnvironment("OPENBUS_TEXTURE_SCALE")) {

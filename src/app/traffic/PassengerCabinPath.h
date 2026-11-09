@@ -14,21 +14,35 @@
 
 namespace openbus::app {
 
-inline openbus::map::MapTrafficPose
-passengerCabinSeatPose(const openbus::map::MapTrafficPose& vehiclePose,
-                       const PassengerCabinPosition& seat) {
+inline std::array<double, 3>
+passengerCabinWorldPoint(const openbus::map::MapTrafficPose& vehiclePose,
+                         const std::array<double, 3>& localPosition) {
     constexpr double degreesToRadians = std::numbers::pi / 180.0;
     const double yaw =
         openbus::map::mapTrafficHeadingToVehicleYawDegrees(vehiclePose.headingRadians) *
         degreesToRadians;
-    const double cosine = std::cos(yaw);
-    const double sine = std::sin(yaw);
-    const auto point =
-        passengerCabinModelPoint(passengerCabinStandingPoint(seat.position, seat.seatHeight));
+    const double cosineYaw = std::cos(yaw);
+    const double sineYaw = std::sin(yaw);
+    const double cosinePitch = std::cos(vehiclePose.pitchRadians);
+    const double sinePitch = std::sin(vehiclePose.pitchRadians);
+    const double cosineRoll = std::cos(vehiclePose.rollRadians);
+    const double sineRoll = std::sin(vehiclePose.rollRadians);
+    const auto point = passengerCabinModelPoint(localPosition);
+    const double rolledLateral = point[1] * cosineRoll - point[2] * sineRoll;
+    const double rolledHeight = point[1] * sineRoll + point[2] * cosineRoll;
+    const double pitchedForward = point[0] * cosinePitch - rolledHeight * sinePitch;
+    const double pitchedHeight = point[0] * sinePitch + rolledHeight * cosinePitch;
+    return {vehiclePose.position[0] + pitchedForward * cosineYaw - rolledLateral * sineYaw,
+            vehiclePose.position[1] + pitchedForward * sineYaw + rolledLateral * cosineYaw,
+            vehiclePose.position[2] + pitchedHeight};
+}
+
+inline openbus::map::MapTrafficPose
+passengerCabinSeatPose(const openbus::map::MapTrafficPose& vehiclePose,
+                       const PassengerCabinPosition& seat) {
     openbus::map::MapTrafficPose result;
-    result.position = {vehiclePose.position[0] + point[0] * cosine - point[1] * sine,
-                       vehiclePose.position[1] + point[0] * sine + point[1] * cosine,
-                       vehiclePose.position[2] + point[2]};
+    result.position = passengerCabinWorldPoint(
+        vehiclePose, passengerCabinStandingPoint(seat.position, seat.seatHeight));
     result.headingRadians = passengerCabinHeading(vehiclePose.headingRadians, seat.rotationDegrees);
     return result;
 }
@@ -40,27 +54,22 @@ passengerCabinLocalPoint(const openbus::map::MapTrafficPose& vehiclePose,
     const double yaw =
         openbus::map::mapTrafficHeadingToVehicleYawDegrees(vehiclePose.headingRadians) *
         degreesToRadians;
-    const double cosine = std::cos(yaw);
-    const double sine = std::sin(yaw);
+    const double cosineYaw = std::cos(yaw);
+    const double sineYaw = std::sin(yaw);
+    const double cosinePitch = std::cos(vehiclePose.pitchRadians);
+    const double sinePitch = std::sin(vehiclePose.pitchRadians);
+    const double cosineRoll = std::cos(vehiclePose.rollRadians);
+    const double sineRoll = std::sin(vehiclePose.rollRadians);
     const double offsetX = worldPosition[0] - vehiclePose.position[0];
     const double offsetY = worldPosition[1] - vehiclePose.position[1];
-    return {offsetX * sine - offsetY * cosine, offsetX * cosine + offsetY * sine,
-            worldPosition[2] - vehiclePose.position[2]};
-}
-
-inline std::array<double, 3>
-passengerCabinWorldPoint(const openbus::map::MapTrafficPose& vehiclePose,
-                         const std::array<double, 3>& localPosition) {
-    constexpr double degreesToRadians = std::numbers::pi / 180.0;
-    const double yaw =
-        openbus::map::mapTrafficHeadingToVehicleYawDegrees(vehiclePose.headingRadians) *
-        degreesToRadians;
-    const double cosine = std::cos(yaw);
-    const double sine = std::sin(yaw);
-    const auto modelPoint = passengerCabinModelPoint(localPosition);
-    return {vehiclePose.position[0] + modelPoint[0] * cosine - modelPoint[1] * sine,
-            vehiclePose.position[1] + modelPoint[0] * sine + modelPoint[1] * cosine,
-            vehiclePose.position[2] + modelPoint[2]};
+    const double offsetZ = worldPosition[2] - vehiclePose.position[2];
+    const double pitchedForward = offsetX * cosineYaw + offsetY * sineYaw;
+    const double rolledLateral = -offsetX * sineYaw + offsetY * cosineYaw;
+    const double unpitchedForward = pitchedForward * cosinePitch + offsetZ * sinePitch;
+    const double rolledHeight = -pitchedForward * sinePitch + offsetZ * cosinePitch;
+    const double unrolledLateral = rolledLateral * cosineRoll + rolledHeight * sineRoll;
+    const double unrolledHeight = -rolledLateral * sineRoll + rolledHeight * cosineRoll;
+    return {-unrolledLateral, unpitchedForward, unrolledHeight};
 }
 
 struct PassengerCabinTravelPathData {
@@ -162,16 +171,18 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
     return path;
 }
 
-inline PassengerCabinTravelPathData passengerCabinTravelPath(
-    const std::vector<PassengerCabinSectionPose>& sections, std::size_t startSectionIndex,
-    const std::array<double, 3>& startWorld, std::size_t endSectionIndex,
-    const std::array<double, 3>& endLocal, bool boarding, std::size_t doorSectionIndex,
-    std::optional<std::size_t> doorIndex) {
+inline PassengerCabinTravelPathData
+passengerCabinTravelPath(const std::vector<PassengerCabinSectionPose>& sections,
+                         std::size_t startSectionIndex, const std::array<double, 3>& startWorld,
+                         std::size_t endSectionIndex, const std::array<double, 3>& endLocal,
+                         bool boarding, std::size_t doorSectionIndex,
+                         std::optional<std::size_t> doorIndex) {
     if (sections.empty() || startSectionIndex >= sections.size() ||
         endSectionIndex >= sections.size() || doorSectionIndex >= sections.size() ||
-        std::ranges::any_of(sections, [](const PassengerCabinSectionPose& section) {
-            return section.configuration == nullptr;
-        }) ||
+        std::ranges::any_of(sections,
+                            [](const PassengerCabinSectionPose& section) {
+                                return section.configuration == nullptr;
+                            }) ||
         !doorIndex) {
         return {};
     }
@@ -187,20 +198,18 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
         const auto& cabin = *sections[sectionIndex].configuration;
         pointOffsets[sectionIndex + 1] =
             pointOffsets[sectionIndex] + cabin.passengerPathPoints.size();
-        linkOffsets[sectionIndex + 1] =
-            linkOffsets[sectionIndex] + cabin.passengerPathLinks.size();
+        linkOffsets[sectionIndex + 1] = linkOffsets[sectionIndex] + cabin.passengerPathLinks.size();
     }
     if (pointOffsets.back() == 0) {
         return {};
     }
 
-    const auto pointIndex = [&](std::size_t sectionIndex, int id)
-        -> std::optional<std::size_t> {
+    const auto pointIndex = [&](std::size_t sectionIndex, int id) -> std::optional<std::size_t> {
         const auto& points = sections[sectionIndex].configuration->passengerPathPoints;
-        const auto point = std::find_if(points.begin(), points.end(),
-                                        [id](const PassengerPathPoint& candidate) {
-                                            return candidate.index == id;
-                                        });
+        const auto point =
+            std::find_if(points.begin(), points.end(), [id](const PassengerPathPoint& candidate) {
+                return candidate.index == id;
+            });
         if (point == points.end()) {
             return std::nullopt;
         }
@@ -219,8 +228,7 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
             sections[sectionIndex].pose,
             sections[sectionIndex].configuration->passengerPathPoints[localIndex].position);
     };
-    const auto targetWorld = passengerCabinWorldPoint(
-        sections[endSectionIndex].pose, endLocal);
+    const auto targetWorld = passengerCabinWorldPoint(sections[endSectionIndex].pose, endLocal);
     std::vector<std::array<double, 3>> nodePositions(pointOffsets.back());
     for (std::size_t nodeIndex = 0; nodeIndex < nodePositions.size(); ++nodeIndex) {
         nodePositions[nodeIndex] = worldPoint(nodeIndex);
@@ -228,8 +236,7 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
 
     const auto distance = [](const std::array<double, 3>& first,
                              const std::array<double, 3>& second) {
-        return std::hypot(second[0] - first[0], second[1] - first[1],
-                          second[2] - first[2]);
+        return std::hypot(second[0] - first[0], second[1] - first[1], second[2] - first[2]);
     };
     std::vector<std::vector<Edge>> graph(pointOffsets.back());
     const auto addEdge = [&](std::size_t from, std::size_t to,
@@ -268,15 +275,13 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
             addEdge(*from, *to, std::nullopt);
             addEdge(*to, *from, std::nullopt);
         };
-        connect(current.passengerPathPointToNextVehicle,
-                next.passengerPathPointToPreviousVehicle);
-        connect(current.passengerPathPointToPreviousVehicle,
-                next.passengerPathPointToNextVehicle);
+        connect(current.passengerPathPointToNextVehicle, next.passengerPathPointToPreviousVehicle);
+        connect(current.passengerPathPointToPreviousVehicle, next.passengerPathPointToNextVehicle);
     }
 
-    const auto closestNode = [&](std::size_t sectionIndex,
-                                 const std::array<double, 3>& position)
-        -> std::optional<std::size_t> {
+    const auto closestNode =
+        [&](std::size_t sectionIndex,
+            const std::array<double, 3>& position) -> std::optional<std::size_t> {
         const std::size_t first = pointOffsets[sectionIndex];
         const std::size_t last = pointOffsets[sectionIndex + 1];
         if (first == last) {
@@ -294,14 +299,13 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
         return closest;
     };
     const auto& doorCabin = *sections[doorSectionIndex].configuration;
-    const auto& doors = boarding ? doorCabin.passengerEntryPathPoints
-                                 : doorCabin.passengerExitPathPoints;
+    const auto& doors =
+        boarding ? doorCabin.passengerEntryPathPoints : doorCabin.passengerExitPathPoints;
     if (*doorIndex >= doors.size()) {
         return {};
     }
     const auto doorNode = pointIndex(doorSectionIndex, doors[*doorIndex]);
-    const auto startNode =
-        boarding ? doorNode : closestNode(startSectionIndex, startWorld);
+    const auto startNode = boarding ? doorNode : closestNode(startSectionIndex, startWorld);
     const auto endNode = boarding ? closestNode(endSectionIndex, targetWorld) : doorNode;
     if (!startNode || !endNode) {
         return {};
@@ -315,8 +319,7 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
     for (std::size_t iteration = 0; iteration < graph.size(); ++iteration) {
         std::optional<std::size_t> currentNode;
         for (std::size_t node = 0; node < graph.size(); ++node) {
-            if (!visited[node] &&
-                (!currentNode || distances[node] < distances[*currentNode])) {
+            if (!visited[node] && (!currentNode || distances[node] < distances[*currentNode])) {
                 currentNode = node;
             }
         }
@@ -365,8 +368,8 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
         return path.positions.size() - 1;
     };
     for (std::size_t index = 0; index < routeNodes.size(); ++index) {
-        const auto routePointIndex = appendPoint(
-            nodePositions[routeNodes[index]], index == 0 ? std::nullopt : routeLinks[index - 1]);
+        const auto routePointIndex = appendPoint(nodePositions[routeNodes[index]],
+                                                 index == 0 ? std::nullopt : routeLinks[index - 1]);
         if (routeNodes[index] == *doorNode) {
             path.doorPointIndex = routePointIndex;
         }
@@ -494,19 +497,17 @@ inline void updatePassengerCabinPathOccupancy(
     openbus::map::MapPassengerServiceRuntime& service,
     const std::vector<PassengerCabinSectionPose>& sections, std::size_t startSectionIndex,
     const std::array<double, 3>& startWorld, std::size_t endSectionIndex,
-    const std::array<double, 3>& endLocal, bool boarding, std::size_t seatIndex,
-    bool hasSeat, std::size_t doorSectionIndex, std::optional<std::size_t> doorIndex,
+    const std::array<double, 3>& endLocal, bool boarding, std::size_t seatIndex, bool hasSeat,
+    std::size_t doorSectionIndex, std::optional<std::size_t> doorIndex,
     std::optional<std::array<double, 3>> fallbackVia = std::nullopt) {
-    auto path = passengerCabinTravelPath(sections, startSectionIndex, startWorld,
-                                         endSectionIndex, endLocal, boarding,
-                                         doorSectionIndex, doorIndex);
+    auto path = passengerCabinTravelPath(sections, startSectionIndex, startWorld, endSectionIndex,
+                                         endLocal, boarding, doorSectionIndex, doorIndex);
     const auto endWorld = passengerCabinWorldPoint(sections.at(endSectionIndex).pose, endLocal);
     if (path.positions.empty() && fallbackVia) {
         path.positions = {startWorld, *fallbackVia, endWorld};
         path.segmentLinkIndices = {std::nullopt, std::nullopt};
     }
-    const double duration =
-        passengerCabinTravelDuration(path, startWorld, endWorld, hasSeat);
+    const double duration = passengerCabinTravelDuration(path, startWorld, endWorld, hasSeat);
     if (boarding) {
         service.setPassengerAnimationDurationForSeat(seatIndex, duration);
     } else {
