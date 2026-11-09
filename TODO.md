@@ -1081,8 +1081,10 @@ support; see the [README map scope](README.md#map-runtime-scope) for details.
   validated; the inferred corner ordering is covered by neighboring-tile tests.
   Map-local water albedo, bump, and environment textures are supported, but
   exact OMSI water shading and animation remain unverified.
-  `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence
-  are inventoried but their payloads are not decoded or rendered.
+  `.map.LM.bmp` paths are inventoried and their images are decoded by asset
+  validation, but they are not rendered. `.map.terrain_0.rdy` files are
+  inventoried and reported as unsupported; their payloads are not decoded or
+  rendered.
   Unimplemented bracketed sections in tile files and `global.cfg` now produce
   line-numbered warnings and preserve each section's opaque payload lines;
   no runtime meaning is inferred from them.
@@ -1426,8 +1428,9 @@ the outstanding implementation and validation tasks:
   incomplete. `[variable_terrain]`, `[variable_terrainlightmap]`, and
   `[spline_terrain_align_2]` remain unsupported; `[rule]` and `[kill_rule]`
   have partial traffic-rule support.
-  Decode/render `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where
-  applicable. The Cotterell run skipped 27 variable-terrain tiles, 27
+  Runtime rendering still does not apply `.map.LM.bmp`; asset validation only
+  verifies that the image decodes. Decode/render `.map.terrain_0.rdy` adjunct
+  data where applicable. The Cotterell run skipped 27 variable-terrain tiles, 27
   variable-terrain-lightmap tiles, 2,212 `[rule]` records, and 1 `[kill_rule]`.
 - [~] Resolve Chrono map variants: date-selected tile overlays merge with the
   base tile in deterministic config-path order, allowing later active events
@@ -1549,6 +1552,236 @@ the outstanding implementation and validation tasks:
   and Chrono spline-selector/rule semantics need work. Chrono object selector
   delete/type/relabel operations and additive tile records are active; native
   precedence and visual parity remain unverified.
+### Map asset validation and baking
+
+- [~] Add reusable dependency validation before baking. The experimental
+  `OpenBusMapAssetCheck` reports missing base-map tiles, terrain and water
+  sidecars, placed SCOs,
+  splines and spline textures, ground textures, environment sky and cloud
+  textures, AI vehicles, humans and drivers.
+  It follows supported scenery, vehicle and human model CFGs to their meshes,
+  scenery/human CFG and supported mesh-embedded material textures; scenery
+  material and embedded mesh textures are decoded after path resolution. OBJ material
+  libraries, configured vehicle resources, scripts, variable lists and constant
+  files, vehicle `[sound]` and `[loopsound]` audio references, and passenger
+  `[stepsoundpack]` WAV references under `Sounds/Passengers`, passenger-path
+  parser errors, and vehicle number/registration resources; vehicle and
+  scenery-object `[passengercabin]` configuration
+  references and parser errors; referenced audio is
+  decoded by the runtime WAV loader without converting scripts. Coupled-vehicle
+  references are followed with cycle protection, independently of the incomplete
+  articulated runtime. Existing base terrain and water sidecars are parsed,
+  with referenced non-regular paths distinguished from missing sidecars.
+  Non-regular ground-texture sidecars and malformed suffixes for listed base
+  and Chrono tiles are reported without entering the source inventory; an existing
+  non-directory `texture/map` path is reported while an absent optional
+  directory remains valid. Configured
+  ticket-pack and currency files, including every discovered Chrono scenario's
+  ticket-pack and currency overrides, and authored coin and bill model files
+  and their supported embedded material textures. Map-local water textures are
+  decoded when a base or Chrono water sidecar is inventoried; absent optional
+  water textures remain optional.
+  Authored scenery and vehicle collision meshes, including vehicle bundle
+  entries, are checked for usable triangles using their respective runtime rules.
+  Configured vehicle auxiliary maps and file-backed free-texture defaults for
+  resolved meshes are checked using a fresh renderer-compatible resolver;
+  generated textures are excluded and access failures are reported.
+  Used embedded vehicle mesh textures are checked only for parts without
+  material states in models without CTC substitutions.
+  Base-tile car-park markers resolve their selected lists and validate all listed
+  scenery objects, including their transitive dependencies.
+  Chrono scenario tiles matching listed base tiles are also checked independently
+  for added and replaced placements, changed car-park selections, and existing
+  terrain and water sidecars, using the runtime overlay parser. This includes
+  inactive and invalid-date scenarios. Valid scenario date transitions are also
+  sampled to check distinct date-selected tile combinations and selectors targeting
+  earlier overlays; configuration/discovery failures explicitly skip those checks.
+  Chrono timetable overlays are also parsed at each valid scenario date transition,
+  with distinct parser diagnostics reported. Station-based passenger trips remain
+  available when optional route display metadata is absent; existing `.ttp` files
+  without supported route data are distinguished from missing trip files.
+  Unhandled ticket-pack and currency sections are reported as unsupported.
+  Supported authored `.ttr` track-entry IDs, including date-selected Chrono
+  timetable routes, are checked against the union of IDs on parsed spline and
+  object placements in scanned base tiles and independent Chrono variants;
+  this does not verify track type, tile-specific, or date-specific presence.
+  Unhandled section headers in parsed `.ttp`, `.ttr`, `.ttl`, `Busstops.cfg`,
+  and `StnLinks.cfg` timetable files are reported as unsupported rather than
+  being silently skipped.
+  Base AI lists and discovered `ailists_#upd.cfg` files have supported `.bus`
+  and `.ovh` references checked in `[ailist]`, `[aigroup_2]`, and
+  `[aigroup_depot_typgroup_*]` records. Base `.zug` consists in `[ailist]` and
+  `[aigroup_2]`, plus Chrono `.zug` consists in `[ailist]` and `[aigroup_2]`,
+  are read for
+  their `.bus` and `.ovh` entries, conservatively across all scenarios.
+  Unhandled section headers in parsed train consists are reported as unsupported.
+  Unhandled section headers in HOF files matched to AI group/depot associations
+  are also reported as unsupported. HOF- and CTI-suffixed paths that are not
+  regular files are reported during linked-vehicle side-file discovery.
+  Base `[aigroup_2]` optional HOF names and `[aigroup_depot]` HOF names, plus
+  Chrono `[aigroup_2]` and `[aigroup_depot]` update associations, are matched
+  against HOFs discoverable for each linked bus type. Chrono matches are not
+  date-filtered.
+  Chrono scenario-local `humans.txt` and `drivers.txt` files are checked when
+  present, and non-comment lines that are not `.hum` paths are reported as
+  unsupported; explicit `.hum` paths in `humans_#upd.cfg` and `drivers_#upd.cfg`
+  are also checked, though those update formats remain unsupported. Recognized
+  Chrono tile, config, human/driver list and update paths, and timetable source
+  paths that exist but are not regular files are reported explicitly.
+  At the end of validation, otherwise-uninventoried regular files beneath the
+  map root and each discovered Chrono scenario directory are inventoried and
+  reported as unsupported rather than being silently ignored. Directory
+  symlinks are not followed. This conservative file inventory does not decode
+  opaque payloads or close dependencies hidden inside them.
+  Matching Chrono tile scenarios also resolve their own selected car-park lists
+  and their transitive scenery dependencies before falling back to base lists.
+  Configured Chrono scenarios without a matching tile overlay also check
+  scenario-specific list indices used by base-map car-park markers.
+  This reflects OpenBus parser behavior, not verified OMSI Chrono parity.
+  Reports explicitly remain
+  incomplete: validate runtime-selected texture variants, references in
+  unsupported sound directives beyond vehicle `[sound]`/`[loopsound]` and passenger
+  `[stepsoundpack]`; unknown sound-config keywords are reported, but any asset
+  references in their opaque payloads remain unchecked. Also incomplete are
+  `[backgroundimage]` asset-reference semantics, other
+  transitive dependencies, all Chrono
+  timetable formats, `chrono_#upd.cfg` contents, date-filtered Chrono traffic
+  updates and human/driver update semantics beyond explicit `.hum` paths, plus
+  formats not represented by existing parsers. Report
+  parse and access failures without treating them as a clean scan; referenced
+  directories are distinguished from missing files, and invalid or inaccessible
+  timetable-source directories are reported explicitly. The CLI now
+  includes finding counts by category. The startup map-selection screen now
+  provides an in-game scan window and distinguishes unsupported sections
+  retained from `global.cfg`, environment configs, base tiles, Chrono tile
+  overlays, `Chrono.cfg`, base/Chrono AI lists, train consists, matched HOFs, scenery-object, model, vehicle,
+  human, spline-profile, and timetable configs from missing assets. The in-game
+  window reports phase progress; cancellation and bake-operation progress
+  remain future work.
+- [~] The vehicle renderer's texture lookup is available as a reusable resolver;
+  each resolver owns its caches so a new validation scan can see newly installed
+  files. Primary base textures are checked by matching used mesh materials to
+  model-config states, with auxiliary and authored texture-change items checked
+  as well. Generated script/text textures are excluded. Discovered CTI
+  replacement textures are checked for slots declared by each model's CTC
+  configuration. Resolved file-backed vehicle textures and declared-slot CTI
+  replacements are decoded with the runtime image loader; runtime appearance
+  selection and season selection remain future work, but discovered seasonal
+  scenery texture variants are inventoried and decoded.
+- [~] One installed Cotterell scan visited 27 base tiles. Text/script texture
+  placeholders initially produced false missing-texture findings; those slots
+  are now excluded and covered by the validation probe. The latest run reports
+  9 distinct findings: two model bounding-box diagnostics, three scenery
+  texture references, two sound references, one uncertain blank sound filename,
+  and one missing declared-slot CTI replacement texture. Bare train-consist
+  filenames now resolve from the OMSI `Trains` directory as well as the OMSI
+  root; Cotterell's `kesselwagen.zug` and its nested vehicle are validated. An
+  empty optional `[matl_transmap]` no longer consumes following descriptive
+  text as a texture filename. A decorative separator after ticket-pack
+  properties is also ignored and regression-tested. Filesystem follow-up
+  confirmed the reported textures and sounds are absent at their referenced
+  paths; one `Cabdoor_shut.wav` exists only in a nested directory, not beside
+  the config's bare reference. The two bounding-box diagnostics come from zero
+  Y extents; retain them pending confirmation of OMSI's handling of degenerate
+  boxes. The blank sound remains explicitly uncertain. Validate other
+  representative maps before treating the scan as comprehensive.
+- [~] A Berlin-Spandau scan visited 329 base tiles, 253 independent Chrono tile
+  variants and 142 date-selected combined variants. CTI repaint discovery now
+  handles both UTF-8 paths and legacy Windows active-code-page text, and applies
+  the runtime image-format fallback when a CTI texture's extension differs from
+  its installed sibling. The scan reports no repaint-discovery conversion
+  errors and three missing declared-slot repaint textures. Chrono timetable
+  parsing now retains station-based trips with absent optional route metadata
+  and distinguishes existing unsupported `.ttp` files from missing trips.
+  Fully authored station routes now bypass unnecessary Busstops/StnLinks
+  matching, while duplicate station links resolve only when their complete
+  track-entry paths are identical. The   latest scan reports no missing-trip or stop/link findings, six existing
+  stationless `.ttp` files that remain unsupported, and one inactive scenario
+  without a mandatory `[startdate]`; it reports 2,115 findings total, down from
+  2,160. The scan is still explicitly incomplete and cannot certify bake
+  readiness.
+- [~] Synthetic probes cover complete, missing, malformed, case-variant and
+  Unicode asset paths, including legacy Windows-code-page CTC template and
+  replacement names; the map loader probe also covers a Unicode map directory.
+  A Grundorf scan exposed valid `[pathpnt]` indices with trailing labels such as
+  `0 (Tür VV)` being rejected as malformed. The vehicle path parser now reads
+  the leading integer and the vehicle-config probe covers a labeled index; the
+  19-tile scan initially fell from 35 findings to 24 and no longer reports
+  malformed path   points. Both Grundorf and Bad Karlstein then exposed false
+  currency warnings from brace-enclosed documentation examples in OMSI's
+  `DM.cfg`; the parser now skips only paired template placeholders. The map
+  config probe exposed stop-link diagnostics for an unscheduled authored
+  timetable; resolution now runs only when a timetable has departures, while
+  scheduled unresolved stops remain diagnosed. A scheduled Grundorf rail trip
+  also exposed an empty display line name preventing its valid authored
+  station/TTR route from loading; trip names and destinations now suffice, and
+  the `.ttr` path is retained. Bad Karlstein then exposed a rail trip with no
+  destination text but a valid authored station/TTR path; it now loads with the
+  trip key as its display destination rather than triggering bus-stop matching.
+  The focused config and asset-validation probes
+  pass. Latest scans report 21 findings and no timetable warnings for Grundorf,
+  2,115 findings and no timetable-track findings for Berlin-Spandau, and 160
+  findings for Bad Karlstein, including three unresolved authored `.ttr` track
+  entry IDs. BOM-less text now preserves valid UTF-8
+  and decodes invalid UTF-8 through the Windows active code page before
+  timetable matching; this clears all 23 missing-trip warnings there. Five
+  existing `.ttp` files remain unsupported because they contain no
+  `[station]` or `[station_typ2]` records; the scheduled rail trip no longer
+  produces a bus stop-link warning. The first authored `.ttr` scan showed that
+  rail track-entry IDs may refer to `[object]` placements as well as `[spline]`
+  placements. Checking both kinds removed 72 apparent findings from
+  Berlin-Spandau and three from Bad Karlstein. Three Bad Karlstein `.ttr` IDs
+  remain unresolved against parsed tile placements; each finding now includes
+  the `.ttr` line number for follow-up.
+  The map-config probe covers a
+  legacy-code-page trip reference matching a Unicode `.ttp` filename while
+  retaining UTF-8 inputs, and a scheduled authored route with an empty
+  destination and valid `.ttr`. A malformed non-template currency entry remains
+  covered by the map-config probe. Berlin-Gatow also ran as an additional
+  sample with 3,894 findings,
+  mostly object and spline references that still need separate triage. Continue
+  validating maps against actual loader resolution behavior, define which
+  optional assets are warnings and make completeness explicit; never permit a
+  partial check to certify a map as ready for baking.
+- [~] Define the version-1 seekable archive container and add a tested reader
+  and writer for indexed manifest, map-wide-index, shared-asset, and tile-data
+  chunks. The format validates bounds and CRC-32 checksums; tested payload
+  codecs now cover manifests and deterministic map-wide tile indexes that map
+  signed coordinates to tile-data chunk keys, and an archive-level reader
+  validates the index and its referenced tile-chunk identities. The manifest
+  fingerprints explicitly supplied source files with SHA-256 and compares
+  dependency/settings changes. The archive writer can append chunks and copy
+  stream payloads with bounded memory, then atomically publish a finished
+  archive. The asset validator also exposes a
+  deduplicated but explicitly incomplete inventory of map inputs and resolved
+  assets, and these paths can now be mapped to stable rooted manifest keys.
+  Tile and Chrono source files remain in the inventory even when their
+  contents fail parsing.
+  Base-tile and Chrono `.map.LM.bmp` images and numeric-suffix DDS sidecars
+  that resolve to configured non-base ground-texture layers are decoded with
+  the runtime image loader; sidecars with invalid layer suffixes are reported.
+  Referenced ground,
+  sky, cloud, and spline-profile textures are also decoded after path
+  resolution, including the spline subdirectory texture fallback.
+  Existing tile `.prt` sidecars are also inventoried and reported as
+  unsupported because their format and runtime role are not established.
+  The documented `timeline.prt.cfg`, `laststn.osn`, `laststn.osn.owt`, and
+  `laststn.osn_*.dds` map-root companions are likewise inventoried and reported
+  as unsupported rather than being silently omitted. The same applies to
+  `signalroutes.cfg`, `registrations.txt`, and `Holidays*.txt`.
+  Scanned vehicle appearance and depot side files are included so additions and
+  removals are visible, but no complete map dependency set feeds a builder yet.
+  Complete dependency discovery, map-data serialization, compression, and
+  runtime integration are still missing.
+  Next, complete and verify the source dependency closure before implementing
+  the builder and stale-cache fallback behavior; preserve the original
+  map-loading path.
+- [ ] Bake static indexes and geometry incrementally, preserve dynamic/chrono
+  semantics, and stream chunks without loading the entire map. Benchmark cold
+  and warm loading, streaming stalls, disk/memory use and visual/collision parity.
+  Profile transparent passes separately: camera-dependent sorting and blending
+  cannot generally be baked into one fixed draw order.
+
 - [~] Map loading is being moved to background preparation with main-thread
   publication. Map-wide tile/traffic indexing now runs on the asset worker pool;
   map startup waits for that phase and for the initial active window. Newly

@@ -49,6 +49,11 @@ struct MapSplinePathOffset {
     bool bidirectional = false;
 };
 
+struct MapSplineUnsupportedDirective {
+    std::string keyword;
+    std::size_t line = 0;
+};
+
 enum class MirroredRoadDirectionPolicy {
     Correct,
     Authored,
@@ -64,6 +69,7 @@ struct MapSplineProfile {
     bool editorOnly = false;
     // Preserve the spline for rendering; omit its profile strips from map collision.
     bool noCollision = false;
+    std::vector<MapSplineUnsupportedDirective> unsupportedDirectives;
 };
 
 // Reads text-based StreetCreator/OMSI .sli cross-sections, UVs, height profiles,

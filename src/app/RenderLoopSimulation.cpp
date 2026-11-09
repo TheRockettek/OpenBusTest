@@ -100,10 +100,10 @@ double mapTrafficRouteCurvatureAtRearAxle(const openbus::map::MapTrafficActor& a
     if (distanceSpan <= 1.0e-6) {
         return 0.0;
     }
-    const double fromHeading = openbus::map::mapTrafficRouteTravelHeadingRadians(
-        route, fromDistance, lateralOffsetMeters);
-    const double toHeading = openbus::map::mapTrafficRouteTravelHeadingRadians(
-        route, toDistance, lateralOffsetMeters);
+    const double fromHeading =
+        openbus::map::mapTrafficRouteTravelHeadingRadians(route, fromDistance, lateralOffsetMeters);
+    const double toHeading =
+        openbus::map::mapTrafficRouteTravelHeadingRadians(route, toDistance, lateralOffsetMeters);
     return std::remainder(toHeading - fromHeading, 2.0 * std::numbers::pi) / distanceSpan;
 }
 
@@ -1660,8 +1660,7 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
         const auto presentation = trafficVehicle.presentation.sample();
         trafficVehicle.vehicle->updateTrafficWheelAnimations(
             trafficVehicle.wheelTravelDistanceMeters,
-            mapTrafficRouteCurvatureAtRearAxle(trafficVehicle.actor,
-                                               presentation.distanceMeters,
+            mapTrafficRouteCurvatureAtRearAxle(trafficVehicle.actor, presentation.distanceMeters,
                                                presentation.lateralOffsetMeters,
                                                trafficVehicle.vehicle->trafficWheelbaseMeters,
                                                trafficVehicle.actor.rearAxleOffsetMeters),

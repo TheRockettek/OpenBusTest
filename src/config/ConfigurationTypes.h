@@ -11,17 +11,20 @@ struct ConfigurationDiagnostic {
     std::size_t line = 0;
     std::string keyword;
     std::string message;
+    std::string referencedPath;
 };
 
 struct ConfigurationDiagnostics {
     std::vector<ConfigurationDiagnostic> entries;
 
     void warning(std::size_t line, const std::string& keyword, const std::string& message) {
-        entries.push_back({ConfigurationDiagnostic::Severity::Warning, line, keyword, message});
+        entries.push_back({ConfigurationDiagnostic::Severity::Warning, line, keyword, message, {}});
     }
 
-    void error(std::size_t line, const std::string& keyword, const std::string& message) {
-        entries.push_back({ConfigurationDiagnostic::Severity::Error, line, keyword, message});
+    void error(std::size_t line, const std::string& keyword, const std::string& message,
+               const std::string& referencedPath = {}) {
+        entries.push_back(
+            {ConfigurationDiagnostic::Severity::Error, line, keyword, message, referencedPath});
     }
 
     bool hasErrors() const {

@@ -81,6 +81,7 @@ openbus_add_probe(OpenBusVehicleCatalogProbe VehicleCatalogProbe.cpp LIBS openbu
 add_executable(OpenBusVehiclePreferencesProbe VehiclePreferencesProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehiclePreferences.cpp")
 target_include_directories(OpenBusVehiclePreferencesProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+target_link_libraries(OpenBusVehiclePreferencesProbe PRIVATE openbus_core)
 add_test(NAME OpenBusVehiclePreferencesProbe COMMAND OpenBusVehiclePreferencesProbe)
 add_executable(OpenBusVehicleDefinitionProbe VehicleDefinitionProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleDefinition.cpp")
@@ -100,6 +101,8 @@ openbus_add_probe(OpenBusVehicleInputBindingsProbe VehicleInputBindingsProbe.cpp
 
 # Assets
 openbus_add_probe(OpenBusTextureLoaderProbe TextureLoaderProbe.cpp LIBS openbus_assets)
+openbus_add_probe(OpenBusVehicleTextureResolverProbe VehicleTextureResolverProbe.cpp
+    LIBS openbus_assets Threads::Threads)
 openbus_add_probe(OpenBusPreparedMapTexturesProbe PreparedMapTexturesProbe.cpp LIBS openbus_assets)
 openbus_add_probe(OpenBusPreparedTerrainTexturePathsProbe PreparedTerrainTexturePathsProbe.cpp
     LIBS openbus_assets)
@@ -125,6 +128,10 @@ openbus_add_probe(OpenBusBusConfigurationCollisionProbe BusConfigurationCollisio
 
 # Map
 openbus_add_probe(OpenBusMapConfigProbe MapConfigLoaderProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapAssetValidationProbe MapAssetValidationProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapBakeArchiveProbe MapBakeArchiveProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapBakeMapIndexProbe MapBakeMapIndexProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapBakeManifestProbe MapBakeManifestProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapHofCompatibilityProbe MapHofCompatibilityProbe.cpp
     LIBS openbus_map openbus_scripting NO_TEST)
 target_sources(OpenBusMapHofCompatibilityProbe PRIVATE

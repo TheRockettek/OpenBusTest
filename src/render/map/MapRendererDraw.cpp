@@ -215,8 +215,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         std::floor(dayOfYear) != dayOfYear) {
         throw std::invalid_argument("Simulation day of year is invalid for tree textures");
     }
-    const std::size_t treeSeason = treeSeasonIndex(
-        impl_->treeSeasons, static_cast<int>(dayOfYear), sharedVariables.roadWeather().groundSnow);
+    const std::size_t treeSeason = treeSeasonIndex(impl_->treeSeasons, static_cast<int>(dayOfYear),
+                                                   sharedVariables.roadWeather().groundSnow);
     IndirectCullingBatch& indirectBatch = impl_->indirectCullingBatch;
     IndirectCullingScope indirectScope;
     bool indirect = false;

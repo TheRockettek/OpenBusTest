@@ -1608,18 +1608,15 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             trafficVehicle.vehicle->variables.set("velocity", speedKmh);
             trafficVehicle.vehicle->variables.set("velocity_ground", speedKmh);
             if (!trafficVehicle.wheelRouteDistanceInitialized) {
-                trafficVehicle.previousWheelRouteDistanceMeters =
-                    renderSample.distanceMeters;
+                trafficVehicle.previousWheelRouteDistanceMeters = renderSample.distanceMeters;
                 trafficVehicle.wheelRouteDistanceInitialized = true;
             } else {
                 const std::optional<double> loopStart =
                     route.closed ? std::optional<double>(0.0) : route.loopStartDistance;
-                trafficVehicle.wheelTravelDistanceMeters +=
-                    openbus::app::trafficPresentationTravel(
-                        trafficVehicle.previousWheelRouteDistanceMeters,
-                        renderSample.distanceMeters, route.totalLength, loopStart);
-                trafficVehicle.previousWheelRouteDistanceMeters =
-                    renderSample.distanceMeters;
+                trafficVehicle.wheelTravelDistanceMeters += openbus::app::trafficPresentationTravel(
+                    trafficVehicle.previousWheelRouteDistanceMeters, renderSample.distanceMeters,
+                    route.totalLength, loopStart);
+                trafficVehicle.previousWheelRouteDistanceMeters = renderSample.distanceMeters;
             }
             const openbus::map::MapTrafficTurnSignal turnSignal =
                 trafficVehicle.vehicle->mapTrafficTileActive

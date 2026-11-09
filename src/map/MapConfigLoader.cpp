@@ -17,8 +17,16 @@
 #include <set>
 #include <stdexcept>
 #include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace openbus::map {
 
@@ -68,6 +76,50 @@ void appendUtf8(std::string& output, std::uint32_t codepoint) {
     }
 }
 
+std::string decodeActiveCodePageText(const std::string& value, const std::filesystem::path& path) {
+#ifdef _WIN32
+    if (value.empty()) {
+        return value;
+    }
+    if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        throw std::length_error("Map text file is too large to decode: " + pathToUtf8(path));
+    }
+    const int byteCount = static_cast<int>(value.size());
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), byteCount, nullptr, 0) >
+        0) {
+        return value;
+    }
+    const int wideCount =
+        MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, value.data(), byteCount, nullptr, 0);
+    if (wideCount == 0) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "Could not decode map text file: " + pathToUtf8(path));
+    }
+    std::wstring wideValue(static_cast<std::size_t>(wideCount), L'\0');
+    if (MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, value.data(), byteCount, wideValue.data(),
+                            wideCount) == 0) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "Could not decode map text file: " + pathToUtf8(path));
+    }
+    const int utf8Count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wideValue.data(),
+                                              wideCount, nullptr, 0, nullptr, nullptr);
+    if (utf8Count == 0) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "Could not encode map text as UTF-8: " + pathToUtf8(path));
+    }
+    std::string utf8Value(static_cast<std::size_t>(utf8Count), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wideValue.data(), wideCount,
+                            utf8Value.data(), utf8Count, nullptr, nullptr) == 0) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "Could not encode map text as UTF-8: " + pathToUtf8(path));
+    }
+    return utf8Value;
+#else
+    static_cast<void>(path);
+    return value;
+#endif
+}
+
 std::string decodeText(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -106,7 +158,8 @@ std::string decodeText(const std::filesystem::path& path) {
     }
     std::size_t offset =
         bytes.size() >= 3 && bytes[0] == 0xefU && bytes[1] == 0xbbU && bytes[2] == 0xbfU ? 3 : 0;
-    return std::string(bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.end());
+    return decodeActiveCodePageText(
+        std::string(bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.end()), path);
 }
 
 std::vector<std::string> splitLines(const std::string& text) {
@@ -267,6 +320,23 @@ std::optional<std::string> parseAiVehicleAssetPath(const std::string& sourceLine
     return trim(line.substr(0, assetEnd));
 }
 
+std::optional<std::string> parseAiTrainAssetPath(const std::string& sourceLine) {
+    const std::string line = trim(sourceLine);
+    if (isIgnoredAiListLine(line)) {
+        return std::nullopt;
+    }
+    const std::string normalizedLine = lowerAscii(line);
+    const std::size_t extensionPosition = normalizedLine.find(".zug");
+    if (extensionPosition == std::string::npos) {
+        return std::nullopt;
+    }
+    const std::size_t assetEnd = extensionPosition + 4;
+    if (assetEnd < line.size() && line[assetEnd] != ' ' && line[assetEnd] != '\t') {
+        return std::nullopt;
+    }
+    return trim(line.substr(0, assetEnd));
+}
+
 std::optional<int> parseAiBusTypeSection(const std::string& section) {
     constexpr std::string_view prefix = "[aigroup_depot_typgroup_";
     const std::string normalized = lowerAscii(section);
@@ -280,6 +350,42 @@ std::optional<int> parseAiBusTypeSection(const std::string& section) {
         return std::nullopt;
     }
     return type;
+}
+
+MapAiVehicleGroup parseAiVehicleGroupSection(const std::vector<std::string>& lines,
+                                             std::size_t& cursor,
+                                             std::vector<std::string>* trainAssetPaths = nullptr) {
+    MapAiVehicleGroup group;
+    while (cursor < lines.size()) {
+        const std::string& sourceLine = lines[cursor];
+        const std::string line = trim(sourceLine);
+        if (isSectionHeaderLine(line)) {
+            if (lowerAscii(line) == "[end]") {
+                ++cursor;
+            }
+            break;
+        }
+        ++cursor;
+        group.rawLines.push_back(sourceLine);
+        if (isIgnoredAiListLine(line)) {
+            continue;
+        }
+        if (const auto trainPath = parseAiTrainAssetPath(sourceLine)) {
+            if (trainAssetPaths != nullptr) {
+                trainAssetPaths->push_back(*trainPath);
+            }
+            continue;
+        }
+        const std::optional<std::string> assetPath = parseAiVehicleAssetPath(sourceLine);
+        if (assetPath) {
+            group.vehicles.push_back({*assetPath, sourceLine});
+        } else if (group.name.empty()) {
+            group.name = line;
+        } else if (group.hofName.empty()) {
+            group.hofName = line;
+        }
+    }
+    return group;
 }
 
 void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
@@ -299,6 +405,10 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
                     break;
                 }
                 ++cursor;
+                if (const auto trainPath = parseAiTrainAssetPath(sourceLine)) {
+                    aiTraffic.trainAssetPaths.push_back(*trainPath);
+                    continue;
+                }
                 const std::optional<std::string> assetPath = parseAiVehicleAssetPath(sourceLine);
                 if (!assetPath) {
                     continue;
@@ -316,28 +426,8 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
         }
         if (section == "[aigroup_2]") {
             currentDepotIndex.reset();
-            MapAiVehicleGroup group;
-            while (cursor < lines.size()) {
-                const std::string& sourceLine = lines[cursor];
-                const std::string line = trim(sourceLine);
-                if (isSectionHeaderLine(line)) {
-                    if (lowerAscii(line) == "[end]") {
-                        ++cursor;
-                    }
-                    break;
-                }
-                ++cursor;
-                group.rawLines.push_back(sourceLine);
-                if (isIgnoredAiListLine(line)) {
-                    continue;
-                }
-                const std::optional<std::string> assetPath = parseAiVehicleAssetPath(sourceLine);
-                if (assetPath) {
-                    group.vehicles.push_back({*assetPath, sourceLine});
-                } else if (group.name.empty()) {
-                    group.name = line;
-                }
-            }
+            MapAiVehicleGroup group =
+                parseAiVehicleGroupSection(lines, cursor, &aiTraffic.trainAssetPaths);
             if (!group.vehicles.empty()) {
                 aiTraffic.vehicleGroups.push_back(std::move(group));
             }
@@ -416,6 +506,19 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
         const std::optional<int> busType = parseAiBusTypeSection(section);
         if (!busType) {
             currentDepotIndex.reset();
+            if (section == "[end]") {
+                continue;
+            }
+            if (isSectionHeaderLine(section)) {
+                MapOpaqueSection unsupported;
+                unsupported.keyword = section.substr(1, section.size() - 2);
+                unsupported.sectionLine = cursor;
+                unsupported.sourcePath = path;
+                while (cursor < lines.size() && !isSectionHeaderLine(trim(lines[cursor]))) {
+                    unsupported.payloadLines.push_back(lines[cursor++]);
+                }
+                aiTraffic.unsupportedSections.push_back(std::move(unsupported));
+            }
             continue;
         }
         MapAiBusTypeDefinition definition;
@@ -598,6 +701,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
     std::unordered_map<std::string, std::filesystem::path> trackFiles;
     std::unordered_map<std::string, std::filesystem::path> tripsByName;
     std::unordered_map<std::string, std::filesystem::path> linesByName;
+    std::unordered_set<std::string> tripFilesWithoutStations;
     std::vector<std::filesystem::path> tripFiles;
     std::vector<std::filesystem::path> lineFiles;
     std::vector<std::filesystem::path> busStopsPaths;
@@ -639,7 +743,13 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         const std::size_t oldCount = aiTraffic.busStops.size();
         const std::vector<std::string> lines = splitLines(decodeText(busStopsPath));
         for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
-            if (lowerAscii(trim(lines[lineIndex])) != "[busstop]") {
+            const std::string section = lowerAscii(trim(lines[lineIndex]));
+            if (isSectionHeaderLine(section) && section != "[busstop]") {
+                diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                    "unsupported timetable section in " +
+                                        pathToUtf8(busStopsPath.filename()));
+            }
+            if (section != "[busstop]") {
                 continue;
             }
             std::array<std::string, 7> fields;
@@ -772,6 +882,10 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                                         "invalid or orphaned station-link path entry in " +
                                             pathToUtf8(stationLinksPath.filename()));
                 }
+            } else if (isSectionHeaderLine(section)) {
+                diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                    "unsupported timetable section in " +
+                                        pathToUtf8(stationLinksPath.filename()));
             }
         }
         std::set<std::pair<int, int>> overriddenLinks;
@@ -804,8 +918,16 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         route.timetableKey = lowerAscii(pathToUtf8(tripPath.stem()));
         passengerTimetable.timetableKey = route.timetableKey;
         std::size_t routeHeaderFields = 0;
+        bool hasStationSection = false;
         for (std::size_t lineIndex = 0; lineIndex < tripLines.size(); ++lineIndex) {
             const std::string section = lowerAscii(trim(tripLines[lineIndex]));
+            if (isSectionHeaderLine(section) && section != "[trip]" && section != "[station]" &&
+                section != "[station_typ2]" && section != "[profile]" &&
+                section != "[profile_man_arr_time]" && section != "[profile_man_dep_time]") {
+                diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                    "unsupported timetable section in " +
+                                        pathToUtf8(tripPath.filename()));
+            }
             if (section == "[trip]") {
                 std::array<std::string*, 3> fields = {&route.tripName, &route.destinationName,
                                                       &route.lineName};
@@ -819,6 +941,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                 }
                 lineIndex = next > 0 ? next - 1 : lineIndex;
             } else if (section == "[station]") {
+                hasStationSection = true;
                 std::array<std::string, 8> stationFields;
                 std::size_t next = lineIndex + 1;
                 bool complete = true;
@@ -861,6 +984,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                 }
                 lineIndex = next > 0 ? next - 1 : lineIndex;
             } else if (section == "[station_typ2]") {
+                hasStationSection = true;
                 const std::size_t valueLine = lineIndex + 1;
                 int stationId = 0;
                 if (valueLine < tripLines.size() &&
@@ -945,8 +1069,13 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         passengerTimetable.destinationName = route.destinationName;
         passengerTimetable.lineName = route.lineName;
         passengerTimetable.profiles = route.profiles;
-        if (routeHeaderFields != 3 || route.destinationName.empty() || route.lineName.empty() ||
-            route.stationCount == 0) {
+        if (routeHeaderFields < 2) {
+            continue;
+        }
+        if (route.stationCount == 0) {
+            if (!hasStationSection && !route.tripName.empty()) {
+                tripFilesWithoutStations.insert(route.timetableKey);
+            }
             continue;
         }
 
@@ -967,10 +1096,17 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             }
             continue;
         }
+        route.trackFilePath = trackFile->second;
         const std::vector<std::string> trackLines = splitLines(decodeText(trackFile->second));
         bool malformedTrackEntry = false;
         for (std::size_t lineIndex = 0; lineIndex < trackLines.size(); ++lineIndex) {
-            if (lowerAscii(trim(trackLines[lineIndex])) != "[track_entry]") {
+            const std::string section = lowerAscii(trim(trackLines[lineIndex]));
+            if (isSectionHeaderLine(section) && section != "[track_entry]") {
+                diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                    "unsupported timetable section in " +
+                                        pathToUtf8(trackFile->second.filename()));
+            }
+            if (section != "[track_entry]") {
                 continue;
             }
             std::size_t next = lineIndex + 1;
@@ -1012,7 +1148,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                                         pathToUtf8(trackFile->second.filename()));
                 continue;
             }
-            route.trackEntries.push_back({splineId, pathIndex, tileIndex, lengthMeters});
+            route.trackEntries.push_back({splineId, pathIndex, tileIndex, lengthMeters, next + 1});
             if (route.splineIds.empty() || route.splineIds.back() != splineId) {
                 route.splineIds.push_back(splineId);
             }
@@ -1022,6 +1158,9 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
             if (!passengerTimetable.stationIds.empty())
                 aiTraffic.passengerTimetables.push_back(std::move(passengerTimetable));
             continue;
+        }
+        if (route.destinationName.empty()) {
+            route.destinationName = route.timetableKey;
         }
         aiTraffic.timetableRoutes.push_back(std::move(route));
         if (!passengerTimetable.stationIds.empty()) {
@@ -1043,6 +1182,7 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
         const std::vector<std::string> lineLines = splitLines(decodeText(linePath));
         MapAiTimetableCourse course;
         course.name = pathToUtf8(linePath.stem());
+        std::unordered_set<std::string> unsupportedTripWarnings;
         for (std::size_t lineIndex = 0; lineIndex < lineLines.size(); ++lineIndex) {
             const std::string section = lowerAscii(trim(lineLines[lineIndex]));
             if (section == "[userallowed]") {
@@ -1050,6 +1190,11 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                 continue;
             }
             if (section != "[addtrip]") {
+                if (isSectionHeaderLine(section)) {
+                    diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                        "unsupported timetable section in " +
+                                            pathToUtf8(linePath.filename()));
+                }
                 continue;
             }
             std::array<std::string, 3> fields;
@@ -1088,9 +1233,20 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
                 });
             if (route == aiTraffic.timetableRoutes.end() &&
                 passengerTimetable == aiTraffic.passengerTimetables.end()) {
-                diagnostics.warning(lineIndex + 1, "addtrip",
-                                    "departure references missing trip " + fields[0] + " in " +
-                                        pathToUtf8(linePath.filename()));
+                const auto tripFile = tripsByName.find(timetableKey);
+                if (tripFile == tripsByName.end()) {
+                    diagnostics.warning(lineIndex + 1, "addtrip",
+                                        "departure references missing trip " + fields[0] + " in " +
+                                            pathToUtf8(linePath.filename()));
+                } else if (unsupportedTripWarnings.insert(timetableKey).second) {
+                    const std::string reason =
+                        tripFilesWithoutStations.contains(timetableKey)
+                            ? "trip file has no station records and does not define a supported "
+                              "timetable route: "
+                            : "trip file exists but does not contain a supported timetable route: ";
+                    diagnostics.warning(lineIndex + 1, "addtrip",
+                                        reason + pathToUtf8(tripFile->second.filename()));
+                }
             } else {
                 tripIndex = std::max(0, tripIndex);
                 course.trips.push_back({timetableKey, tripIndex, departureMinutes});
@@ -1141,29 +1297,34 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
     openbus::rendering::TraceScope passengerRoutesTrace(
         "map", "MapConfigLoader.timetables.resolvePassengerRoutes");
     for (MapAiPassengerTimetable& timetable : aiTraffic.passengerTimetables) {
-        if (!mapAiPassengerTimetableHasResolvedLinks(aiTraffic, timetable)) {
-            diagnostics.warning(
-                0, "passenger_timetable",
-                "timetable " + timetable.timetableKey +
-                    " has stop IDs without unique Busstops.cfg and directed StnLinks.cfg matches");
-            continue;
-        }
-        const bool hasDrivingRoute =
-            std::any_of(aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
-                        [&](const MapAiTimetableRoute& route) {
-                            return route.timetableKey == timetable.timetableKey;
-                        });
-        if (timetable.scheduledDepartureMinutes.empty()) {
-            continue;
-        }
-
-        const std::vector<MapAiPassengerStopCall> calls =
-            mapAiPassengerStopCalls(aiTraffic, timetable);
         const auto drivingRoute =
             std::find_if(aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
                          [&](const MapAiTimetableRoute& route) {
                              return route.timetableKey == timetable.timetableKey;
                          });
+        const bool hasDrivingRoute = drivingRoute != aiTraffic.timetableRoutes.end();
+        const bool hasCompleteAuthoredRoute =
+            hasDrivingRoute && !timetable.stationIds.empty() &&
+            drivingRoute->stationIds == timetable.stationIds &&
+            drivingRoute->stations.size() == timetable.stationIds.size() &&
+            !drivingRoute->trackEntries.empty();
+        if (hasCompleteAuthoredRoute) {
+            continue;
+        }
+        if (timetable.scheduledDepartureMinutes.empty()) {
+            continue;
+        }
+        if (!mapAiPassengerTimetableHasResolvedLinks(aiTraffic, timetable)) {
+            diagnostics.warning(
+                0, "passenger_timetable",
+                "timetable " + timetable.timetableKey +
+                    " has stop IDs without unique Busstops.cfg matches or unambiguous directed "
+                    "StnLinks.cfg paths");
+            continue;
+        }
+
+        const std::vector<MapAiPassengerStopCall> calls =
+            mapAiPassengerStopCalls(aiTraffic, timetable);
         if (hasDrivingRoute) {
             if (drivingRoute == aiTraffic.timetableRoutes.end() ||
                 !drivingRoute->stations.empty()) {
@@ -1447,23 +1608,35 @@ void parseAiTimetableRoutes(const std::vector<TimetableSource>& sources,
     profileTimingTrace.finish();
 }
 
-void parseDriverListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
+MapHumanModelList parseHumanModelListFile(const std::filesystem::path& path) {
     const std::vector<std::string> lines = splitLines(decodeText(path));
-    for (const std::string& sourceLine : lines) {
+    MapHumanModelList result;
+    for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+        const std::string& sourceLine = lines[lineIndex];
         const std::string line = trim(sourceLine);
-        if (!isIgnoredAiListLine(line) && hasExtension(line, ".hum")) {
-            aiTraffic.driverModelPaths.push_back(line);
+        if (isIgnoredAiListLine(line)) {
+            continue;
         }
+        if (hasExtension(line, ".hum")) {
+            result.assetPaths.push_back(line);
+        } else {
+            result.unsupportedEntries.push_back({line, lineIndex + 1});
+        }
+    }
+    return result;
+}
+
+void parseDriverListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
+    const auto list = parseHumanModelListFile(path);
+    for (const auto& assetPath : list.assetPaths) {
+        aiTraffic.driverModelPaths.push_back(assetPath);
     }
 }
 
 void parseHumanListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
-    const std::vector<std::string> lines = splitLines(decodeText(path));
-    for (const std::string& sourceLine : lines) {
-        const std::string line = trim(sourceLine);
-        if (!isIgnoredAiListLine(line) && hasExtension(line, ".hum")) {
-            aiTraffic.humanModelPaths.push_back(line);
-        }
+    const auto list = parseHumanModelListFile(path);
+    for (const auto& assetPath : list.assetPaths) {
+        aiTraffic.humanModelPaths.push_back(assetPath);
     }
 }
 
@@ -1490,23 +1663,53 @@ void parseTileFilename(const std::string& filename, int& x, int& y) {
     }
 }
 
-std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>>
-discoverGroundTextureSidecars(const std::filesystem::path& mapDirectory) {
-    std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>> sidecarsByTile;
+MapGroundTextureSidecarsByTile discoverGroundTextureSidecars(
+    const std::filesystem::path& mapDirectory, std::error_code* discoveryError = nullptr,
+    std::vector<MapGroundTextureSidecarIssue>* nonRegularSidecars = nullptr) {
+    MapGroundTextureSidecarsByTile sidecarsByTile;
+    if (discoveryError) {
+        discoveryError->clear();
+    }
+    if (nonRegularSidecars) {
+        nonRegularSidecars->clear();
+    }
     const std::filesystem::path sidecarDirectory = mapDirectory / "texture" / "map";
     std::error_code error;
+    const bool sidecarDirectoryExists = std::filesystem::exists(sidecarDirectory, error);
+    if (error) {
+        if (discoveryError && error != std::errc::no_such_file_or_directory) {
+            *discoveryError = error;
+        }
+        return sidecarsByTile;
+    }
+    if (!sidecarDirectoryExists) {
+        return sidecarsByTile;
+    }
+    const bool isDirectory = std::filesystem::is_directory(sidecarDirectory, error);
+    if (error) {
+        if (discoveryError) {
+            *discoveryError = error;
+        }
+        return sidecarsByTile;
+    }
+    if (!isDirectory) {
+        if (discoveryError) {
+            *discoveryError = std::make_error_code(std::errc::not_a_directory);
+        }
+        return sidecarsByTile;
+    }
+
     std::filesystem::directory_iterator iterator(sidecarDirectory, error);
     if (error) {
+        if (discoveryError) {
+            *discoveryError = error;
+        }
         return sidecarsByTile;
     }
     const std::filesystem::directory_iterator end;
     for (; iterator != end; iterator.increment(error)) {
         if (error) {
             break;
-        }
-        std::error_code statusError;
-        if (!iterator->is_regular_file(statusError) || statusError) {
-            continue;
         }
         const std::string candidate = pathToUtf8(iterator->path().filename());
         constexpr std::string_view extension = ".dds";
@@ -1523,12 +1726,42 @@ discoverGroundTextureSidecars(const std::filesystem::path& mapDirectory) {
         if (!tileFilename.ends_with(".map")) {
             continue;
         }
-        if (suffix.empty() || !std::all_of(suffix.begin(), suffix.end(), [](unsigned char value) {
-                return std::isdigit(value) != 0;
-            })) {
+        std::error_code statusError;
+        const bool regularFile = iterator->is_regular_file(statusError);
+        if (statusError) {
+            if (discoveryError && statusError != std::errc::no_such_file_or_directory &&
+                statusError != std::errc::not_a_directory) {
+                *discoveryError = statusError;
+            }
             continue;
         }
-        sidecarsByTile[tileFilename].push_back({suffix, iterator->path()});
+        if (!regularFile) {
+            if (nonRegularSidecars) {
+                nonRegularSidecars->push_back(
+                    {lowerAscii(tileFilename), iterator->path(),
+                     "Ground-texture sidecar path exists but is not a regular file"});
+            }
+            continue;
+        }
+        if (suffix.empty()) {
+            if (nonRegularSidecars) {
+                nonRegularSidecars->push_back({lowerAscii(tileFilename), iterator->path(),
+                                               "Ground-texture sidecar suffix is empty"});
+            }
+            continue;
+        }
+        if (!std::all_of(suffix.begin(), suffix.end(),
+                         [](unsigned char value) { return std::isdigit(value) != 0; })) {
+            if (nonRegularSidecars) {
+                nonRegularSidecars->push_back({lowerAscii(tileFilename), iterator->path(),
+                                               "Ground-texture sidecar suffix is not numeric"});
+            }
+            continue;
+        }
+        sidecarsByTile[lowerAscii(tileFilename)].push_back({suffix, iterator->path()});
+    }
+    if (error && discoveryError) {
+        *discoveryError = error;
     }
     for (auto& [tileFilename, sidecars] : sidecarsByTile) {
         static_cast<void>(tileFilename);
@@ -1636,6 +1869,7 @@ void loadMapEnvironmentConfigFile(MapDefinition& definition,
             MapOpaqueSection opaqueSection;
             opaqueSection.keyword = keyword;
             opaqueSection.sectionLine = sectionLine + 1;
+            opaqueSection.sourcePath = configPath;
             while (cursor < lines.size() && !isSectionHeaderLine(trim(lines[cursor]))) {
                 opaqueSection.payloadLines.push_back(lines[cursor++]);
             }
@@ -2083,6 +2317,171 @@ void applyMapChronoSelector(MapTileData& tile, const MapChronoSelector& selector
 
 } // namespace
 
+MapGroundTextureSidecarsByTile
+discoverMapGroundTextureSidecars(const std::filesystem::path& mapDirectory, std::error_code& error,
+                                 std::vector<MapGroundTextureSidecarIssue>* nonRegularSidecars) {
+    return discoverGroundTextureSidecars(mapDirectory, &error, nonRegularSidecars);
+}
+
+std::vector<int> loadMapChronoTransitionDates(const std::filesystem::path& configPath,
+                                              ConfigurationDiagnostics& diagnostics) {
+    const auto range = loadMapChronoDateRange(configPath, diagnostics);
+    if (!range) {
+        return {};
+    }
+    const auto asInteger = [](std::chrono::year_month_day date) {
+        return static_cast<int>(date.year()) * 10000 +
+               static_cast<int>(static_cast<unsigned>(date.month())) * 100 +
+               static_cast<int>(static_cast<unsigned>(date.day()));
+    };
+    std::vector<int> dates{asInteger(range->start)};
+    if (range->end) {
+        const std::chrono::year_month_day next{std::chrono::sys_days{*range->end} +
+                                               std::chrono::days{1}};
+        if (static_cast<int>(next.year()) <= 9999) {
+            dates.push_back(asInteger(next));
+        }
+    }
+    return dates;
+}
+
+MapChronoConfigData loadMapChronoConfigData(const std::filesystem::path& configPath,
+                                            ConfigurationDiagnostics& diagnostics) {
+    const auto lines = splitLines(decodeText(configPath));
+    MapChronoConfigData result;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const std::string section = lowerAscii(trim(lines[index]));
+        if (section == "[startdate]" || section == "[enddate]") {
+            continue;
+        }
+        if (section != "[ticketpack]" && section != "[moneysystem]") {
+            if (!isSectionHeaderLine(trim(lines[index]))) {
+                continue;
+            }
+            MapOpaqueSection unsupported;
+            const std::string originalSection = trim(lines[index]);
+            unsupported.keyword = originalSection.substr(1, originalSection.size() - 2);
+            unsupported.sectionLine = index + 1;
+            unsupported.sourcePath = configPath;
+            while (index + 1 < lines.size() && !isSectionHeaderLine(trim(lines[index + 1]))) {
+                unsupported.payloadLines.push_back(lines[++index]);
+            }
+            result.unsupportedSections.push_back(std::move(unsupported));
+            continue;
+        }
+        std::size_t valueIndex = index + 1;
+        while (valueIndex < lines.size() && trim(lines[valueIndex]).empty()) {
+            ++valueIndex;
+        }
+        if (valueIndex >= lines.size() || isSectionHeaderLine(trim(lines[valueIndex]))) {
+            diagnostics.warning(index + 1, section.substr(1, section.size() - 2),
+                                "Chrono asset reference is missing");
+            continue;
+        }
+        const std::string reference = trim(lines[valueIndex]);
+        if (reference.empty()) {
+            diagnostics.warning(index + 1, section.substr(1, section.size() - 2),
+                                "Chrono asset reference is empty");
+        } else {
+            result.assetReferences.push_back(
+                {section.substr(1, section.size() - 2), reference, valueIndex + 1});
+        }
+        index = valueIndex;
+    }
+    return result;
+}
+
+MapAiTrafficData loadMapChronoAiTrafficData(const std::filesystem::path& updatePath) {
+    MapAiTrafficData traffic;
+    parseAiListFile(updatePath, traffic);
+    return traffic;
+}
+
+std::vector<std::string> loadMapHumanModelAssetPaths(const std::filesystem::path& listPath) {
+    return loadMapHumanModelList(listPath).assetPaths;
+}
+
+std::vector<std::string> loadMapDriverModelAssetPaths(const std::filesystem::path& listPath) {
+    return loadMapHumanModelList(listPath).assetPaths;
+}
+
+MapHumanModelList loadMapHumanModelList(const std::filesystem::path& listPath) {
+    return parseHumanModelListFile(listPath);
+}
+
+std::vector<std::string> loadMapChronoAiVehicleAssetPaths(const std::filesystem::path& updatePath) {
+    const auto lines = splitLines(decodeText(updatePath));
+    std::vector<std::string> paths;
+    for (std::size_t sectionIndex = 0; sectionIndex < lines.size(); ++sectionIndex) {
+        const std::string section = lowerAscii(trim(lines[sectionIndex]));
+        if (section != "[ailist]" && section != "[aigroup_2]" && !parseAiBusTypeSection(section)) {
+            continue;
+        }
+        for (std::size_t lineIndex = sectionIndex + 1; lineIndex < lines.size(); ++lineIndex) {
+            const std::string line = trim(lines[lineIndex]);
+            if (isSectionHeaderLine(line)) {
+                break;
+            }
+            if (isIgnoredAiListLine(line)) {
+                continue;
+            }
+            if (section == "[ailist]" || section == "[aigroup_2]") {
+                if (const auto path = parseAiVehicleAssetPath(lines[lineIndex])) {
+                    paths.push_back(*path);
+                }
+                continue;
+            }
+            if (const auto path = parseAiVehicleAssetPath(lines[lineIndex])) {
+                paths.push_back(*path);
+            }
+            break;
+        }
+    }
+    return paths;
+}
+
+std::vector<std::string> loadMapChronoAiTrainAssetPaths(const std::filesystem::path& updatePath) {
+    const auto lines = splitLines(decodeText(updatePath));
+    std::vector<std::string> paths;
+    for (std::size_t sectionIndex = 0; sectionIndex < lines.size(); ++sectionIndex) {
+        const std::string section = lowerAscii(trim(lines[sectionIndex]));
+        if (section != "[ailist]" && section != "[aigroup_2]") {
+            continue;
+        }
+        for (std::size_t lineIndex = sectionIndex + 1; lineIndex < lines.size(); ++lineIndex) {
+            const std::string line = trim(lines[lineIndex]);
+            if (isSectionHeaderLine(line)) {
+                break;
+            }
+            if (const auto path = parseAiTrainAssetPath(lines[lineIndex])) {
+                paths.push_back(*path);
+            }
+        }
+    }
+    return paths;
+}
+
+std::vector<std::string> loadMapTrainVehicleAssetPaths(const std::filesystem::path& trainPath) {
+    return loadMapTrainConsistDefinition(trainPath).vehicleAssetPaths;
+}
+
+MapTrainConsistDefinition loadMapTrainConsistDefinition(const std::filesystem::path& trainPath) {
+    const auto lines = splitLines(decodeText(trainPath));
+    MapTrainConsistDefinition definition;
+    for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+        const std::string line = trim(lines[lineIndex]);
+        const std::string section = lowerAscii(line);
+        if (isSectionHeaderLine(line) && section != "[end]") {
+            definition.unsupportedSections.push_back(
+                {section.substr(1, section.size() - 2), lineIndex + 1, {}, trainPath});
+        }
+        if (const auto path = parseAiVehicleAssetPath(lines[lineIndex])) {
+            definition.vehicleAssetPaths.push_back(*path);
+        }
+    }
+    return definition;
+}
+
 std::size_t applyMapChronoTimetables(MapDefinition& map, int dateYyyyMmDd) {
     const auto date = checkedChronoDate(dateYyyyMmDd);
     struct ActiveScenario {
@@ -2188,7 +2587,8 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
     return appliedTileCount;
 }
 
-MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
+MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory,
+                                bool allowAllTilesMissing) {
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapDefinition");
     const auto loadStart = std::chrono::steady_clock::now();
     Logger mapLog("Map");
@@ -2469,7 +2869,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             tile.terrainReadinessPath = pathWithSuffix(tile.textPath, ".terrain_0.rdy");
             tile.hasTerrainReadinessFile =
                 std::filesystem::is_regular_file(tile.terrainReadinessPath);
-            const auto sidecars = groundTextureSidecarsByTile.find(filename);
+            const auto sidecars = groundTextureSidecarsByTile.find(lowerAscii(filename));
             if (sidecars != groundTextureSidecarsByTile.end()) {
                 tile.groundTextureSidecars = sidecars->second;
             }
@@ -2485,6 +2885,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             MapOpaqueSection opaqueSection;
             opaqueSection.keyword = section.substr(1, section.size() - 2);
             opaqueSection.sectionLine = sectionLine + 1;
+            opaqueSection.sourcePath = globalPath;
             while (cursor < lines.size() && !isSectionHeader(trim(lines[cursor]))) {
                 opaqueSection.payloadLines.push_back(lines[cursor++]);
             }
@@ -2496,7 +2897,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     loadMapEnvironmentConfigFile(definition, environmentDirectory / "clouds.cfg");
     manifestTrace.finish();
 
-    if (definition.tiles.empty()) {
+    if (definition.tiles.empty() && (!allowAllTilesMissing || tileOrdinalToUniqueIndex.empty())) {
         throw std::runtime_error("No [map] tile records found in " + pathToUtf8(globalPath));
     }
     std::vector<int> tileRows;
@@ -2504,8 +2905,10 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     for (const MapTileReference& tile : definition.tiles) {
         tileRows.push_back(tile.y);
     }
-    definition.coordinates =
-        MapCoordinates::forRows(definition.metadata.hasWorldCoordinates, std::move(tileRows));
+    if (!tileRows.empty()) {
+        definition.coordinates =
+            MapCoordinates::forRows(definition.metadata.hasWorldCoordinates, std::move(tileRows));
+    }
     std::erase_if(definition.entryPoints, [&](const MapEntryPoint& entryPoint) {
         if (entryPoint.tileIndex >= 0 &&
             static_cast<std::size_t>(entryPoint.tileIndex) < tileOrdinalToUniqueIndex.size() &&
@@ -2662,9 +3065,11 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
         std::size_t next = lineIndex + 1;
         while (next < lines.size() && !isSectionHeaderLine(trim(lines[next]))) {
             const std::string field = trim(lines[next++]);
-            if (!field.empty()) {
-                fields.push_back(field);
+            if (field.empty() || field.starts_with("#") || field.starts_with(";") ||
+                field.starts_with("//")) {
+                continue;
             }
+            fields.push_back(field);
         }
         return std::pair{std::move(fields), next};
     };
@@ -2733,6 +3138,9 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
             if (next > lineIndex + 1) {
                 lineIndex = next - 1;
             }
+        } else if (isSectionHeaderLine(section)) {
+            definition.diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                           "unsupported ticket-pack section");
         } else {
             continue;
         }
@@ -2745,6 +3153,10 @@ MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& cur
         throw std::runtime_error("Currency configuration is missing: " + pathToUtf8(currencyPath));
     }
     const std::vector<std::string> lines = splitLines(decodeText(currencyPath));
+    const auto isTemplatePlaceholder = [](const std::string& value) {
+        const std::string field = trim(value);
+        return field.size() >= 2 && field.front() == '{' && field.back() == '}';
+    };
     MapCurrencyDefinition definition;
     for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
         const std::string section = lowerAscii(trim(lines[lineIndex]));
@@ -2755,31 +3167,47 @@ MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& cur
             }
             if (next + 1 < lines.size() && !isSectionHeaderLine(trim(lines[next])) &&
                 !isSectionHeaderLine(trim(lines[next + 1]))) {
-                definition.name = trim(lines[next]);
-                definition.mode = trim(lines[next + 1]);
+                const std::string name = trim(lines[next]);
+                const std::string mode = trim(lines[next + 1]);
+                if (!isTemplatePlaceholder(name) || !isTemplatePlaceholder(mode)) {
+                    definition.name = name;
+                    definition.mode = mode;
+                }
                 lineIndex = next + 1;
             } else {
                 definition.diagnostics.warning(lineIndex + 1, "currency",
                                                "incomplete currency header in " +
                                                    pathToUtf8(currencyPath.filename()));
             }
-        } else if (section == "[coin]") {
+        } else if (section == "[coin]" || section == "[bill]") {
             std::size_t next = lineIndex + 1;
             while (next < lines.size() && trim(lines[next]).empty()) {
                 ++next;
             }
             double value = 0.0;
             if (next + 1 < lines.size() && !isSectionHeaderLine(trim(lines[next])) &&
-                !isSectionHeaderLine(trim(lines[next + 1])) &&
-                parseReal(trim(lines[next + 1]), value) && value > 0.0 &&
-                value <= static_cast<double>((std::numeric_limits<float>::max)())) {
-                definition.coins.push_back({trim(lines[next]), value});
-                lineIndex = next + 1;
-            } else {
-                definition.diagnostics.warning(lineIndex + 1, "coin",
-                                               "invalid or incomplete coin entry in " +
-                                                   pathToUtf8(currencyPath.filename()));
+                !isSectionHeaderLine(trim(lines[next + 1]))) {
+                const std::string modelPath = trim(lines[next]);
+                const std::string valueText = trim(lines[next + 1]);
+                if (isTemplatePlaceholder(modelPath) && isTemplatePlaceholder(valueText)) {
+                    lineIndex = next + 1;
+                    continue;
+                }
+                if (parseReal(valueText, value) && value > 0.0 &&
+                    value <= static_cast<double>((std::numeric_limits<float>::max)())) {
+                    auto& items = section == "[coin]" ? definition.coins : definition.bills;
+                    items.push_back({modelPath, value});
+                    lineIndex = next + 1;
+                    continue;
+                }
             }
+            const std::string keyword = section == "[coin]" ? "coin" : "bill";
+            definition.diagnostics.warning(lineIndex + 1, keyword,
+                                           "invalid or incomplete " + keyword + " entry in " +
+                                               pathToUtf8(currencyPath.filename()));
+        } else if (isSectionHeaderLine(section)) {
+            definition.diagnostics.warning(lineIndex + 1, section.substr(1, section.size() - 2),
+                                           "unsupported currency section");
         }
     }
     return definition;
@@ -2852,7 +3280,7 @@ mapAiPassengerStopCalls(const MapAiTrafficData& traffic, const MapAiPassengerTim
         }
         if (stationIndex + 1 < timetable.stationIds.size()) {
             std::optional<std::size_t> matchingLink;
-            bool duplicateLink = false;
+            bool ambiguousLink = false;
             for (std::size_t linkIndex = 0; linkIndex < traffic.stationLinks.size(); ++linkIndex) {
                 const MapAiStationLink& link = traffic.stationLinks[linkIndex];
                 if (link.fromStopId != call.stationId ||
@@ -2860,12 +3288,15 @@ mapAiPassengerStopCalls(const MapAiTrafficData& traffic, const MapAiPassengerTim
                     continue;
                 }
                 if (matchingLink) {
-                    duplicateLink = true;
-                    break;
+                    if (traffic.stationLinks[*matchingLink].entries != link.entries) {
+                        ambiguousLink = true;
+                        break;
+                    }
+                    continue;
                 }
                 matchingLink = linkIndex;
             }
-            if (!duplicateLink) {
+            if (!ambiguousLink) {
                 call.outgoingStationLinkIndex = matchingLink;
             }
         }
@@ -4053,6 +4484,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             MapOpaqueSection opaqueSection;
             opaqueSection.keyword = section.substr(1, section.size() - 2);
             opaqueSection.sectionLine = cursor + 1;
+            opaqueSection.sourcePath = tile.textPath;
             std::size_t field = cursor + 1;
             while (field < lines.size()) {
                 const std::string candidate = trim(lines[field]);

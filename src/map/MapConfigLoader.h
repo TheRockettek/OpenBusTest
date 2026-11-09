@@ -12,6 +12,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -44,6 +46,22 @@ struct MapOpaqueSection {
     std::string keyword;
     std::size_t sectionLine = 0;
     std::vector<std::string> payloadLines;
+    std::filesystem::path sourcePath;
+};
+
+struct MapTrainConsistDefinition {
+    std::vector<std::string> vehicleAssetPaths;
+    std::vector<MapOpaqueSection> unsupportedSections;
+};
+
+struct MapHumanModelListIssue {
+    std::string value;
+    std::size_t line = 0;
+};
+
+struct MapHumanModelList {
+    std::vector<std::string> assetPaths;
+    std::vector<MapHumanModelListIssue> unsupportedEntries;
 };
 
 struct MapCloudTypeDefinition {
@@ -107,16 +125,19 @@ struct MapTicketPackDefinition {
     ConfigurationDiagnostics diagnostics;
 };
 
-struct MapCurrencyCoinDefinition {
+struct MapCurrencyItemDefinition {
     std::string modelPath;
     double value = 0.0;
 };
+
+using MapCurrencyCoinDefinition = MapCurrencyItemDefinition;
 
 struct MapCurrencyDefinition {
     std::string name;
     std::string mode;
     std::vector<MapCurrencyCoinDefinition> coins;
     ConfigurationDiagnostics diagnostics;
+    std::vector<MapCurrencyItemDefinition> bills;
 };
 
 struct MapTrafficDensityPoint {
@@ -149,6 +170,7 @@ struct MapAiVehicleGroup {
     std::string name;
     std::vector<std::string> rawLines;
     std::vector<MapAiVehicleEntry> vehicles;
+    std::string hofName;
 };
 
 struct MapAiBusTypeDefinition {
@@ -181,6 +203,7 @@ struct MapAiTimetableRoute {
     std::string destinationName;
     std::string lineName;
     std::size_t stationCount = 0;
+    std::filesystem::path trackFilePath;
     struct Station {
         int id = 0;
         int trackEntryIndex = 0;
@@ -201,6 +224,7 @@ struct MapAiTimetableRoute {
         int pathIndex = 0;
         int tileIndex = 0;
         double lengthMeters = 0.0;
+        std::size_t sourceLine = 0;
         bool operator==(const TrackEntry&) const = default;
     };
     std::vector<TrackEntry> trackEntries;
@@ -286,6 +310,7 @@ struct MapAiTrafficData {
     std::vector<MapAiTrafficDensityGroup> unscheduledTrafficDensityGroups;
     std::vector<MapAiBusTypeDefinition> busTypes;
     std::vector<MapAiDepotDefinition> depots;
+    std::vector<std::string> trainAssetPaths;
     std::vector<MapAiTimetableRoute> timetableRoutes;
     std::vector<MapAiTimetableCourse> timetableCourses;
     std::vector<MapAiBusStop> busStops;
@@ -296,6 +321,7 @@ struct MapAiTrafficData {
     // These paths are relative to the OMSI installation root.
     std::vector<std::string> humanModelPaths;
     std::vector<std::string> driverModelPaths;
+    std::vector<MapOpaqueSection> unsupportedSections;
 };
 
 struct MapAiRoadVehicle {
@@ -342,6 +368,15 @@ struct MapGroundTextureSidecar {
     std::string ordinalSuffix;
     std::filesystem::path path;
 };
+
+struct MapGroundTextureSidecarIssue {
+    std::string tileFilename;
+    std::filesystem::path path;
+    std::string detail;
+};
+
+using MapGroundTextureSidecarsByTile =
+    std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>>;
 
 struct MapChronoBaseAssets {
     std::filesystem::path textPath;
@@ -527,6 +562,17 @@ struct MapChronoTileData {
     ConfigurationDiagnostics diagnostics;
 };
 
+struct MapChronoAssetReference {
+    std::string keyword;
+    std::string path;
+    std::size_t line = 0;
+};
+
+struct MapChronoConfigData {
+    std::vector<MapChronoAssetReference> assetReferences;
+    std::vector<MapOpaqueSection> unsupportedSections;
+};
+
 struct TerrainGrid {
     // OMSI stores the number of intervals; each axis therefore has one extra
     // vertex (Grande Porto: 60 intervals, 61 x 61 float32 heights).
@@ -542,10 +588,29 @@ struct WaterData {
     std::vector<WaterSurface> surfaces;
 };
 
-MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory);
+// The validation-only option retains missing-tile diagnostics and traffic lists
+// when every listed tile is absent; such a definition is not usable for gameplay.
+MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory,
+                                bool allowAllTilesMissing = false);
+MapGroundTextureSidecarsByTile discoverMapGroundTextureSidecars(
+    const std::filesystem::path& mapDirectory, std::error_code& error,
+    std::vector<MapGroundTextureSidecarIssue>* nonRegularSidecars = nullptr);
 std::size_t applyMapChronoTimetables(MapDefinition& map, int dateYyyyMmDd);
+// Dates at which this scenario's active state can change; invalid ranges produce diagnostics.
+std::vector<int> loadMapChronoTransitionDates(const std::filesystem::path& configPath,
+                                              ConfigurationDiagnostics& diagnostics);
+MapChronoConfigData loadMapChronoConfigData(const std::filesystem::path& configPath,
+                                            ConfigurationDiagnostics& diagnostics);
+MapAiTrafficData loadMapChronoAiTrafficData(const std::filesystem::path& updatePath);
+std::vector<std::string> loadMapHumanModelAssetPaths(const std::filesystem::path& listPath);
+std::vector<std::string> loadMapDriverModelAssetPaths(const std::filesystem::path& listPath);
+MapHumanModelList loadMapHumanModelList(const std::filesystem::path& listPath);
+std::vector<std::string> loadMapChronoAiVehicleAssetPaths(const std::filesystem::path& updatePath);
+std::vector<std::string> loadMapChronoAiTrainAssetPaths(const std::filesystem::path& updatePath);
+std::vector<std::string> loadMapTrainVehicleAssetPaths(const std::filesystem::path& trainPath);
 MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path& ticketPackPath);
 MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& currencyPath);
+MapTrainConsistDefinition loadMapTrainConsistDefinition(const std::filesystem::path& trainPath);
 std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd);
 std::size_t selectMapSpawnPoint(const MapDefinition& map, std::string_view selector);
 std::size_t selectMapEntryPoint(const MapDefinition& map, std::string_view selector);

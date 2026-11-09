@@ -1,22 +1,14 @@
 #include "app/vehicle/VehiclePreferences.h"
 
-#include <atomic>
-#include <chrono>
+#include "core/AtomicFile.h"
+
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
-#include <system_error>
 #include <utility>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace openbus::app {
 namespace {
@@ -44,60 +36,6 @@ double odometerBaseMetres(VehicleOdometerMode mode, double initialKilometres) {
     }
     }
     throw std::invalid_argument("Invalid vehicle odometer mode");
-}
-
-struct TemporaryFile {
-    std::filesystem::path path;
-    bool committed = false;
-
-    ~TemporaryFile() {
-        if (!committed) {
-            std::error_code ignored;
-            std::filesystem::remove(path, ignored);
-        }
-    }
-};
-
-template <typename WriteContent>
-void writeAtomically(const std::filesystem::path& path, WriteContent&& writeContent) {
-    static std::atomic<std::uint64_t> sequence = 0;
-    std::filesystem::path temporaryPath = path;
-    temporaryPath += ".tmp-" +
-                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                     "-" + std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
-    TemporaryFile temporary{temporaryPath};
-
-    std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
-    if (!output) {
-        throw std::runtime_error("Unable to write temporary preferences file: " +
-                                 temporaryPath.string());
-    }
-    writeContent(output);
-    output.flush();
-    if (!output) {
-        throw std::runtime_error("Failed while writing temporary preferences file: " +
-                                 temporaryPath.string());
-    }
-    output.close();
-    if (!output) {
-        throw std::runtime_error("Failed to close temporary preferences file: " +
-                                 temporaryPath.string());
-    }
-
-#ifdef _WIN32
-    if (MoveFileExW(temporaryPath.c_str(), path.c_str(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
-        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
-                                "Unable to replace preferences file " + path.string());
-    }
-#else
-    std::error_code error;
-    std::filesystem::rename(temporaryPath, path, error);
-    if (error) {
-        throw std::system_error(error, "Unable to replace preferences file " + path.string());
-    }
-#endif
-    temporary.committed = true;
 }
 
 } // namespace
@@ -144,7 +82,7 @@ loadVehicleRegistrationPreferences(const std::filesystem::path& path) {
 
 void saveVehicleRegistrationPreferences(const std::filesystem::path& path,
                                         const VehicleRegistrationPreferences& preferences) {
-    writeAtomically(path, [&](std::ostream& output) {
+    core::writeFileAtomically(path, [&](std::ostream& output) {
         output << FILE_HEADER << '\n';
         for (const auto& [key, preference] : preferences) {
             output << std::quoted(key) << ' ' << std::quoted(preference.vehicleNumber) << ' '
@@ -281,7 +219,7 @@ void saveVehicleOdometerPreferences(const std::filesystem::path& path,
         validateOdometerMetres(entry.second);
     }
 
-    writeAtomically(path, [&](std::ostream& output) {
+    core::writeFileAtomically(path, [&](std::ostream& output) {
         output << ODOMETER_FILE_HEADER << '\n'
                << std::setprecision(17) << "global " << preferences.globalMetres << '\n';
         for (const auto& [key, metres] : preferences.modelMetres) {

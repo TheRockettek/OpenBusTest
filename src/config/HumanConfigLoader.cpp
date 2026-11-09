@@ -122,6 +122,8 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
                 configuration.diagnostics.warning(line.number, keyword,
                                                   "duplicate voice ignored; first retained");
             }
+        } else {
+            configuration.diagnostics.warning(line.number, line.keyword(), "unknown human keyword");
         }
     }
 

@@ -10,12 +10,11 @@
 namespace openbus::app {
 
 inline double trafficPresentationTravel(double previousDistance, double currentDistance,
-                                        double routeLength,
-                                        std::optional<double> loopStart) {
+                                        double routeLength, std::optional<double> loopStart) {
     if (!std::isfinite(previousDistance) || !std::isfinite(currentDistance) ||
         !std::isfinite(routeLength) || routeLength <= 0.0 ||
-        (loopStart && (!std::isfinite(*loopStart) || *loopStart < 0.0 ||
-                       *loopStart >= routeLength))) {
+        (loopStart &&
+         (!std::isfinite(*loopStart) || *loopStart < 0.0 || *loopStart >= routeLength))) {
         throw std::invalid_argument("Invalid traffic presentation travel");
     }
     const double delta = currentDistance - previousDistance;
@@ -30,9 +29,9 @@ inline double trafficPresentationTravel(double previousDistance, double currentD
     }
     const double loopLength = routeLength - *loopStart;
     const double wrapped = std::fmod(delta, loopLength);
-    const double tolerance = 32.0 * std::numeric_limits<double>::epsilon() *
-                             std::max({1.0, std::abs(previousDistance),
-                                       std::abs(currentDistance), loopLength});
+    const double tolerance =
+        32.0 * std::numeric_limits<double>::epsilon() *
+        std::max({1.0, std::abs(previousDistance), std::abs(currentDistance), loopLength});
     if (std::abs(wrapped) <= tolerance) {
         return 0.0;
     }

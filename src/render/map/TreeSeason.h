@@ -10,8 +10,8 @@
 
 namespace openbus::rendering::map_detail {
 
-inline constexpr std::array<const char*, 5> treeSeasonDirectories = {
-    "Summer", "Spring", "Fall", "Winter", "WinterSnow"};
+inline constexpr std::array<const char*, 5> treeSeasonDirectories = {"Summer", "Spring", "Fall",
+                                                                     "Winter", "WinterSnow"};
 inline constexpr double treeSnowThreshold = 1.0 / 255.0;
 
 struct TreeSeasonPeriod {

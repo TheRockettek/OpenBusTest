@@ -331,12 +331,14 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 sourceLine.substr(1, sourceLine.size() - 2),
                 "directive has no applicable preceding texture mapping");
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            const std::string keyword = sourceLine.substr(1, sourceLine.size() - 2);
+            profile.unsupportedDirectives.push_back({keyword, sectionLine});
             logStatus(sectionLine, section.substr(1, section.size() - 2),
                       openbus::config::ConfigurationTagStatus::Unknown,
                       "unknown spline-profile directive");
-            openbus::config::logUnhandledConfigurationTag(
-                "spline profile (.sli)", path, sectionLine,
-                sourceLine.substr(1, sourceLine.size() - 2), "directive is not implemented");
+            openbus::config::logUnhandledConfigurationTag("spline profile (.sli)", path,
+                                                          sectionLine, keyword,
+                                                          "directive is not implemented");
         }
     }
 

@@ -55,6 +55,7 @@ endfunction()
 openbus_add_module(openbus_core
     SOURCES
         core/ActiveMetarStations.cpp
+        core/AtomicFile.cpp
         core/Logger.cpp
         core/Metar.cpp
         core/MetarNoaa.cpp
@@ -113,6 +114,8 @@ openbus_add_module(openbus_assets
         assets/ScreenshotWriter.cpp
         assets/TextureAssetLoader.cpp
         assets/TextureLoader.cpp
+        assets/VehicleTextureResolver.cpp
+        assets/WavLoader.cpp
         assets/XLoader.cpp
     DEPENDS
         openbus_core
@@ -130,6 +133,7 @@ openbus_add_module(openbus_physics
         physics/RoadFeatures.cpp
         physics/World.cpp
     DEPENDS
+        openbus_core
         openbus_config
         openbus_assets
         ${OPENBUS_ODE_TARGET}
@@ -137,6 +141,10 @@ openbus_add_module(openbus_physics
 
 openbus_add_module(openbus_map
     SOURCES
+        map/MapAssetValidation.cpp
+        map/MapBakeArchive.cpp
+        map/MapBakeMapIndex.cpp
+        map/MapBakeManifest.cpp
         map/MapCollisionBuilder.cpp
         map/MapCollisionStreamer.cpp
         map/MapConfigLoader.cpp
@@ -172,6 +180,7 @@ openbus_add_module(openbus_audio
         audio/SoundEngine.cpp
         audio/VehicleSoundBank.cpp
     DEPENDS
+        openbus_assets
         openbus_config
     PRIVATE_DEPENDS
         OpenAL::OpenAL

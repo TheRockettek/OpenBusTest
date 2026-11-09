@@ -49,6 +49,22 @@ void runProbe() {
     }
     std::filesystem::create_directories(root);
     try {
+        const auto datesPath = root / "dates.cfg";
+        ConfigurationDiagnostics dateDiagnostics;
+        writeUtf16Le(datesPath, "[startdate]\n20200228\n[enddate]\n20200229\n");
+        require(openbus::map::loadMapChronoTransitionDates(datesPath, dateDiagnostics) ==
+                    std::vector<int>{20200228, 20200301} &&
+                    dateDiagnostics.entries.empty(),
+                "Chrono transitions respect inclusive leap-day end dates");
+        writeUtf16Le(datesPath, "[startdate]\n99991231\n[enddate]\n99991231\n");
+        require(openbus::map::loadMapChronoTransitionDates(datesPath, dateDiagnostics) ==
+                    std::vector<int>{99991231},
+                "Chrono transitions do not exceed the supported date range");
+        writeUtf16Le(datesPath, "[startdate]\n20210101\n[enddate]\n20201231\n");
+        require(openbus::map::loadMapChronoTransitionDates(datesPath, dateDiagnostics).empty() &&
+                    !dateDiagnostics.entries.empty(),
+                "invalid Chrono ranges retain the runtime diagnostics");
+
         const std::string chronoText =
             "Chrono fixture comment\n[version]\n14\n"
             "[selobject]\n30273\n[typ]\n1\nScenery\\selected.sco\n"

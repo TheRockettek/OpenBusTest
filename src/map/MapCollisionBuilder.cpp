@@ -9,6 +9,7 @@
 #include "config/ModelConfigLoader.h"
 #include "config/TextureSurfaceConfigLoader.h"
 #include "assets/O3DLoader.h"
+#include "assets/CollisionMesh.h"
 #include "config/SceneryObjectConfigLoader.h"
 #include "core/Variables.h"
 #include "core/Logger.h"
@@ -381,11 +382,7 @@ void expandSceneryCollisionObjectBounds(MapSceneryCollisionObject& object,
 
 bool hasUsableCollisionTriangles(const openbus::rendering::ParsedObj& mesh) {
     return std::any_of(mesh.triangles.begin(), mesh.triangles.end(), [&](const auto& triangle) {
-        return std::all_of(
-            triangle.indices.begin(), triangle.indices.end(), [&](const auto& index) {
-                return index.position > 0 &&
-                       static_cast<std::size_t>(index.position) <= mesh.positions.size();
-            });
+        return openbus::assets::hasValidCollisionIndices(mesh, triangle);
     });
 }
 

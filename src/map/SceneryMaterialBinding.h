@@ -1,7 +1,7 @@
 #pragma once
 
-#include "config/ModelConfigTypes.h"
 #include "assets/ObjLoader.h"
+#include "config/ModelConfigTypes.h"
 
 #include <algorithm>
 #include <cctype>

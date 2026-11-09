@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     cabin.close();
     std::ofstream paths(root / "model/paths.cfg");
     paths << "[stepsoundpack]\n2\nstep_a.wav\nstep_b.wav\n"
-             "0\n[pathpnt]\n0\n0\n0\n"
+             "0 (front door)\n[pathpnt]\n0\n0\n0\n"
              "1\n[pathpnt]\n1\n0\n0\n"
              "[pathlink]\n0\n1\n"
              "[pathlink_oneway]\n1\n0\n"
@@ -530,6 +530,7 @@ int main(int argc, char** argv) {
         result.passengerPathNextStepSound != 0 ||
         result.passengerPathNextRoomHeights.size() != 1 ||
         result.passengerPathNextRoomHeights[0] != 1.85 ||
+        result.passengerPathPoints[0].index != 0 ||
         !result.registrationListsLoaded || result.vehicleNumbers.size() != 2 ||
         result.registrationNumbers.size() != 2 || result.selectedRegistrationIndex != 0 ||
         result.selectedVehicleNumber != "BUS-001" ||

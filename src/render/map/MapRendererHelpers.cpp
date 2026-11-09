@@ -155,33 +155,7 @@ std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot
                                          const std::filesystem::path& modelRoot,
                                          const std::filesystem::path& omsiRoot,
                                          const std::string& textureName) {
-    const std::filesystem::path relative = normalizedAssetPath(textureName);
-    const std::filesystem::path packageRoot = objectRoot.parent_path();
-    const std::filesystem::path modelPackageRoot = modelRoot.parent_path();
-    const std::array<std::filesystem::path, 13> candidates = {
-        objectRoot / "texture" / relative,
-        objectRoot / relative,
-        modelRoot / relative,
-        packageRoot / "texture" / relative,
-        packageRoot / relative,
-        modelPackageRoot / "texture" / relative,
-        modelPackageRoot / relative,
-        openbus::assets::textureSubdirectoryPath(objectRoot, relative),
-        openbus::assets::textureSubdirectoryPath(modelRoot, relative),
-        openbus::assets::textureSubdirectoryPath(packageRoot, relative),
-        openbus::assets::textureSubdirectoryPath(modelPackageRoot, relative),
-        omsiRoot / relative,
-        omsiRoot / "Texture" / relative};
-    for (const std::filesystem::path& candidate : candidates) {
-        if (candidate.empty()) {
-            continue;
-        }
-        const std::filesystem::path resolved = openbus::assets::resolveTexturePath(candidate);
-        if (std::filesystem::is_regular_file(resolved)) {
-            return resolved;
-        }
-    }
-    return {};
+    return openbus::assets::findSceneryTexture(objectRoot, modelRoot, omsiRoot, textureName);
 }
 
 std::uint64_t tileKey(int x, int y) {
@@ -251,7 +225,9 @@ std::filesystem::path findSplineTexture(const std::filesystem::path& profilePath
         profileRoot / "texture" / relative,
         profileRoot / relative,
         openbus::assets::textureSubdirectoryPath(profileRoot, relative),
-        omsiRoot / "Texture" / relative, omsiRoot / "texture" / relative, omsiRoot / relative};
+        omsiRoot / "Texture" / relative,
+        omsiRoot / "texture" / relative,
+        omsiRoot / relative};
     for (const std::filesystem::path& candidate : candidates) {
         if (candidate.empty()) {
             continue;

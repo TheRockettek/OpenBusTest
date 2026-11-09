@@ -1,5 +1,6 @@
 #include "config/VehicleCatalog.h"
 #include "config/HofData.h"
+#include "core/Utf8Path.h"
 #include "ProbeTempDirectory.h"
 
 #include <algorithm>
@@ -8,7 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 
-int main() {
+int main() try {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_catalog_probe");
     const std::filesystem::path vehiclesDirectory = root / "Vehicles";
@@ -62,6 +63,10 @@ int main() {
         openbus::config::discoverVehicleCatalog(vehiclesDirectory);
     const std::vector<openbus::config::VehicleAppearance> appearances =
         openbus::config::discoverVehicleAppearances(busPath, vehiclesDirectory);
+#ifdef _WIN32
+    const std::vector<openbus::config::VehicleAppearance> differentlyCasedAppearances =
+        openbus::config::discoverVehicleAppearances(busPath, root / "vehicles");
+#endif
     const std::vector<openbus::config::VehicleDepot> depots =
         openbus::config::discoverVehicleDepots(busPath, vehiclesDirectory);
     const std::vector<openbus::config::VehicleDepot> allDepots =
@@ -90,8 +95,7 @@ int main() {
     } catch (const std::runtime_error&) {
         invalidSetvarRejected = true;
     }
-    const std::filesystem::path ctcDirectory =
-        busDirectory / "Texture" / "Repaints" / "Body";
+    const std::filesystem::path ctcDirectory = busDirectory / "Texture" / "Repaints" / "Body";
     std::filesystem::create_directories(ctcDirectory);
     std::ofstream ctcTexture(ctcDirectory / "scoped.dds");
     ctcTexture << "texture";
@@ -100,33 +104,62 @@ int main() {
     std::ofstream ctc(ctcPath);
     ctc << "[item]\nCTC Repaint\nBody\nscoped.dds\n";
     ctc.close();
-    const std::vector<ModelCtcTemplate> ctcTemplates = {
-        {"Body", "Texture\\Repaints\\Body", 0}};
+    const std::vector<ModelCtcTemplate> ctcTemplates = {{"Body", "Texture\\Repaints\\Body", 0}};
     const std::vector<openbus::config::VehicleAppearance> ctcAppearances =
         openbus::config::discoverVehicleAppearances(busPath, vehiclesDirectory, ctcTemplates);
+    const std::string unicodeDirectoryUtf8 = "B\xC3\xB6rzs\xC3\xB6ny";
+#ifdef _WIN32
+    const std::string encodedDirectoryName = "B\xF6rzs\xF6ny";
+#else
+    const std::string encodedDirectoryName = unicodeDirectoryUtf8;
+#endif
+    const std::filesystem::path unicodeCtcDirectory =
+        busDirectory / "Texture" / openbus::pathFromUtf8(unicodeDirectoryUtf8);
+    std::filesystem::create_directories(unicodeCtcDirectory);
+    const std::filesystem::path unicodeTexturePath =
+        unicodeCtcDirectory / openbus::pathFromUtf8(unicodeDirectoryUtf8 + ".dds");
+    std::ofstream unicodeTexture(unicodeTexturePath);
+    unicodeTexture << "texture";
+    unicodeTexture.close();
+    const std::filesystem::path unicodeCtiPath = unicodeCtcDirectory / "legacy.cti";
+    std::ofstream unicodeCti(unicodeCtiPath);
+    unicodeCti << "[item]\nLegacy Unicode Repaint\nBody\n" << encodedDirectoryName << ".dds\n";
+    unicodeCti.close();
+    const std::vector<ModelCtcTemplate> unicodeCtcTemplates = {
+        {"Body", "Texture\\" + encodedDirectoryName, 0}};
+    const std::vector<openbus::config::VehicleAppearance> unicodeCtcAppearances =
+        openbus::config::discoverVehicleAppearances(busPath, vehiclesDirectory,
+                                                    unicodeCtcTemplates);
+    std::string expectedUnicodeTexturePath =
+        openbus::pathToUtf8(std::filesystem::absolute(unicodeTexturePath).lexically_normal());
+    std::replace(expectedUnicodeTexturePath.begin(), expectedUnicodeTexturePath.end(), '\\', '/');
     const bool passed =
         invalidSetvarRejected &&
+#ifdef _WIN32
+        differentlyCasedAppearances.size() == appearances.size() &&
+#endif
         ctcAppearances.size() == 1 && ctcAppearances[0].name == "CTC Repaint" &&
         ctcAppearances[0].textureReplacements.at("body") ==
             std::filesystem::absolute(ctcDirectory / "scoped.dds").generic_string() &&
+        unicodeCtcAppearances.size() == 1 &&
+        unicodeCtcAppearances[0].name == "Legacy Unicode Repaint" &&
+        unicodeCtcAppearances[0].textureReplacements.at("body") == expectedUnicodeTexturePath &&
         vehicles.size() == 1 && vehicles[0].manufacturer == "Example Motors" &&
         vehicles[0].type == "City Bus" && vehicles[0].defaultAppearance == "Default Paint" &&
         appearances.size() == 3 && defaultAppearance != nullptr &&
         defaultAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(textureDirectory / "default.dds").generic_string() &&
         defaultAppearance->variableReplacements.at("vis_default_paint") == 1.0F &&
-        redAppearance != appearances.end() &&
-        redAppearance->textureReplacements.size() == 2 &&
+        redAppearance != appearances.end() && redAppearance->textureReplacements.size() == 2 &&
         redAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(textureDirectory / "red.dds").generic_string() &&
         redAppearance->variableReplacements.at("vis_red_livery") == 0.5F &&
         blueAppearance != appearances.end() &&
         blueAppearance->textureReplacements.at("body") ==
             std::filesystem::absolute(parentTexturePath).generic_string() &&
-        depots.size() == 1 && depots[0].name == "Example Depot" &&
-        depots[0].path == hofPath && allDepots.size() == 2 &&
-        parsedHof.routes.size() == 1 && parsedHof.routes[0].code == "1001" &&
-        parsedHof.routes[0].line == "100" &&
+        depots.size() == 1 && depots[0].name == "Example Depot" && depots[0].path == hofPath &&
+        allDepots.size() == 2 && parsedHof.routes.size() == 1 &&
+        parsedHof.routes[0].code == "1001" && parsedHof.routes[0].line == "100" &&
         parsedHof.routes[0].busstopIdents == std::vector<std::string>({"STOP_A", "STOP_B"}) &&
         std::ranges::any_of(allDepots, [&](const openbus::config::VehicleDepot& depot) {
             return depot.name == "Other Depot" && depot.path == otherHofPath;
@@ -137,4 +170,7 @@ int main() {
         return 1;
     }
     return 0;
+} catch (const std::exception& error) {
+    std::cerr << "Vehicle catalog probe threw: " << error.what() << '\n';
+    return 1;
 }

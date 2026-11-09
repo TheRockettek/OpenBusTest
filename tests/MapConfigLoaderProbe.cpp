@@ -64,8 +64,8 @@ void runFixtureProbe() {
     try {
         const std::filesystem::path groundTextureDirectory = root / "texture" / "map";
         std::filesystem::create_directories(groundTextureDirectory);
-        for (const std::string& sidecarName : {"tile_0_0.map.1.dds", "tile_0_0.map.09.dds",
-                                               "tile_0_0.map.preview.dds"}) {
+        for (const std::string& sidecarName :
+             {"tile_0_0.map.1.dds", "tile_0_0.map.09.dds", "tile_0_0.map.preview.dds"}) {
             std::ofstream(groundTextureDirectory / sidecarName, std::ios::binary);
         }
         const std::filesystem::path environmentDirectory = root / "environment";
@@ -103,8 +103,22 @@ void runFixtureProbe() {
                      "[ticket]\nDay Pass\nDay Pass\n0\n16\n120\n6\n6.00\n");
         writeUtf16Le(root / "LegacyTickets.otp",
                      "[ticketpack]\n0.5\n[ticket]\n\"Legacy Ride\"\n\"2.00\"\n2\n0\n");
-        writeUtf16Le(root / "Money.cfg", "[currency]\nCredits\n2\n[coin]\ncoins\\small.o3d\n0.05\n"
-                                         "[coin]\ncoins\\large.o3d\n1.00\n");
+        writeUtf16Le(root / "SeparatedTickets.otp",
+                     "[ticketpack]\n0.95\n0.1\n0.3\n0.0\n##############\n"
+                     "[ticket]\nAdult\nAdult\n0\n0\n99\n1.0\nAdult ticket\n");
+        writeUtf16Le(root / "UnsupportedTickets.otp",
+                     "[ticketpack]\n0.5\n[future_ticket_section]\nFuture payload\n");
+        writeUtf16Le(root / "Money.cfg",
+                     "[currency]\n{name of currency}\n{count of decimals}\n"
+                     "[coin]\n{o3d-filename}\n{value}\n"
+                     "[bill]\n{o3d-filename}\n{value}\n"
+                     "[currency]\nCredits\n2\n[coin]\ncoins\\small.o3d\n0.05\n"
+                     "[coin]\ncoins\\large.o3d\n1.00\n"
+                     "[bill]\nnotes\\large.o3d\n5.00\n");
+        writeUtf16Le(root / "MalformedMoney.cfg",
+                     "[currency]\nCredits\n2\n[coin]\ncoins\\broken.o3d\nnot-a-number\n");
+        writeUtf16Le(root / "UnsupportedMoney.cfg",
+                     "[currency]\nCredits\n2\n[future_currency_section]\nFuture payload\n");
         writeUtf16Le(root / "tile_0_0.map",
                      "Fixture tile\n[version]\n14\n[terrain]\n[water]\n"
                      "[unknown_future_section]\n opaque tile payload \n\n"
@@ -145,7 +159,7 @@ void runFixtureProbe() {
                      "[aigroup_2]\nCommercial\nvehicles\\commercial.bus\n[end]\n"
                      "[aigroup_2]\nCommercials\nvehicles\\commercial_van.bus\n"
                      "vehicles\\delivery van.ovh\n[end]\n"
-                     "[aigroup_2]\nOther\nvehicles\\other.bus\n[end]\n"
+                     "[aigroup_2]\nOther\nFixture Group HOF\nvehicles\\other.bus\n[end]\n"
                      "[aigroup_2]\nNormalCar\nvehicles\\normal_car.ovh\n[end]\n"
                      "[aigroup_2]\nAmbulance\nvehicles\\ambulance.ovh\n[end]\n"
                      "[aigroup_2]\nSudden Stop Vehicles\nvehicles\\sudden_stop.bus\n[end]\n"
@@ -173,6 +187,14 @@ void runFixtureProbe() {
                                           "humans\\pedestrians\\walker_two.hum\n");
         const std::filesystem::path timetableDirectory = root / "TTData";
         std::filesystem::create_directories(timetableDirectory);
+        const std::u8string legacyTripStemU8 = u8"Schloß-Exp";
+        const std::string legacyTripStemUtf8(reinterpret_cast<const char*>(legacyTripStemU8.data()),
+                                             legacyTripStemU8.size());
+#ifdef _WIN32
+        const std::string legacyTripStem = "Schlo\xDF-Exp";
+#else
+        const std::string legacyTripStem = legacyTripStemUtf8;
+#endif
         writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
                      "[trip]\nFixtureLine\nTown End\n12\n"
                      "[station]\n15479\n1\nMain Stop\n0\n0\n0\n3.5\n5\n"
@@ -189,6 +211,14 @@ void runFixtureProbe() {
                      "[profile]\nStandard\n12\n"
                      "[profile_man_arr_time]\n0\n1.000\n"
                      "[profile_man_dep_time]\n0\n1.250\n");
+        writeUtf16Le(timetableDirectory / "ZZPassengerOnly.ttp",
+                     "[trip]\n\nBetriebsfahrt\n\n"
+                     "[station_typ2]\n15479\n[station_typ2]\n15480\n");
+        writeUtf16Le(timetableDirectory / "ZZZPassengerOnly.ttp",
+                     "[trip]\nZZZPassengerOnly\n\n\n"
+                     "[station_typ2]\n15479\n[station_typ2]\n15480\n");
+        writeUtf16Le(timetableDirectory / "Unrouted.ttp",
+                     "[trip]\nUnrouted\nDestination\n12\n[profile]\nStandard\n5\n");
         writeUtf16Le(timetableDirectory / "TrackFixture.ttp",
                      "[trip]\nTrackFixture\nTown End\n12\n"
                      "[station_typ2]\n15479\n[station_typ2]\n15480\n"
@@ -198,6 +228,31 @@ void runFixtureProbe() {
                      "[station]\n19001\n0\nFirst Stop\n0\n0\n0\n0\n0\n"
                      "[station]\n19002\n0\nLast Stop\n0\n0\n0\n0\n0\n");
         writeUtf16Le(timetableDirectory / "Broken.ttr", "[track_entry]\ninvalid\n");
+        writeUtf16Le(timetableDirectory / "AuthoredStops.ttp",
+                     "[trip]\nAuthoredStops\nAuthored Destination\n\n"
+                     "[station]\n19003\n0\nAuthored Stop\n0\n0\n0\n0\n0\n");
+        writeUtf16Le(timetableDirectory / "AuthoredStops.ttr",
+                     "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
+                     "[track_entry]\n30274\n0\n1\n2\n10\n0\n");
+        writeUtf16Le(timetableDirectory / "ZZZZRailNoDestination.ttp",
+                     "[trip]\nZZZZRailNoDestination\n\n\n"
+                     "[station]\n19005\n0\nRail Platform\n0\n0\n0\n0\n0\n");
+        writeUtf16Le(timetableDirectory / "ZZZZRailNoDestination.ttr",
+                     "[track_entry]\n30275\n0\n1\n1\n10\n0\n"
+                     "[track_entry]\n30276\n0\n1\n2\n10\n0\n");
+        writeUtf16Le(timetableDirectory / "UnscheduledStops.ttp",
+                     "[trip]\nUnscheduledStops\nDestination\nLine\n"
+                     "[station_typ2]\n19004\n[future_timetable_section]\nFuture payload\n");
+        {
+            std::ofstream legacyTrip(
+                timetableDirectory / std::filesystem::path(legacyTripStemU8 + u8".ttp"),
+                std::ios::binary);
+            if (!legacyTrip) {
+                throw std::runtime_error("could not create legacy-code-page timetable fixture");
+            }
+            legacyTrip << "[trip]\n" << legacyTripStemUtf8 << "\nDestination\nLine\n"
+                       << "[station_typ2]\n15479\n[station_typ2]\n15480\n";
+        }
         writeUtf16Le(timetableDirectory / "BusOnly.ttl",
                      "[userallowed]\n[newtour]\nBus\n1\nDep.: 8:15:0\n"
                      "[addtrip]\nBusOnly\n0\n495.000\n");
@@ -205,17 +260,20 @@ void runFixtureProbe() {
                      "[busstop]\nMain Stop\n0\n15479\n0\n0\n0\n"
                      "[busstop]\nIncomplete Stop\n"
                      "[busstop]\nTown End\n0\n15480\n0\n0\n0\n"
-                     "[busstop]\nInvalid Stop\n0\n15481\ninvalid\n0\n0\n");
+                     "[busstop]\nInvalid Stop\n0\n15481\ninvalid\n0\n0\n"
+                     "[future_bus_stop_section]\nFuture payload\n");
         writeUtf16Le(timetableDirectory / "StnLinks.cfg",
                      "[StnLink]\n"
                      "[StnLink]\n12.5\n15479\n15480\n0\n0\n0\n0\n0\n0\n"
                      "[StnLink_entry]\n1\n2\n3\n4.5\n5\n6\n7\n"
                      "[StnLink_entry]\n2\n3\n4\n5.5\n6\n7\n8\n"
-                     "[StnLink]\ninvalid-length\n15479\n15480\n0\n0\n0\n0\n0\n0\n");
+                     "[StnLink]\ninvalid-length\n15479\n15480\n0\n0\n0\n0\n0\n0\n"
+                     "[future_station_link_section]\nFuture payload\n");
         writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
                      "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
                      "[track_entry]\n30273\n1\n1\n2\n10\n0\n"
-                     "[track_entry]\n30274\n0\n0\n3\n10\n0\n");
+                     "[track_entry]\n30274\n0\n0\n3\n10\n0\n"
+                     "[future_track_section]\nFuture payload\n");
         writeUtf16Le(timetableDirectory / "TrackFixture.ttr",
                      "[track_entry]\n1\n2\n3\n0\n4.5\n0\n"
                      "[track_entry]\n2\n3\n4\n0\n5.5\n0\n");
@@ -226,7 +284,32 @@ void runFixtureProbe() {
                      "[addtrip]\nBroken\n0\n515.000\n");
         writeUtf16Le(timetableDirectory / "TrackFixture.ttl",
                      "[newtour]\nDriver\n1\nDep.: 8:15:0\n"
-                     "[addtrip]\nTrackFixture\n0\n495.000\n");
+                     "[addtrip]\nTrackFixture\n0\n495.000\n"
+                     "[addtrip]\nAuthoredStops\n0\n525.000\n");
+        writeUtf16Le(timetableDirectory / "ZZPassengerOnly.ttl",
+                     "[newtour]\nPassenger only\n1\n"
+                     "[addtrip]\nZZPassengerOnly\n0\n540.000\n");
+        writeUtf16Le(timetableDirectory / "ZZZPassengerOnly.ttl",
+                     "[newtour]\nNamed passenger only\n1\n"
+                     "[addtrip]\nZZZPassengerOnly\n0\n570.000\n");
+        writeUtf16Le(timetableDirectory / "ZZZZRailNoDestination.ttl",
+                     "[newtour]\nRail service\n1\n"
+                     "[addtrip]\nZZZZRailNoDestination\n0\n585.000\n");
+        writeUtf16Le(timetableDirectory / "Unrouted.ttl",
+                     "[newtour]\nUnsupported\n1\n[addtrip]\nUnrouted\n0\n600.000\n"
+                     "[addtrip]\nUnrouted\n1\n660.000\n");
+        writeUtf16Le(timetableDirectory / "MissingTrip.ttl",
+                     "[newtour]\nMissing\n1\n[addtrip]\nAbsentTrip\n0\n630.000\n"
+                     "[future_course_section]\nFuture payload\n");
+        {
+            std::ofstream legacyLine(timetableDirectory / "ZZZZLegacyEncoding.ttl",
+                                    std::ios::binary);
+            if (!legacyLine) {
+                throw std::runtime_error("could not create legacy-code-page timetable fixture");
+            }
+            legacyLine << "[newtour]\nLegacy encoding\n1\n[addtrip]\n" << legacyTripStem
+                       << "\n0\n555.000\n";
+        }
         {
             std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
             writeU32(terrain, 2);
@@ -246,13 +329,12 @@ void runFixtureProbe() {
         const std::filesystem::path standardAiListDirectory = root / "standard-ai-list";
         std::filesystem::create_directories(standardAiListDirectory);
         std::filesystem::copy_file(root / "global.cfg", standardAiListDirectory / "global.cfg");
-        std::filesystem::copy_file(root / "tile_0_0.map",
-                                   standardAiListDirectory / "tile_0_0.map");
-        std::filesystem::copy_file(root / "tile_1_0.map",
-                                   standardAiListDirectory / "tile_1_0.map");
+        std::filesystem::copy_file(root / "tile_0_0.map", standardAiListDirectory / "tile_0_0.map");
+        std::filesystem::copy_file(root / "tile_1_0.map", standardAiListDirectory / "tile_1_0.map");
         writeUtf16Le(standardAiListDirectory / "ailists.cfg",
                      "[ailist]\n0\n-1\n4\n"
                      "vehicles\\car.ovh\n"
+                     "trains\\fixture.zug\n"
                      "vehicles\\city_bus.bus\n"
                      "vehicles\\van.ovh\n"
                      "vehicles\\articulated.bus\n"
@@ -263,15 +345,17 @@ void runFixtureProbe() {
             openbus::map::loadMapDefinition(standardAiListDirectory);
         require(standardAiListDefinition.aiTraffic.vehicleGroups.size() == 1 &&
                     standardAiListDefinition.aiTraffic.vehicleGroups[0].name == "NormalCars" &&
-                    openbus::map::mapAiRoadVehicleAssetPaths(
-                        standardAiListDefinition.aiTraffic) ==
+                    openbus::map::mapAiRoadVehicleAssetPaths(standardAiListDefinition.aiTraffic) ==
                         std::vector<std::string>{"vehicles\\car.ovh", "vehicles\\city_bus.bus",
                                                  "vehicles\\van.ovh",
                                                  "vehicles\\articulated.bus"} &&
                     openbus::map::mapAiBusAssetPaths(standardAiListDefinition.aiTraffic) ==
                         std::vector<std::string>{"vehicles\\city_bus.bus",
-                                                 "vehicles\\articulated.bus"},
-                "standard [ailist] assets provide road traffic and depot typgroups resolve bus indices");
+                                                 "vehicles\\articulated.bus"} &&
+                    standardAiListDefinition.aiTraffic.trainAssetPaths ==
+                        std::vector<std::string>{"trains\\fixture.zug"},
+                "standard [ailist] assets provide road traffic and depot typgroups resolve bus "
+                "indices");
         const std::filesystem::path unicodeMapDirectory =
             root / std::filesystem::path(std::u8string(u8"map-\u00e9"));
         std::filesystem::create_directories(unicodeMapDirectory);
@@ -283,15 +367,13 @@ void runFixtureProbe() {
         openbus::map::MapDefinition edgeCaseDefinition =
             openbus::map::loadMapDefinition(unicodeMapDirectory);
         const auto hasWarning = [&](const std::string& text) {
-            return std::any_of(
-                edgeCaseDefinition.diagnostics.entries.begin(),
-                edgeCaseDefinition.diagnostics.entries.end(),
-                [&](const auto& diagnostic) {
-                    return diagnostic.message.find(text) != std::string::npos;
-                });
+            return std::any_of(edgeCaseDefinition.diagnostics.entries.begin(),
+                               edgeCaseDefinition.diagnostics.entries.end(),
+                               [&](const auto& diagnostic) {
+                                   return diagnostic.message.find(text) != std::string::npos;
+                               });
         };
-        require(edgeCaseDefinition.tiles.size() == 1 &&
-                    edgeCaseDefinition.tiles[0].x == -10 &&
+        require(edgeCaseDefinition.tiles.size() == 1 && edgeCaseDefinition.tiles[0].x == -10 &&
                     edgeCaseDefinition.tiles[0].y == -15 &&
                     edgeCaseDefinition.entryPoints.empty() &&
                     !edgeCaseDefinition.diagnostics.hasErrors() &&
@@ -309,14 +391,13 @@ void runFixtureProbe() {
         require(definition.metadata.name == "Fixture map" &&
                     definition.metadata.friendlyName == "Friendly fixture" &&
                     definition.metadata.description == "First line\n\nSecond line" &&
-                    definition.metadata.version == "14" &&
-                    definition.metadata.nextIdCode == "81" &&
+                    definition.metadata.version == "14" && definition.metadata.nextIdCode == "81" &&
                     definition.metadata.hasWorldCoordinates &&
                     definition.metadata.hasDynamicHelperActive && definition.metadata.hasRealRail &&
                     definition.metadata.hasLeftHandTraffic,
                 "global map identity, description, version, and marker metadata captured");
         require(definition.environment.skyTexturePaths ==
-                    std::vector<std::string>{"sky\\day.bmp", "sky\\evening.dds"} &&
+                        std::vector<std::string>{"sky\\day.bmp", "sky\\evening.dds"} &&
                     definition.environment.cloudTypes.size() == 2 &&
                     definition.environment.cloudTypes[0].name == "Cumulus" &&
                     definition.environment.cloudTypes[0].texturePath == "clouds\\cumulus.bmp" &&
@@ -329,6 +410,8 @@ void runFixtureProbe() {
                     definition.environment.unsupportedSections.size() == 1 &&
                     definition.environment.unsupportedSections[0].keyword ==
                         "unknown_environment" &&
+                    definition.environment.unsupportedSections[0].sourcePath ==
+                        environmentDirectory / "clouds.cfg" &&
                     definition.environment.unsupportedSections[0].payloadLines ==
                         std::vector<std::string>{" raw environment payload ", ""},
                 "environment sky, cloud, and start-date records are retained in authored order");
@@ -336,17 +419,16 @@ void runFixtureProbe() {
         const std::filesystem::path invalidEnvironmentDirectory =
             invalidStartDateMap / "environment";
         std::filesystem::create_directories(invalidEnvironmentDirectory);
-        writeUtf16Le(invalidStartDateMap / "global.cfg",
-                     "[map]\n0\n0\ntile_0_0.map\n");
+        writeUtf16Le(invalidStartDateMap / "global.cfg", "[map]\n0\n0\ntile_0_0.map\n");
         writeUtf16Le(invalidStartDateMap / "tile_0_0.map", "");
         writeUtf16Le(invalidEnvironmentDirectory / "sky.cfg", "[startdate]\n20240230\n");
         const auto invalidStartDateDefinition =
             openbus::map::loadMapDefinition(invalidStartDateMap);
         bool invalidEnvironmentDateWarning = false;
         for (const auto& diagnostic : invalidStartDateDefinition.diagnostics.entries) {
-            invalidEnvironmentDateWarning |= diagnostic.keyword == "startdate" &&
-                                             diagnostic.message.find("valid YYYYMMDD") !=
-                                                 std::string::npos;
+            invalidEnvironmentDateWarning |=
+                diagnostic.keyword == "startdate" &&
+                diagnostic.message.find("valid YYYYMMDD") != std::string::npos;
         }
         require(invalidStartDateDefinition.environment.startDate.empty() &&
                     !invalidStartDateDefinition.environment.startDateYyyyMmDd.has_value() &&
@@ -355,29 +437,60 @@ void runFixtureProbe() {
         const auto ticketPack = openbus::map::loadMapTicketPackDefinition(root / "Tickets.otp");
         const auto legacyTicketPack =
             openbus::map::loadMapTicketPackDefinition(root / "LegacyTickets.otp");
+        const auto separatedTicketPack =
+            openbus::map::loadMapTicketPackDefinition(root / "SeparatedTickets.otp");
+        const auto unsupportedTicketPack =
+            openbus::map::loadMapTicketPackDefinition(root / "UnsupportedTickets.otp");
         const auto currency = openbus::map::loadMapCurrencyDefinition(root / "Money.cfg");
-        require(ticketPack.tickets.size() == 2 &&
-                    ticketPack.stamperProbability == 0.1 &&
-                    ticketPack.ticketBuyProbability == 0.75 &&
-                    ticketPack.chattiness == 0.2 && ticketPack.whingeProbability == 0.3 &&
+        const auto malformedCurrency =
+            openbus::map::loadMapCurrencyDefinition(root / "MalformedMoney.cfg");
+        const auto unsupportedCurrency =
+            openbus::map::loadMapCurrencyDefinition(root / "UnsupportedMoney.cfg");
+        require(ticketPack.tickets.size() == 2 && ticketPack.stamperProbability == 0.1 &&
+                    ticketPack.ticketBuyProbability == 0.75 && ticketPack.chattiness == 0.2 &&
+                    ticketPack.whingeProbability == 0.3 &&
                     ticketPack.tickets[0].name == "Single Ride" &&
                     ticketPack.tickets[0].englishName == "Single Ride" &&
                     ticketPack.tickets[0].displayString == "1.50" &&
-                    ticketPack.tickets[0].value == 1.5 &&
-                    ticketPack.tickets[0].ageMax == 120.0 &&
+                    ticketPack.tickets[0].value == 1.5 && ticketPack.tickets[0].ageMax == 120.0 &&
                     ticketPack.tickets[1].name == "Day Pass" &&
-                    ticketPack.tickets[1].ageMin == 16.0 &&
-                    ticketPack.tickets[1].value == 6.0 &&
+                    ticketPack.tickets[1].ageMin == 16.0 && ticketPack.tickets[1].value == 6.0 &&
                     legacyTicketPack.ticketBuyProbability == 0.5 &&
                     legacyTicketPack.tickets.size() == 1 &&
                     legacyTicketPack.tickets[0].name == "Legacy Ride" &&
-                    legacyTicketPack.tickets[0].value == 2.0 && currency.name == "Credits" &&
+                    legacyTicketPack.tickets[0].value == 2.0 &&
+                    separatedTicketPack.stamperProbability == 0.95 &&
+                    separatedTicketPack.ticketBuyProbability == 0.1 &&
+                    separatedTicketPack.chattiness == 0.3 &&
+                    separatedTicketPack.whingeProbability == 0.0 &&
+                    separatedTicketPack.tickets.size() == 1 &&
+                    separatedTicketPack.tickets[0].name == "Adult" &&
+                    separatedTicketPack.diagnostics.entries.empty() &&
+                    std::any_of(unsupportedTicketPack.diagnostics.entries.begin(),
+                                unsupportedTicketPack.diagnostics.entries.end(),
+                                [](const auto& diagnostic) {
+                                    return diagnostic.keyword == "future_ticket_section" &&
+                                           diagnostic.message ==
+                                               "unsupported ticket-pack section";
+                                }) &&
+                    currency.name == "Credits" &&
                     currency.mode == "2" && currency.coins.size() == 2 &&
                     currency.coins[0].modelPath == "coins\\small.o3d" &&
-                    currency.coins[0].value == 0.05 && currency.coins[1].value == 1.0,
+                    currency.coins[0].value == 0.05 && currency.coins[1].value == 1.0 &&
+                    currency.bills.size() == 1 &&
+                    currency.bills[0].modelPath == "notes\\large.o3d" &&
+                    currency.bills[0].value == 5.0 &&
+                    currency.diagnostics.entries.empty() &&
+                    malformedCurrency.diagnostics.entries.size() == 1 &&
+                    std::any_of(unsupportedCurrency.diagnostics.entries.begin(),
+                                unsupportedCurrency.diagnostics.entries.end(),
+                                [](const auto& diagnostic) {
+                                    return diagnostic.keyword == "future_currency_section" &&
+                                           diagnostic.message == "unsupported currency section";
+                                }),
                 "ticket-pack prices and currency coin denominations are loaded in authored order");
         require(definition.metadata.backgroundImage ==
-                    std::array<std::string, 6>{"1", "2", "3", "4", "5", "6"} &&
+                        std::array<std::string, 6>{"1", "2", "3", "4", "5", "6"} &&
                     definition.metadata.hasBackgroundImage &&
                     definition.metadata.mapCamera ==
                         std::array<std::string, 8>{"0", "1", "2", "3", "4", "5", "6", "7"} &&
@@ -414,11 +527,10 @@ void runFixtureProbe() {
                              0.5) < 1.0e-9 &&
                     openbus::map::mapTrafficDensityAtHour(densitySchedule, 23.0) == 1.0,
                 "density lookup interpolates schedule points and clamps outside their range");
-        require(!openbus::map::mapTrafficDensityAtHour({}, 12.0).has_value() &&
-                    !openbus::map::mapTrafficDensityAtHour(
-                         {{4.0, 0.5}, {4.0, 0.8}}, 4.0)
-                         .has_value(),
-                "empty and ambiguous density schedules do not return a value");
+        require(
+            !openbus::map::mapTrafficDensityAtHour({}, 12.0).has_value() &&
+                !openbus::map::mapTrafficDensityAtHour({{4.0, 0.5}, {4.0, 0.8}}, 4.0).has_value(),
+            "empty and ambiguous density schedules do not return a value");
         require(openbus::map::mapTrafficPopulationForDensity(8, 0.25) == 2 &&
                     openbus::map::mapTrafficPopulationForDensity(8, 0.0) == 0 &&
                     openbus::map::mapTrafficPopulationForDensity(8, 2.0) == 16 &&
@@ -456,16 +568,17 @@ void runFixtureProbe() {
                         std::vector<std::string>{"NormalCars", "vehicles\\sedan.bus\t7",
                                                  "vehicles\\delivery van.ovh"},
                 "road vehicle references are extracted while full group lines are preserved");
+        require(definition.aiTraffic.vehicleGroups[1].hofName.empty(),
+                "AI groups without an optional HOF name remain unassociated");
+        require(definition.aiTraffic.vehicleGroups[4].hofName == "Fixture Group HOF",
+                "optional AI group HOF names are retained");
         require(openbus::map::mapAiRoadVehicleAssetPaths(definition.aiTraffic) ==
-                    std::vector<std::string>{"vehicles\\sedan.bus",
-                                             "vehicles\\delivery van.ovh",
-                                             "vehicles\\truck.bus",
-                                             "vehicles\\truck.ovh",
-                                             "vehicles\\commercial.bus",
-                                             "vehicles\\commercial_van.bus",
-                                             "vehicles\\normal_car.ovh",
-                                             "vehicles\\ambulance.ovh",
-                                             "vehicles\\sudden_stop.bus"} &&
+                        std::vector<std::string>{
+                            "vehicles\\sedan.bus", "vehicles\\delivery van.ovh",
+                            "vehicles\\truck.bus", "vehicles\\truck.ovh",
+                            "vehicles\\commercial.bus", "vehicles\\commercial_van.bus",
+                            "vehicles\\normal_car.ovh", "vehicles\\ambulance.ovh",
+                            "vehicles\\sudden_stop.bus"} &&
                     openbus::map::mapAiBusAssetPaths(definition.aiTraffic) ==
                         std::vector<std::string>{"vehicles\\city_bus.bus"},
                 "random road traffic selects .ovh and .bus assets from supported groups while "
@@ -489,13 +602,12 @@ void runFixtureProbe() {
         const std::vector<openbus::map::MapAiRoadVehicle> explicitGroupVehicles =
             openbus::map::mapAiRoadVehicles(explicitGroupTraffic);
         require(definition.aiTraffic.unscheduledVehicleGroupNames ==
-                    std::vector<std::string>{"Trucks", "NormalCars", "Commercials", "Ambulance",
-                                             "Sudden Stop Vehicles"} &&
+                        std::vector<std::string>{"Trucks", "NormalCars", "Commercials", "Ambulance",
+                                                 "Sudden Stop Vehicles"} &&
                     legacyGroupVehicles.size() == 1 &&
                     legacyGroupVehicles[0].trafficRuleGroupIndex == 0 &&
                     legacyGroupVehicles[0].groupName == "normalcars" &&
-                    explicitGroupVehicles.size() == 3 &&
-                    explicitGroupVehicles[0].groupIndex == 1 &&
+                    explicitGroupVehicles.size() == 3 && explicitGroupVehicles[0].groupIndex == 1 &&
                     explicitGroupVehicles[0].trafficRuleGroupIndex == 1 &&
                     explicitGroupVehicles[1].groupIndex == 0 &&
                     explicitGroupVehicles[1].trafficRuleGroupIndex == 0 &&
@@ -506,64 +618,59 @@ void runFixtureProbe() {
                     definition.aiTraffic.unscheduledTrafficDensityGroups[0].name == "NormalCars" &&
                     definition.aiTraffic.unscheduledTrafficDensityGroups[0].factor == 2.0 &&
                     definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules.size() == 3 &&
-                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[0]
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0]
+                            .schedules[0]
                             .dayOfWeekMask == 0 &&
-                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[1]
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0]
+                            .schedules[1]
                             .dayOfWeekMask == 1 &&
-                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[1]
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0]
+                            .schedules[1]
                             .points.size() == 2 &&
-                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[1]
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0]
+                            .schedules[1]
                             .points[1]
                             .hour == 12.0 &&
-                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[1]
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0]
+                            .schedules[1]
                             .points[1]
                             .density == 0.8 &&
                     roadVehicles.size() == 10 &&
                     roadVehicles[0].assetPath == "vehicles\\sedan.bus" &&
-                    roadVehicles[0].groupIndex == 1 &&
-                    roadVehicles[0].trafficRuleGroupIndex == 1 &&
+                    roadVehicles[0].groupIndex == 1 && roadVehicles[0].trafficRuleGroupIndex == 1 &&
                     roadVehicles[1].assetPath == "vehicles\\delivery van.ovh" &&
-                    roadVehicles[1].groupIndex == 1 &&
-                    roadVehicles[1].trafficRuleGroupIndex == 1 &&
+                    roadVehicles[1].groupIndex == 1 && roadVehicles[1].trafficRuleGroupIndex == 1 &&
                     roadVehicles[2].assetPath == "vehicles\\truck.bus" &&
-                    roadVehicles[2].groupIndex == 0 &&
-                    roadVehicles[2].trafficRuleGroupIndex == 0 &&
+                    roadVehicles[2].groupIndex == 0 && roadVehicles[2].trafficRuleGroupIndex == 0 &&
                     roadVehicles[2].defaultVehicleType == 3 &&
                     roadVehicles[3].assetPath == "vehicles\\truck.ovh" &&
-                    roadVehicles[3].groupIndex == 0 &&
-                    roadVehicles[3].trafficRuleGroupIndex == 0 &&
+                    roadVehicles[3].groupIndex == 0 && roadVehicles[3].trafficRuleGroupIndex == 0 &&
                     roadVehicles[3].defaultVehicleType == 3 &&
                     roadVehicles[4].assetPath == "vehicles\\commercial.bus" &&
-                    roadVehicles[4].groupIndex == 2 &&
-                    roadVehicles[4].trafficRuleGroupIndex == 2 &&
+                    roadVehicles[4].groupIndex == 2 && roadVehicles[4].trafficRuleGroupIndex == 2 &&
                     roadVehicles[5].assetPath == "vehicles\\commercial_van.bus" &&
-                    roadVehicles[5].groupIndex == 2 &&
-                    roadVehicles[5].trafficRuleGroupIndex == 2 &&
+                    roadVehicles[5].groupIndex == 2 && roadVehicles[5].trafficRuleGroupIndex == 2 &&
                     roadVehicles[6].assetPath == "vehicles\\delivery van.ovh" &&
-                    roadVehicles[6].groupIndex == 2 &&
-                    roadVehicles[6].trafficRuleGroupIndex == 2 &&
+                    roadVehicles[6].groupIndex == 2 && roadVehicles[6].trafficRuleGroupIndex == 2 &&
                     roadVehicles[7].assetPath == "vehicles\\normal_car.ovh" &&
-                    roadVehicles[7].groupIndex == 1 &&
-                    roadVehicles[7].trafficRuleGroupIndex == 1 &&
+                    roadVehicles[7].groupIndex == 1 && roadVehicles[7].trafficRuleGroupIndex == 1 &&
                     roadVehicles[8].assetPath == "vehicles\\ambulance.ovh" &&
-                    roadVehicles[8].groupIndex == 3 &&
-                    roadVehicles[8].trafficRuleGroupIndex == 3 &&
+                    roadVehicles[8].groupIndex == 3 && roadVehicles[8].trafficRuleGroupIndex == 3 &&
                     roadVehicles[9].assetPath == "vehicles\\sudden_stop.bus" &&
-                    roadVehicles[9].groupIndex == 4 &&
-                    roadVehicles[9].trafficRuleGroupIndex == 4,
+                    roadVehicles[9].groupIndex == 4 && roadVehicles[9].trafficRuleGroupIndex == 4,
                 "both population scheduling and path rules use unsched_vehgroups.txt group "
                 "indices, regardless of AI-list group names");
         const std::vector<openbus::map::MapAiRoadVehicle> weekdayRoadVehicles =
             openbus::map::mapAiRoadVehicles(definition.aiTraffic, 12.0, 1);
         const std::optional<double> weekdayGroupDensity =
-            openbus::map::mapAiRoadTrafficDensityAtHour(
-                definition.aiTraffic, roadVehicles, 12.0, 1);
+            openbus::map::mapAiRoadTrafficDensityAtHour(definition.aiTraffic, roadVehicles, 12.0,
+                                                        1);
         const std::optional<double> weekendGroupDensity =
-            openbus::map::mapAiRoadTrafficDensityAtHour(
-                definition.aiTraffic, roadVehicles, 12.0, 4);
+            openbus::map::mapAiRoadTrafficDensityAtHour(definition.aiTraffic, roadVehicles, 12.0,
+                                                        4);
         const std::optional<double> saturdayGroupDensity =
-            openbus::map::mapAiRoadTrafficDensityAtHour(
-                definition.aiTraffic, roadVehicles, 12.0, 2);
+            openbus::map::mapAiRoadTrafficDensityAtHour(definition.aiTraffic, roadVehicles, 12.0,
+                                                        2);
         const std::optional<double> maximumGroupDensity =
             openbus::map::mapAiMaximumRoadTrafficDensity(definition.aiTraffic, roadVehicles);
         openbus::map::MapAiTrafficData invalidSpecificTraffic = definition.aiTraffic;
@@ -571,18 +678,15 @@ void runFixtureProbe() {
              invalidSpecificTraffic.unscheduledTrafficDensityGroups) {
             if (group.name == "NormalCars") {
                 group.factor = 2.0;
-                group.schedules = {{0, {{0.0, 0.3}, {12.0, 0.3}}},
-                                   {1, {{0.0, 0.8}, {0.0, 0.9}}}};
+                group.schedules = {{0, {{0.0, 0.3}, {12.0, 0.3}}}, {1, {{0.0, 0.8}, {0.0, 0.9}}}};
             } else if (group.name == "Trucks") {
                 group.factor = 1.0;
                 group.schedules = {{0, {{0.0, 0.4}, {12.0, 0.4}}}};
             }
         }
-        const auto invalidSpecificFallbackDensity =
-            openbus::map::mapAiRoadTrafficDensityAtHour(
-                invalidSpecificTraffic, roadVehicles, 12.0, 1);
-        require(weekdayGroupDensity.has_value() &&
-                    std::abs(*weekdayGroupDensity - 0.6) < 1.0e-9 &&
+        const auto invalidSpecificFallbackDensity = openbus::map::mapAiRoadTrafficDensityAtHour(
+            invalidSpecificTraffic, roadVehicles, 12.0, 1);
+        require(weekdayGroupDensity.has_value() && std::abs(*weekdayGroupDensity - 0.6) < 1.0e-9 &&
                     weekendGroupDensity.has_value() &&
                     std::abs(*weekendGroupDensity - (0.4 / 3.0)) < 1.0e-9 &&
                     saturdayGroupDensity.has_value() &&
@@ -610,8 +714,7 @@ void runFixtureProbe() {
             group.factor = 1.0;
             group.schedules = {{0, {{0.0, 0.0}, {12.0, 1.0}}}};
         }
-        const auto noDensityAtStart =
-            openbus::map::mapAiRoadVehicles(laterPeakTraffic, 0.0, 1);
+        const auto noDensityAtStart = openbus::map::mapAiRoadVehicles(laterPeakTraffic, 0.0, 1);
         const auto laterPeakPool = openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
             laterPeakTraffic, roadVehicles, 10, 1.0);
         require(splitPeakPool.size() == 2, "split peak pool contains both groups");
@@ -626,17 +729,15 @@ void runFixtureProbe() {
         for (const int dayMask : {1, 2, 4}) {
             for (int hourQuarter = 0; hourQuarter <= 96; ++hourQuarter) {
                 const double hour = static_cast<double>(hourQuarter) * 0.25;
-                const auto activeGroups =
-                    openbus::map::mapAiRoadTrafficPopulationByGroup(
-                        splitPeakTraffic,
-                        openbus::map::mapTrafficPopulationForDensity(
-                            10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                                    splitPeakTraffic, roadVehicles, hour, dayMask)),
-                        hour, dayMask);
+                const auto activeGroups = openbus::map::mapAiRoadTrafficPopulationByGroup(
+                    splitPeakTraffic,
+                    openbus::map::mapTrafficPopulationForDensity(
+                        10, openbus::map::mapAiRoadTrafficDensityAtHour(
+                                splitPeakTraffic, roadVehicles, hour, dayMask)),
+                    hour, dayMask);
                 for (const auto& activeGroup : activeGroups) {
                     const auto reserved = std::find_if(
-                        splitPeakPool.begin(), splitPeakPool.end(),
-                        [&](const auto& poolGroup) {
+                        splitPeakPool.begin(), splitPeakPool.end(), [&](const auto& poolGroup) {
                             return poolGroup.groupIndex == activeGroup.groupIndex;
                         });
                     require(reserved != splitPeakPool.end() &&
@@ -645,28 +746,23 @@ void runFixtureProbe() {
                 }
             }
         }
-        const auto uncappedMorningTargets =
-            openbus::map::mapAiRoadTrafficPopulationByGroup(
-                splitPeakTraffic,
-                openbus::map::mapTrafficPopulationForDensity(
-                    10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            splitPeakTraffic, roadVehicles, 0.0, 1)),
-                0.0, 1);
+        const auto uncappedMorningTargets = openbus::map::mapAiRoadTrafficPopulationByGroup(
+            splitPeakTraffic,
+            openbus::map::mapTrafficPopulationForDensity(
+                10, openbus::map::mapAiRoadTrafficDensityAtHour(splitPeakTraffic, roadVehicles, 0.0,
+                                                                1)),
+            0.0, 1);
         const auto morningPeakReservation =
             uncappedMorningTargets.empty()
                 ? splitPeakPool.end()
-                : std::find_if(splitPeakPool.begin(),
-                               splitPeakPool.end(),
-                               [&](const auto& group) {
-                                   return group.groupIndex ==
-                                          uncappedMorningTargets[0].groupIndex;
-                               });
+                : std::find_if(splitPeakPool.begin(), splitPeakPool.end(), [&](const auto& group) {
+                      return group.groupIndex == uncappedMorningTargets[0].groupIndex;
+                  });
         require(uncappedMorningTargets.size() == 1 &&
                     uncappedMorningTargets[0].populationCount == 5 &&
                     morningPeakReservation != splitPeakPool.end() &&
                     morningPeakReservation->populationCount >= 5 &&
-                    splitPeakPool[0].populationCount +
-                            splitPeakPool[1].populationCount > 6,
+                    splitPeakPool[0].populationCount + splitPeakPool[1].populationCount > 6,
                 "group reservations can exceed any one simultaneous target");
         openbus::map::MapAiTrafficData roundingPeakTraffic = definition.aiTraffic;
         for (openbus::map::MapAiTrafficDensityGroup& group :
@@ -681,35 +777,30 @@ void runFixtureProbe() {
                 group.schedules = {{0, {{0.0, 0.05}, {12.0, 1.25}}}};
             }
         }
-        const auto roundingPeakPool =
-            openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
-                roundingPeakTraffic, roadVehicles, 10, 1.0);
-        const auto roundingPeakTargets =
-            openbus::map::mapAiRoadTrafficPopulationByGroup(
-                roundingPeakTraffic,
-                openbus::map::mapTrafficPopulationForDensity(
-                    10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            roundingPeakTraffic, roadVehicles, 3.375, 1)),
-                3.375, 1);
-        const auto roundingPeakTargetsAtStart =
-            openbus::map::mapAiRoadTrafficPopulationByGroup(
-                roundingPeakTraffic,
-                openbus::map::mapTrafficPopulationForDensity(
-                    10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            roundingPeakTraffic, roadVehicles, 0.0, 1)),
-                0.0, 1);
-        const auto roundingPeakTargetsAtEnd =
-            openbus::map::mapAiRoadTrafficPopulationByGroup(
-                roundingPeakTraffic,
-                openbus::map::mapTrafficPopulationForDensity(
-                    10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            roundingPeakTraffic, roadVehicles, 12.0, 1)),
-                12.0, 1);
+        const auto roundingPeakPool = openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
+            roundingPeakTraffic, roadVehicles, 10, 1.0);
+        const auto roundingPeakTargets = openbus::map::mapAiRoadTrafficPopulationByGroup(
+            roundingPeakTraffic,
+            openbus::map::mapTrafficPopulationForDensity(
+                10, openbus::map::mapAiRoadTrafficDensityAtHour(roundingPeakTraffic, roadVehicles,
+                                                                3.375, 1)),
+            3.375, 1);
+        const auto roundingPeakTargetsAtStart = openbus::map::mapAiRoadTrafficPopulationByGroup(
+            roundingPeakTraffic,
+            openbus::map::mapTrafficPopulationForDensity(
+                10, openbus::map::mapAiRoadTrafficDensityAtHour(roundingPeakTraffic, roadVehicles,
+                                                                0.0, 1)),
+            0.0, 1);
+        const auto roundingPeakTargetsAtEnd = openbus::map::mapAiRoadTrafficPopulationByGroup(
+            roundingPeakTraffic,
+            openbus::map::mapTrafficPopulationForDensity(
+                10, openbus::map::mapAiRoadTrafficDensityAtHour(roundingPeakTraffic, roadVehicles,
+                                                                12.0, 1)),
+            12.0, 1);
         const auto normalCarRoundingReservation =
             std::find_if(roundingPeakPool.begin(), roundingPeakPool.end(),
                          [](const auto& group) { return group.groupIndex == 1; });
-        require(roundingPeakTargets.size() == 2 &&
-                    roundingPeakTargets[1].groupIndex == 1 &&
+        require(roundingPeakTargets.size() == 2 && roundingPeakTargets[1].groupIndex == 1 &&
                     roundingPeakTargets[1].populationCount == 3 &&
                     roundingPeakTargetsAtStart[1].populationCount == 2 &&
                     roundingPeakTargetsAtEnd[1].populationCount == 4 &&
@@ -731,25 +822,25 @@ void runFixtureProbe() {
         const auto uncappedTargets = openbus::map::mapAiRoadTrafficPopulationByGroup(
             uncappedRoundingTraffic,
             openbus::map::mapTrafficPopulationForDensity(
-                1000, openbus::map::mapAiRoadTrafficDensityAtHour(
-                          uncappedRoundingTraffic, roadVehicles, 1.1, 1)),
+                1000, openbus::map::mapAiRoadTrafficDensityAtHour(uncappedRoundingTraffic,
+                                                                  roadVehicles, 1.1, 1)),
             1.1, 1);
-        const auto normalPool = std::find_if(
-            uncappedPool.begin(), uncappedPool.end(),
-            [](const auto& group) { return group.groupIndex == 1; });
-        const auto normalTarget = std::find_if(
-            uncappedTargets.begin(), uncappedTargets.end(),
-            [](const auto& group) { return group.groupIndex == 1; });
+        const auto normalPool =
+            std::find_if(uncappedPool.begin(), uncappedPool.end(),
+                         [](const auto& group) { return group.groupIndex == 1; });
+        const auto normalTarget =
+            std::find_if(uncappedTargets.begin(), uncappedTargets.end(),
+                         [](const auto& group) { return group.groupIndex == 1; });
         for (const double hour : {0.0, 12.0}) {
             const auto knotTargets = openbus::map::mapAiRoadTrafficPopulationByGroup(
                 uncappedRoundingTraffic,
                 openbus::map::mapTrafficPopulationForDensity(
-                    1000, openbus::map::mapAiRoadTrafficDensityAtHour(
-                              uncappedRoundingTraffic, roadVehicles, hour, 1)),
+                    1000, openbus::map::mapAiRoadTrafficDensityAtHour(uncappedRoundingTraffic,
+                                                                      roadVehicles, hour, 1)),
                 hour, 1);
-            const auto normalKnot = std::find_if(
-                knotTargets.begin(), knotTargets.end(),
-                [](const auto& group) { return group.groupIndex == 1; });
+            const auto normalKnot =
+                std::find_if(knotTargets.begin(), knotTargets.end(),
+                             [](const auto& group) { return group.groupIndex == 1; });
             require(normalKnot != knotTargets.end() && normalKnot->populationCount == 300,
                     "uncapped rounding fixture has lower group counts at both knots");
         }
@@ -787,29 +878,25 @@ void runFixtureProbe() {
             }
         }
         const auto weekdayGroupPopulation =
-            openbus::map::mapAiRoadTrafficPopulationByGroup(
-                definition.aiTraffic, 9, 12.0, 1);
+            openbus::map::mapAiRoadTrafficPopulationByGroup(definition.aiTraffic, 9, 12.0, 1);
         const auto weekendGroupPopulation =
-            openbus::map::mapAiRoadTrafficPopulationByGroup(
-                definition.aiTraffic, 10, 12.0, 4);
-        require(std::abs(poolNormalCarWeight - 1.6) < 1.0e-9 &&
-                    std::abs(poolTruckWeight - 0.4) < 1.0e-9 &&
-                    weekdayGroupPopulation.size() == 2 &&
-                    weekdayGroupPopulation[0].groupIndex == 0 &&
-                    weekdayGroupPopulation[0].populationCount == 1 &&
-                    weekdayGroupPopulation[1].groupIndex == 1 &&
-                    weekdayGroupPopulation[1].populationCount == 8 &&
-                    weekendGroupPopulation.size() == 2 &&
-                    weekendGroupPopulation[0].groupIndex == 0 &&
-                    weekendGroupPopulation[0].populationCount == 5 &&
-                    weekendGroupPopulation[1].groupIndex == 1 &&
-                    weekendGroupPopulation[1].populationCount == 5,
-                "the pool covers future groups and scheduled population targets rebalance");
+            openbus::map::mapAiRoadTrafficPopulationByGroup(definition.aiTraffic, 10, 12.0, 4);
+        require(
+            std::abs(poolNormalCarWeight - 1.6) < 1.0e-9 &&
+                std::abs(poolTruckWeight - 0.4) < 1.0e-9 && weekdayGroupPopulation.size() == 2 &&
+                weekdayGroupPopulation[0].groupIndex == 0 &&
+                weekdayGroupPopulation[0].populationCount == 1 &&
+                weekdayGroupPopulation[1].groupIndex == 1 &&
+                weekdayGroupPopulation[1].populationCount == 8 &&
+                weekendGroupPopulation.size() == 2 && weekendGroupPopulation[0].groupIndex == 0 &&
+                weekendGroupPopulation[0].populationCount == 5 &&
+                weekendGroupPopulation[1].groupIndex == 1 &&
+                weekendGroupPopulation[1].populationCount == 5,
+            "the pool covers future groups and scheduled population targets rebalance");
         std::size_t selectedNormalCars = 0;
         std::size_t selectedTrucks = 0;
         for (std::size_t seed = 0; seed < 500; ++seed) {
-            const auto selected =
-                openbus::map::selectMapAiRoadVehicle(weekdayRoadVehicles, seed);
+            const auto selected = openbus::map::selectMapAiRoadVehicle(weekdayRoadVehicles, seed);
             require(selected.has_value(),
                     "positive scheduled group density selects a road vehicle");
             const std::string& selectedGroup = weekdayRoadVehicles[*selected].groupName;
@@ -830,51 +917,128 @@ void runFixtureProbe() {
                                                                  emptyDensityRoadVehicles, 12.0, 1)
                          .has_value(),
                 "an empty unscheduled-density file preserves the global-density fallback");
-        require(definition.aiTraffic.timetableRoutes.size() == 3 &&
-                    definition.aiTraffic.timetableRoutes[0].timetableKey == "fixturetrip" &&
-                    definition.aiTraffic.timetableRoutes[0].tripName == "FixtureLine" &&
-                    definition.aiTraffic.timetableRoutes[0].destinationName == "Town End" &&
-                    definition.aiTraffic.timetableRoutes[0].lineName == "12" &&
-                    definition.aiTraffic.timetableRoutes[0].stationCount == 1 &&
-                    definition.aiTraffic.timetableRoutes[0].stations ==
+        const auto fixtureTripRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "fixturetrip";
+                         });
+        const auto authoredStopsRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "authoredstops";
+                         });
+        const auto legacyEncodingRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "schlo\xC3\x9F-exp";
+                         });
+        const auto zzPassengerOnlyRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "zzpassengeronly";
+                         });
+        const auto zzzPassengerOnlyRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "zzzpassengeronly";
+                         });
+        const auto railNoDestinationRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "zzzzrailnodestination";
+                         });
+        const auto unscheduledStopsTimetable =
+            std::find_if(definition.aiTraffic.passengerTimetables.begin(),
+                         definition.aiTraffic.passengerTimetables.end(),
+                         [](const openbus::map::MapAiPassengerTimetable& timetable) {
+                             return timetable.timetableKey == "unscheduledstops";
+                         });
+        require(definition.aiTraffic.timetableRoutes.size() == 8 &&
+                    fixtureTripRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    fixtureTripRoute->tripName == "FixtureLine" &&
+                    fixtureTripRoute->destinationName == "Town End" &&
+                    fixtureTripRoute->lineName == "12" &&
+                    fixtureTripRoute->stationCount == 1 &&
+                    fixtureTripRoute->stations ==
                         std::vector<openbus::map::MapAiTimetableRoute::Station>{
                             {15479, 1, "Main Stop", 0, {"0", "0", "3.5", "5"}, 3.5}} &&
-                    definition.aiTraffic.timetableRoutes[0].splineIds ==
+                    fixtureTripRoute->splineIds ==
                         std::vector<int>{30273, 30274} &&
-                    definition.aiTraffic.timetableRoutes[0].trackEntries ==
+                    fixtureTripRoute->trackEntries ==
                         std::vector<openbus::map::MapAiTimetableRoute::TrackEntry>{
-                            {30273, 0, 1, 10.0}, {30273, 1, 1, 10.0},
-                            {30274, 0, 0, 10.0}} &&
-                    definition.aiTraffic.timetableRoutes[0].scheduledDepartureMinutes ==
+                            {30273, 0, 1, 10.0, 2}, {30273, 1, 1, 10.0, 9},
+                            {30274, 0, 0, 10.0, 16}} &&
+                    fixtureTripRoute->scheduledDepartureMinutes ==
                         std::vector<double>{405.0, 495.0} &&
-                    definition.aiTraffic.timetableRoutes[0]
-                            .scheduledDepartureProfileIndices == std::vector<int>{0, 1} &&
-                    definition.aiTraffic.timetableRoutes[0].profiles.size() == 2 &&
-                    definition.aiTraffic.timetableRoutes[0].profiles[0].name == "Standard" &&
-                    definition.aiTraffic.timetableRoutes[0]
-                            .profiles[0]
-                            .arrivalOffsetSeconds == std::vector<double>{15.0} &&
-                    definition.aiTraffic.timetableRoutes[0]
-                            .profiles[0]
-                            .departureOffsetSeconds == std::vector<double>{30.0} &&
-                    definition.aiTraffic.timetableRoutes[0]
-                            .profiles[1]
-                            .arrivalOffsetSeconds == std::vector<double>{90.0} &&
-                    definition.aiTraffic.timetableRoutes[0]
-                            .profiles[1]
-                            .departureOffsetSeconds == std::vector<double>{120.0},
+                    fixtureTripRoute->scheduledDepartureProfileIndices ==
+                        std::vector<int>{0, 1} &&
+                    fixtureTripRoute->profiles.size() == 2 &&
+                    fixtureTripRoute->profiles[0].name == "Standard" &&
+                    fixtureTripRoute->profiles[0].arrivalOffsetSeconds ==
+                        std::vector<double>{15.0} &&
+                    fixtureTripRoute->profiles[0].departureOffsetSeconds ==
+                        std::vector<double>{30.0} &&
+                    fixtureTripRoute->profiles[1].arrivalOffsetSeconds ==
+                        std::vector<double>{90.0} &&
+                    fixtureTripRoute->profiles[1].departureOffsetSeconds ==
+                        std::vector<double>{120.0} &&
+                    authoredStopsRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    authoredStopsRoute->tripName == "AuthoredStops" &&
+                    authoredStopsRoute->destinationName == "Authored Destination" &&
+                    authoredStopsRoute->lineName.empty() &&
+                    authoredStopsRoute->stationIds == std::vector<int>{19003} &&
+                    authoredStopsRoute->trackEntries.size() == 2 &&
+                    authoredStopsRoute->scheduledDepartureMinutes == std::vector<double>{525.0} &&
+                    legacyEncodingRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    legacyEncodingRoute->tripName == legacyTripStemUtf8 &&
+                    legacyEncodingRoute->scheduledDepartureMinutes == std::vector<double>{555.0} &&
+                    zzPassengerOnlyRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    zzPassengerOnlyRoute->destinationName == "Betriebsfahrt" &&
+                    zzPassengerOnlyRoute->scheduledDepartureMinutes ==
+                        std::vector<double>{540.0} &&
+                    zzzPassengerOnlyRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    zzzPassengerOnlyRoute->destinationName == "zzzpassengeronly" &&
+                    legacyEncodingRoute->lineName == "Line" &&
+                    railNoDestinationRoute != definition.aiTraffic.timetableRoutes.end() &&
+                    railNoDestinationRoute->destinationName == "zzzzrailnodestination" &&
+                    railNoDestinationRoute->stationIds == std::vector<int>{19005} &&
+                    railNoDestinationRoute->trackEntries.size() == 2 &&
+                    railNoDestinationRoute->scheduledDepartureMinutes ==
+                        std::vector<double>{585.0} &&
+                    std::ranges::none_of(
+                        definition.diagnostics.entries, [](const auto& diagnostic) {
+                            return diagnostic.keyword == "passenger_timetable" &&
+                                   diagnostic.message.find("zzzzrailnodestination") !=
+                                       std::string::npos;
+                        }),
                 "timetable routes retain stations, aligned profile selections, and stop times");
-        const auto trackFixtureRoute = std::find_if(
-            definition.aiTraffic.timetableRoutes.begin(),
-            definition.aiTraffic.timetableRoutes.end(),
-            [](const openbus::map::MapAiTimetableRoute& route) {
-                return route.timetableKey == "trackfixture";
-            });
+        require(unscheduledStopsTimetable != definition.aiTraffic.passengerTimetables.end() &&
+                    unscheduledStopsTimetable->stationIds == std::vector<int>{19004} &&
+                    unscheduledStopsTimetable->scheduledDepartureMinutes.empty() &&
+                    std::ranges::none_of(
+                        definition.diagnostics.entries, [](const auto& diagnostic) {
+                            return diagnostic.keyword == "passenger_timetable" &&
+                                   diagnostic.message.find("unscheduledstops") !=
+                                       std::string::npos;
+                        }),
+                "unscheduled stops do not require external stop-link resolution");
+        const auto trackFixtureRoute =
+            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                         definition.aiTraffic.timetableRoutes.end(),
+                         [](const openbus::map::MapAiTimetableRoute& route) {
+                             return route.timetableKey == "trackfixture";
+                         });
         const auto trackFixtureLastStop =
             trackFixtureRoute == definition.aiTraffic.timetableRoutes.end()
                 ? std::nullopt
-                : openbus::map::mapAiTimetableStationPosition(
-                      *trackFixtureRoute, trackFixtureRoute->stations.back());
+                : openbus::map::mapAiTimetableStationPosition(*trackFixtureRoute,
+                                                              trackFixtureRoute->stations.back());
         require(trackFixtureRoute != definition.aiTraffic.timetableRoutes.end() &&
                     trackFixtureRoute->stations ==
                         std::vector<openbus::map::MapAiTimetableRoute::Station>{
@@ -884,27 +1048,101 @@ void runFixtureProbe() {
                     trackFixtureLastStop && trackFixtureLastStop->trackEntryIndex == 1 &&
                     trackFixtureLastStop->offsetMeters == 5.5,
                 "driving routes with station-ID-only trips resolve linked passenger stops");
-        require(definition.aiTraffic.timetableCourses.size() == 3 &&
-                    definition.aiTraffic.timetableCourses[0].name == "BusOnly" &&
-                    definition.aiTraffic.timetableCourses[0].userAllowed &&
-                    definition.aiTraffic.timetableCourses[0].trips ==
-                        std::vector<openbus::map::MapAiTimetableCourseTrip>{
-                            {"busonly", 0, 495.0}} &&
-                    definition.aiTraffic.timetableCourses[1].name == "Fixture" &&
-                    !definition.aiTraffic.timetableCourses[1].userAllowed &&
-                    definition.aiTraffic.timetableCourses[1].trips ==
-                        std::vector<openbus::map::MapAiTimetableCourseTrip>{
-                            {"fixturetrip", 1, 495.0}, {"fixturetrip", 0, 405.0},
-                            {"broken", 0, 515.0}} &&
-                    definition.aiTraffic.timetableCourses[2].name == "TrackFixture" &&
-                    !definition.aiTraffic.timetableCourses[2].userAllowed &&
-                    definition.aiTraffic.timetableCourses[2].trips ==
-                        std::vector<openbus::map::MapAiTimetableCourseTrip>{
-                            {"trackfixture", 0, 495.0}},
-                "timetable courses retain source order, trip keys, profiles, and departure times");
-        const auto brokenTimetable = std::ranges::find(
-            definition.aiTraffic.passengerTimetables, std::string("broken"),
-            &openbus::map::MapAiPassengerTimetable::timetableKey);
+        require(
+            definition.aiTraffic.timetableCourses.size() == 7 &&
+                definition.aiTraffic.timetableCourses[0].name == "BusOnly" &&
+                definition.aiTraffic.timetableCourses[0].userAllowed &&
+                definition.aiTraffic.timetableCourses[0].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{{"busonly", 0, 495.0}} &&
+                definition.aiTraffic.timetableCourses[1].name == "Fixture" &&
+                !definition.aiTraffic.timetableCourses[1].userAllowed &&
+                definition.aiTraffic.timetableCourses[1].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{{"fixturetrip", 1, 495.0},
+                                                                        {"fixturetrip", 0, 405.0},
+                                                                        {"broken", 0, 515.0}} &&
+                definition.aiTraffic.timetableCourses[2].name == "TrackFixture" &&
+                !definition.aiTraffic.timetableCourses[2].userAllowed &&
+                definition.aiTraffic.timetableCourses[2].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                        {"trackfixture", 0, 495.0}, {"authoredstops", 0, 525.0}} &&
+                definition.aiTraffic.timetableCourses[3].name == "ZZPassengerOnly" &&
+                definition.aiTraffic.timetableCourses[3].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                        {"zzpassengeronly", 0, 540.0}} &&
+                definition.aiTraffic.timetableCourses[4].name == "ZZZPassengerOnly" &&
+                definition.aiTraffic.timetableCourses[4].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                        {"zzzpassengeronly", 0, 570.0}} &&
+                definition.aiTraffic.timetableCourses[5].name == "ZZZZLegacyEncoding" &&
+                definition.aiTraffic.timetableCourses[5].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                        {"schlo\xC3\x9F-exp", 0, 555.0}} &&
+                definition.aiTraffic.timetableCourses[6].name == "ZZZZRailNoDestination" &&
+                definition.aiTraffic.timetableCourses[6].trips ==
+                    std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                        {"zzzzrailnodestination", 0, 585.0}},
+            "timetable courses retain source order, trip keys, profiles, and departure times");
+        require(std::count_if(
+                    definition.diagnostics.entries.begin(), definition.diagnostics.entries.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.keyword == "addtrip" &&
+                               diagnostic.message.find("trip file has no station records and "
+                                                       "does not define a supported timetable "
+                                                       "route: Unrouted.ttp") !=
+                                   std::string::npos;
+                    }) == 1 &&
+                    std::ranges::none_of(
+                        definition.diagnostics.entries, [](const auto& diagnostic) {
+                            return diagnostic.keyword == "addtrip" &&
+                                   diagnostic.message.find("missing trip Unrouted") !=
+                                       std::string::npos;
+                        }) &&
+                    std::ranges::any_of(
+                        definition.diagnostics.entries, [](const auto& diagnostic) {
+                            return diagnostic.keyword == "addtrip" &&
+                                   diagnostic.message.find("missing trip AbsentTrip") !=
+                                       std::string::npos;
+                        }),
+                "existing unsupported trip files are distinguished from missing trip files");
+        require(std::any_of(definition.diagnostics.entries.begin(),
+                            definition.diagnostics.entries.end(), [](const auto& diagnostic) {
+                                return diagnostic.keyword == "future_timetable_section" &&
+                                       diagnostic.message.starts_with(
+                                           "unsupported timetable section in ");
+                            }) &&
+                    std::any_of(definition.diagnostics.entries.begin(),
+                                definition.diagnostics.entries.end(),
+                                [](const auto& diagnostic) {
+                                    return diagnostic.keyword == "future_course_section" &&
+                                           diagnostic.message.starts_with(
+                                               "unsupported timetable section in ");
+                                }) &&
+                    std::any_of(definition.diagnostics.entries.begin(),
+                                definition.diagnostics.entries.end(),
+                                [](const auto& diagnostic) {
+                                    return diagnostic.keyword == "future_track_section" &&
+                                           diagnostic.message.starts_with(
+                                               "unsupported timetable section in ");
+                                }) &&
+                    std::any_of(definition.diagnostics.entries.begin(),
+                                definition.diagnostics.entries.end(),
+                                [](const auto& diagnostic) {
+                                    return diagnostic.keyword == "future_bus_stop_section" &&
+                                           diagnostic.message.starts_with(
+                                               "unsupported timetable section in ");
+                                }) &&
+                    std::any_of(definition.diagnostics.entries.begin(),
+                                definition.diagnostics.entries.end(),
+                                [](const auto& diagnostic) {
+                                    return diagnostic.keyword ==
+                                               "future_station_link_section" &&
+                                           diagnostic.message.starts_with(
+                                               "unsupported timetable section in ");
+                                }),
+                "unhandled timetable section headers are reported as unsupported");
+        const auto brokenTimetable =
+            std::ranges::find(definition.aiTraffic.passengerTimetables, std::string("broken"),
+                              &openbus::map::MapAiPassengerTimetable::timetableKey);
         require(brokenTimetable != definition.aiTraffic.passengerTimetables.end() &&
                     brokenTimetable->stationIds == std::vector<int>{19001, 19002} &&
                     brokenTimetable->stationRecords.size() == 2 &&
@@ -913,45 +1151,58 @@ void runFixtureProbe() {
                     brokenTimetable->stationRecords[1] &&
                     brokenTimetable->stationRecords[1]->name == "Last Stop" &&
                     brokenTimetable->scheduledDepartureMinutes == std::vector<double>{515.0} &&
-                    std::ranges::none_of(definition.aiTraffic.timetableRoutes, [](const auto& route) {
-                        return route.timetableKey == "broken";
-                    }) &&
-                    std::ranges::any_of(definition.diagnostics.entries, [](const auto& diagnostic) {
-                        return diagnostic.keyword == "track_entry" &&
-                               diagnostic.message.find("Broken.ttr") != std::string::npos;
-                    }),
+                    std::ranges::none_of(
+                        definition.aiTraffic.timetableRoutes,
+                        [](const auto& route) { return route.timetableKey == "broken"; }) &&
+                    std::ranges::any_of(definition.diagnostics.entries,
+                                        [](const auto& diagnostic) {
+                                            return diagnostic.keyword == "track_entry" &&
+                                                   diagnostic.message.find("Broken.ttr") !=
+                                                       std::string::npos;
+                                        }) &&
+                    std::ranges::any_of(
+                        definition.diagnostics.entries, [](const auto& diagnostic) {
+                            return diagnostic.keyword == "passenger_timetable" &&
+                                   diagnostic.message.find("timetable broken") !=
+                                       std::string::npos;
+                        }),
                 "broken driving tracks preserve scheduled authored stops and retain diagnostics");
+        require(std::ranges::none_of(
+                    definition.diagnostics.entries, [](const auto& diagnostic) {
+                        return diagnostic.keyword == "passenger_timetable" &&
+                               diagnostic.message.find("authoredstops") != std::string::npos;
+                    }),
+                "complete authored timetable stops do not require Busstops.cfg or StnLinks.cfg");
         const openbus::map::MapAiTimetableCourse progressionCourse{
             "Progression",
             {{"unavailable", 0, 100.0}, {"fixturetrip", 0, 110.0}, {"otherline", 1, 120.0}}};
         const std::vector<std::string> availableProgressionRoutes{"fixturetrip", "otherline"};
-        require(openbus::map::mapAiTimetableNextCourseTripIndex(
-                    progressionCourse, 0, availableProgressionRoutes) == 1 &&
+        require(openbus::map::mapAiTimetableNextCourseTripIndex(progressionCourse, 0,
+                                                                availableProgressionRoutes) == 1 &&
                     openbus::map::mapAiTimetableNextCourseTripIndex(
                         progressionCourse, 1, availableProgressionRoutes) == 2 &&
-                    !openbus::map::mapAiTimetableNextCourseTripIndex(
-                        progressionCourse, 2, availableProgressionRoutes) &&
-                    !openbus::map::mapAiTimetableNextCourseTripIndex(
-                        progressionCourse, 3, availableProgressionRoutes),
+                    !openbus::map::mapAiTimetableNextCourseTripIndex(progressionCourse, 2,
+                                                                     availableProgressionRoutes) &&
+                    !openbus::map::mapAiTimetableNextCourseTripIndex(progressionCourse, 3,
+                                                                     availableProgressionRoutes),
                 "player course progression skips unavailable routes and preserves trip order");
         const auto preciseStationPosition = openbus::map::mapAiTimetableStationPosition(
-            definition.aiTraffic.timetableRoutes[0],
-            definition.aiTraffic.timetableRoutes[0].stations[0]);
+            *fixtureTripRoute, fixtureTripRoute->stations[0]);
         require(preciseStationPosition && preciseStationPosition->trackEntryIndex == 0 &&
                     preciseStationPosition->offsetMeters == 3.5,
                 "timetable stop positions map to the offset on their preceding track entry");
-        auto firstStationPosition = definition.aiTraffic.timetableRoutes[0].stations[0];
+        auto firstStationPosition = fixtureTripRoute->stations[0];
         firstStationPosition.trackEntryIndex = 0;
         firstStationPosition.positionOnPreviousTrackEntryMeters = 2.0;
         const auto firstTrackPosition = openbus::map::mapAiTimetableStationPosition(
-            definition.aiTraffic.timetableRoutes[0], firstStationPosition);
+            *fixtureTripRoute, firstStationPosition);
         require(firstTrackPosition && firstTrackPosition->trackEntryIndex == 0 &&
                     firstTrackPosition->offsetMeters == 2.0,
                 "the first timetable station can be positioned within the first track entry");
-        auto invalidStationPosition = definition.aiTraffic.timetableRoutes[0].stations[0];
+        auto invalidStationPosition = fixtureTripRoute->stations[0];
         invalidStationPosition.positionOnPreviousTrackEntryMeters = 10.5;
         require(!openbus::map::mapAiTimetableStationPosition(
-                    definition.aiTraffic.timetableRoutes[0], invalidStationPosition),
+                    *fixtureTripRoute, invalidStationPosition),
                 "timetable stop offsets outside their track entry are rejected");
         const auto busOnlyTimetable =
             std::find_if(definition.aiTraffic.passengerTimetables.begin(),
@@ -959,15 +1210,26 @@ void runFixtureProbe() {
                          [](const openbus::map::MapAiPassengerTimetable& timetable) {
                              return timetable.timetableKey == "busonly";
                          });
-        const auto busOnlyRoute =
-            std::find_if(definition.aiTraffic.timetableRoutes.begin(),
-                         definition.aiTraffic.timetableRoutes.end(),
-                         [](const openbus::map::MapAiTimetableRoute& route) {
-                             return route.timetableKey == "busonly";
+        const auto passengerOnlyTimetable =
+            std::find_if(definition.aiTraffic.passengerTimetables.begin(),
+                         definition.aiTraffic.passengerTimetables.end(),
+                         [](const openbus::map::MapAiPassengerTimetable& timetable) {
+                             return timetable.timetableKey == "zzpassengeronly";
                          });
+        const auto namedPassengerOnlyTimetable =
+            std::find_if(definition.aiTraffic.passengerTimetables.begin(),
+                         definition.aiTraffic.passengerTimetables.end(),
+                         [](const openbus::map::MapAiPassengerTimetable& timetable) {
+                             return timetable.timetableKey == "zzzpassengeronly";
+                         });
+        const auto busOnlyRoute = std::find_if(definition.aiTraffic.timetableRoutes.begin(),
+                                               definition.aiTraffic.timetableRoutes.end(),
+                                               [](const openbus::map::MapAiTimetableRoute& route) {
+                                                   return route.timetableKey == "busonly";
+                                               });
         require(definition.aiTraffic.busStops.size() == 2 &&
                     definition.aiTraffic.busStops[0].name == "Main Stop" &&
-        definition.aiTraffic.busStops[0].tileIndex == 0 &&
+                    definition.aiTraffic.busStops[0].tileIndex == 0 &&
                     definition.aiTraffic.busStops[0].id == 15479 &&
                     definition.aiTraffic.stationLinks.size() == 1 &&
                     definition.aiTraffic.stationLinks[0].fromStopId == 15479 &&
@@ -976,16 +1238,28 @@ void runFixtureProbe() {
                     definition.aiTraffic.stationLinks[0].fields[3] == "0" &&
                     definition.aiTraffic.stationLinks[0].entries ==
                         std::vector<openbus::map::MapAiStationLink::Entry>{
-                            {1, 2, 3, 4.5, {"5", "6", "7"}},
-                            {2, 3, 4, 5.5, {"6", "7", "8"}}} &&
+                            {1, 2, 3, 4.5, {"5", "6", "7"}}, {2, 3, 4, 5.5, {"6", "7", "8"}}} &&
                     busOnlyTimetable != definition.aiTraffic.passengerTimetables.end() &&
                     busOnlyTimetable->stationIds == std::vector<int>{15479, 15480} &&
                     busOnlyTimetable->destinationName == "Town End" &&
                     busOnlyTimetable->lineName == "12" &&
                     busOnlyTimetable->scheduledDepartureMinutes == std::vector<double>{495.0} &&
+                    passengerOnlyTimetable != definition.aiTraffic.passengerTimetables.end() &&
+                    passengerOnlyTimetable->tripName.empty() &&
+                    passengerOnlyTimetable->destinationName == "Betriebsfahrt" &&
+                    passengerOnlyTimetable->lineName.empty() &&
+                    passengerOnlyTimetable->stationIds == std::vector<int>{15479, 15480} &&
+                    passengerOnlyTimetable->scheduledDepartureMinutes ==
+                        std::vector<double>{540.0} &&
+                    namedPassengerOnlyTimetable != definition.aiTraffic.passengerTimetables.end() &&
+                    namedPassengerOnlyTimetable->tripName == "ZZZPassengerOnly" &&
+                    namedPassengerOnlyTimetable->destinationName.empty() &&
+                    namedPassengerOnlyTimetable->lineName.empty() &&
+                    namedPassengerOnlyTimetable->stationIds == std::vector<int>{15479, 15480} &&
+                    namedPassengerOnlyTimetable->scheduledDepartureMinutes ==
+                        std::vector<double>{570.0} &&
                     busOnlyRoute != definition.aiTraffic.timetableRoutes.end() &&
-                    busOnlyRoute->lineName == "12" &&
-                    busOnlyRoute->destinationName == "Town End" &&
+                    busOnlyRoute->lineName == "12" && busOnlyRoute->destinationName == "Town End" &&
                     busOnlyRoute->stations.size() == 2 &&
                     busOnlyRoute->stations[0].trackEntryIndex == 0 &&
                     busOnlyRoute->stations[1].trackEntryIndex == 2 &&
@@ -999,8 +1273,8 @@ void runFixtureProbe() {
                     openbus::map::mapAiPassengerTimetableHasResolvedLinks(definition.aiTraffic,
                                                                           *busOnlyTimetable),
                 "station-only trips build scheduled route checkpoints from ordered station links");
-        const auto stationOnlyFinalPosition = openbus::map::mapAiTimetableStationPosition(
-            *busOnlyRoute, busOnlyRoute->stations[1]);
+        const auto stationOnlyFinalPosition =
+            openbus::map::mapAiTimetableStationPosition(*busOnlyRoute, busOnlyRoute->stations[1]);
         require(stationOnlyFinalPosition && stationOnlyFinalPosition->trackEntryIndex == 1 &&
                     stationOnlyFinalPosition->offsetMeters == 5.5,
                 "station-only final calls are positioned at the end of their incoming link");
@@ -1010,6 +1284,20 @@ void runFixtureProbe() {
             !openbus::map::mapAiPassengerTimetableHasResolvedLinks(ambiguousPassengerStops,
                                                                    *busOnlyTimetable),
             "duplicate stop IDs fail closed rather than binding a passenger station arbitrarily");
+        openbus::map::MapAiTrafficData equivalentPassengerLinks = definition.aiTraffic;
+        auto equivalentStationLink = equivalentPassengerLinks.stationLinks.front();
+        equivalentStationLink.fields[0] = "13.0";
+        equivalentPassengerLinks.stationLinks.push_back(std::move(equivalentStationLink));
+        require(openbus::map::mapAiPassengerTimetableHasResolvedLinks(equivalentPassengerLinks,
+                                                                      *busOnlyTimetable),
+                "duplicate station links with identical paths resolve to their shared path");
+        openbus::map::MapAiTrafficData ambiguousPassengerLinks = definition.aiTraffic;
+        auto alternateStationLink = ambiguousPassengerLinks.stationLinks.front();
+        ++alternateStationLink.entries.front().splineId;
+        ambiguousPassengerLinks.stationLinks.push_back(std::move(alternateStationLink));
+        require(!openbus::map::mapAiPassengerTimetableHasResolvedLinks(ambiguousPassengerLinks,
+                                                                       *busOnlyTimetable),
+                "duplicate station links with different paths remain ambiguous");
         require(definition.aiTraffic.busTypes.size() == 1 &&
                     definition.aiTraffic.busTypes[0].type == 2 &&
                     definition.aiTraffic.busTypes[0].assetPath == "vehicles\\city_bus.bus" &&
@@ -1033,16 +1321,16 @@ void runFixtureProbe() {
         bool unknownGlobalWarning = false;
         bool duplicateTileWarning = false;
         for (const auto& diagnostic : definition.diagnostics.entries) {
-            invalidWeekdayMaskWarning |= diagnostic.keyword == "set_day_of_week" &&
-                                         diagnostic.line > 0;
-            unknownGlobalWarning |= diagnostic.keyword == "unknown_global" &&
-                                    diagnostic.line > 0;
-            duplicateTileWarning |= diagnostic.keyword == "map" && diagnostic.line > 0 &&
-                                    diagnostic.message.find("duplicate tile record") !=
-                                        std::string::npos;
+            invalidWeekdayMaskWarning |=
+                diagnostic.keyword == "set_day_of_week" && diagnostic.line > 0;
+            unknownGlobalWarning |= diagnostic.keyword == "unknown_global" && diagnostic.line > 0;
+            duplicateTileWarning |=
+                diagnostic.keyword == "map" && diagnostic.line > 0 &&
+                diagnostic.message.find("duplicate tile record") != std::string::npos;
         }
         require(invalidWeekdayMaskWarning && unknownGlobalWarning && duplicateTileWarning,
-                "invalid weekday masks, unsupported sections, and duplicate tiles produce line-numbered warnings");
+                "invalid weekday masks, unsupported sections, and duplicate tiles produce "
+                "line-numbered warnings");
         require(definition.unsupportedSections.size() == 1 &&
                     definition.unsupportedSections[0].keyword == "unknown_global" &&
                     definition.unsupportedSections[0].sectionLine > 0 &&
@@ -1050,7 +1338,8 @@ void runFixtureProbe() {
                         std::vector<std::string>{" opaque global payload ", ""},
                 "unsupported global section payload is preserved verbatim");
         require(definition.groundTextures.size() == 2, "multiple groundtex records parsed");
-        require(openbus::map::resolveMapGroundTextureSidecarIndex("1", 8) == 1 &&
+        require(
+            openbus::map::resolveMapGroundTextureSidecarIndex("1", 8) == 1 &&
                 openbus::map::resolveMapGroundTextureSidecarIndex("7", 8) == 7 &&
                 openbus::map::resolveMapGroundTextureSidecarIndex("8", 8) == 7 &&
                 openbus::map::resolveMapGroundTextureSidecarIndex("08", 8) == 7 &&
@@ -1089,8 +1378,8 @@ void runFixtureProbe() {
         for (const std::string invalidSelector : {"-1", "2", "not-an-index"}) {
             bool invalidGroundTextureRejected = false;
             try {
-                static_cast<void>(openbus::map::selectMapGroundTextureIndex(
-                    definition, invalidSelector));
+                static_cast<void>(
+                    openbus::map::selectMapGroundTextureIndex(definition, invalidSelector));
             } catch (const std::runtime_error&) {
                 invalidGroundTextureRejected = true;
             }
@@ -1146,8 +1435,7 @@ void runFixtureProbe() {
         }
         require(invalidEntryPointRejected, "invalid entrypoint index is rejected");
         require(definition.tiles.size() == 2 && definition.tiles[0].hasTerrainFile &&
-                    definition.tiles[0].hasWaterFile &&
-                    definition.tiles[0].hasLightmapFile &&
+                    definition.tiles[0].hasWaterFile && definition.tiles[0].hasLightmapFile &&
                     definition.tiles[0].lightmapPath.filename() == "tile_0_0.map.LM.bmp" &&
                     definition.tiles[0].hasTerrainReadinessFile &&
                     definition.tiles[0].terrainReadinessPath.filename() ==
@@ -1172,11 +1460,11 @@ void runFixtureProbe() {
                     tile.diagnostics.entries[0].message == "map tile section is not implemented",
                 "unimplemented tile sections produce line-numbered diagnostics");
         require(tile.unsupportedSections.size() == 1 &&
-                tile.unsupportedSections[0].keyword == "unknown_future_section" &&
-                tile.unsupportedSections[0].sectionLine == tile.diagnostics.entries[0].line &&
-                tile.unsupportedSections[0].payloadLines ==
+                    tile.unsupportedSections[0].keyword == "unknown_future_section" &&
+                    tile.unsupportedSections[0].sectionLine == tile.diagnostics.entries[0].line &&
+                    tile.unsupportedSections[0].payloadLines ==
                         std::vector<std::string>{" opaque tile payload ", ""},
-            "unsupported tile section payload is preserved verbatim");
+                "unsupported tile section payload is preserved verbatim");
         openbus::map::MapTileReference invalidVersionTile;
         invalidVersionTile.textPath = root / "tile_invalid_version.map";
         bool invalidVersionRejected = false;
@@ -1192,29 +1480,28 @@ void runFixtureProbe() {
                     tile.splineAttachmentCount == 1 && tile.splineRepeaterCount == 1 &&
                     tile.attachedObjects.size() == 1,
                 "tile record families counted");
-        require(tile.attachedObjects[0].label == "Object Nr. 7" &&
+        require(
+            tile.attachedObjects[0].label == "Object Nr. 7" &&
                 tile.attachedObjects[0].editorObjectNumber == 7 &&
-                    tile.attachedObjects[0].line1 == "0" &&
-                    tile.attachedObjects[0].assetPath == "Scenery\\attached.sco" &&
-                    tile.attachedObjects[0].id == 17 &&
-                    tile.attachedObjects[0].attachedToObjectId == 5 &&
-                    tile.attachedObjects[0].line5 == "0" &&
-                    tile.attachedObjects[0].attachPointIndex == "2" &&
-                    tile.attachedObjects[0].attachPointIndexValue == 2 &&
-                    tile.attachedObjects[0].rotationFields ==
-                        std::array<std::string, 3>{"30", "4", "0"} &&
-                    tile.attachedObjects[0].rotationDegrees ==
-                        std::array<double, 3>{30.0, 4.0, 0.0} &&
-                    tile.attachedObjects[0].labelCount == "1" &&
-                    tile.attachedObjects[0].labels == std::vector<std::string>{"Car park B"} &&
-                    tile.attachedObjects[0].hasExplicitId &&
-                    tile.attachedObjects[0].transformValid &&
-                    tile.attachedObjects[0].variableParentId == 41 &&
-                    tile.attachedObjects[0].splineTerrainAlign &&
-                    tile.attachedObjects[0].rules.size() == 1 &&
-                    tile.attachedObjects[0].optionalLines ==
-                        std::vector<std::string>{"custom tail", ""},
-                "modern attachObj IDs, counted labels, and trailing opaque fields parsed");
+                tile.attachedObjects[0].line1 == "0" &&
+                tile.attachedObjects[0].assetPath == "Scenery\\attached.sco" &&
+                tile.attachedObjects[0].id == 17 &&
+                tile.attachedObjects[0].attachedToObjectId == 5 &&
+                tile.attachedObjects[0].line5 == "0" &&
+                tile.attachedObjects[0].attachPointIndex == "2" &&
+                tile.attachedObjects[0].attachPointIndexValue == 2 &&
+                tile.attachedObjects[0].rotationFields ==
+                    std::array<std::string, 3>{"30", "4", "0"} &&
+                tile.attachedObjects[0].rotationDegrees == std::array<double, 3>{30.0, 4.0, 0.0} &&
+                tile.attachedObjects[0].labelCount == "1" &&
+                tile.attachedObjects[0].labels == std::vector<std::string>{"Car park B"} &&
+                tile.attachedObjects[0].hasExplicitId && tile.attachedObjects[0].transformValid &&
+                tile.attachedObjects[0].variableParentId == 41 &&
+                tile.attachedObjects[0].splineTerrainAlign &&
+                tile.attachedObjects[0].rules.size() == 1 &&
+                tile.attachedObjects[0].optionalLines ==
+                    std::vector<std::string>{"custom tail", ""},
+            "modern attachObj IDs, counted labels, and trailing opaque fields parsed");
         require(tile.splines.size() == 2 && tile.splines[0].geometryValid &&
                     tile.splines[0].assetPath == "Splines\\road.sli" &&
                     tile.splines[0].localX == 10.0 && tile.splines[0].elevation == 20.0 &&
@@ -1230,24 +1517,24 @@ void runFixtureProbe() {
                         std::array<std::string, 4>{"spline rule 1", "spline rule 2",
                                                    "spline rule 3", "spline rule 4"},
                 "elevated spline reads serialized cant values directly as percentage points");
-        require(tile.sceneryObjects.size() == 1 && tile.sceneryObjects[0].id == 5 &&
+        require(
+            tile.sceneryObjects.size() == 1 && tile.sceneryObjects[0].id == 5 &&
                 tile.sceneryObjects[0].editorObjectNumber == 4 &&
-                    tile.sceneryObjects[0].label == "Object Nr. 4" &&
-                    tile.sceneryObjects[0].line1 == "0" &&
-                    tile.sceneryObjects[0].assetPath == "Scenery\\tree.sco" &&
-                    tile.sceneryObjects[0].transformValid &&
-                    tile.sceneryObjects[0].variableParentId == 3 &&
-                    tile.sceneryObjects[0].splineTerrainAlign &&
-                    tile.sceneryObjects[0].rules.size() == 2 &&
-                    !tile.sceneryObjects[0].rules[0].kill &&
-                    tile.sceneryObjects[0].rules[1].kill &&
-                    tile.sceneryObjects[0].localPosition[0] == 1.0 &&
-                    tile.sceneryObjects[0].localPosition[1] == 2.0 &&
-                    tile.sceneryObjects[0].rotationDegrees == std::array<double, 3>{0.0, 0.0, 0.0} &&
-                    tile.sceneryObjects[0].labels.size() == 3 &&
-                    tile.sceneryObjects[0].labels[1] == "[object]" &&
-                    tile.sceneryObjects[0].labels[2].empty(),
-                "scenery object placement fields preserved without treating label text as a section");
+                tile.sceneryObjects[0].label == "Object Nr. 4" &&
+                tile.sceneryObjects[0].line1 == "0" &&
+                tile.sceneryObjects[0].assetPath == "Scenery\\tree.sco" &&
+                tile.sceneryObjects[0].transformValid &&
+                tile.sceneryObjects[0].variableParentId == 3 &&
+                tile.sceneryObjects[0].splineTerrainAlign &&
+                tile.sceneryObjects[0].rules.size() == 2 && !tile.sceneryObjects[0].rules[0].kill &&
+                tile.sceneryObjects[0].rules[1].kill &&
+                tile.sceneryObjects[0].localPosition[0] == 1.0 &&
+                tile.sceneryObjects[0].localPosition[1] == 2.0 &&
+                tile.sceneryObjects[0].rotationDegrees == std::array<double, 3>{0.0, 0.0, 0.0} &&
+                tile.sceneryObjects[0].labels.size() == 3 &&
+                tile.sceneryObjects[0].labels[1] == "[object]" &&
+                tile.sceneryObjects[0].labels[2].empty(),
+            "scenery object placement fields preserved without treating label text as a section");
         require(tile.splineAttachments.size() == 2 &&
                     tile.splineAttachments[0].assetPath == "Scenery\\lamp.sco" &&
                     tile.splineAttachments[0].editorObjectNumber == 5 &&
@@ -1264,8 +1551,7 @@ void runFixtureProbe() {
                     tile.splineAttachments[0].variableParentId == 23 &&
                     tile.splineAttachments[0].splineTerrainAlign &&
                     tile.splineAttachments[0].rules.size() == 1 &&
-                    tile.splineAttachments[0].rules[0].kill &&
-                    !tile.splineAttachments[0].tilt,
+                    tile.splineAttachments[0].rules[0].kill && !tile.splineAttachments[0].tilt,
                 "spline attachment fields decoded as typed spline-relative values");
         require(tile.splineAttachments[1].repeater &&
                     tile.splineAttachments[1].repeaterMasterTileIndex == 0 &&
@@ -1286,23 +1572,24 @@ void runFixtureProbe() {
             reference.textPath = path;
             return openbus::map::loadMapTile(reference);
         };
-        const auto version5 = loadVersionedObject(
-            "5", "[object]\nScenery\\legacy5.sco\n10\n20\n3\n1\nfirst label\n");
+        const auto version5 =
+            loadVersionedObject("5", "[object]\nScenery\\legacy5.sco\n10\n20\n3\n1\nfirst label\n");
         require(version5.sceneryObjects.size() == 1 && version5.sceneryObjects[0].id == -1 &&
-                    version5.sceneryObjects[0].localPosition == std::array<double, 3>{10.0, 20.0, 3.0} &&
+                    version5.sceneryObjects[0].localPosition ==
+                        std::array<double, 3>{10.0, 20.0, 3.0} &&
                     version5.sceneryObjects[0].rotationDegrees ==
                         std::array<double, 3>{0.0, 0.0, 0.0} &&
                     version5.sceneryObjects[0].labels == std::vector<std::string>{"first label"},
                 "version 5 object omits ID and rotations but retains counted labels");
-        const auto version7 = loadVersionedObject(
-            "7", "[object]\nScenery\\legacy7.sco\n77\n1\n2\n3\n0\n");
+        const auto version7 =
+            loadVersionedObject("7", "[object]\nScenery\\legacy7.sco\n77\n1\n2\n3\n0\n");
         require(version7.sceneryObjects.size() == 1 && version7.sceneryObjects[0].id == 77 &&
                     version7.sceneryObjects[0].rotationDegrees ==
                         std::array<double, 3>{0.0, 0.0, 0.0} &&
                     version7.sceneryObjects[0].labels.empty(),
                 "version 7 object has an ID but no heading or pitch/bank fields");
-        const auto version11 = loadVersionedObject(
-            "11", "[object]\n0\nScenery\\legacy11.sco\n111\n1\n2\n3\n90\n0\n");
+        const auto version11 =
+            loadVersionedObject("11", "[object]\n0\nScenery\\legacy11.sco\n111\n1\n2\n3\n90\n0\n");
         require(version11.sceneryObjects.size() == 1 &&
                     version11.sceneryObjects[0].detailLevel == 0 &&
                     version11.sceneryObjects[0].rotationDegrees ==
@@ -1322,19 +1609,18 @@ void runFixtureProbe() {
         require(oldAttachment.splineAttachments.size() == 1 &&
                     oldAttachment.splineAttachments[0].labels.empty(),
                 "version 3 attachment has no counted label field");
-        const auto signedAttachment = loadVersionedObject(
-            "14", "[splineAttachement]\n0\nScenery\\lamp.sco\n8\n0\n"
-                  "0\n0\n20\n0\n0\n0\n-10\n-20\n0\n0\n");
+        const auto signedAttachment =
+            loadVersionedObject("14", "[splineAttachement]\n0\nScenery\\lamp.sco\n8\n0\n"
+                                      "0\n0\n20\n0\n0\n0\n-10\n-20\n0\n0\n");
         require(signedAttachment.splineAttachments.size() == 1 &&
                     signedAttachment.splineAttachments[0].transformValid &&
                     signedAttachment.splineAttachments[0].interval == -10.0 &&
                     signedAttachment.splineAttachments[0].range == -20.0,
                 "version 14 spline attachment preserves signed interval and range");
         const auto repeaterWithFirstRow = [&](const std::string& firstRow) {
-            return loadVersionedObject(
-                "14", "[splineAttachement_repeater]\n0\n0\n" + firstRow +
-                          "\nScenery\\lamp.sco\n8\n0\n"
-                          "0\n0\n20\n0\n0\n0\n10\n20\n0\n0\n");
+            return loadVersionedObject("14", "[splineAttachement_repeater]\n0\n0\n" + firstRow +
+                                                 "\nScenery\\lamp.sco\n8\n0\n"
+                                                 "0\n0\n20\n0\n0\n0\n10\n20\n0\n0\n");
         };
         for (const std::string& firstRow : {"0", "+2", "02", "2147483647"}) {
             const auto parsedRepeater = repeaterWithFirstRow(firstRow);
@@ -1349,16 +1635,16 @@ void runFixtureProbe() {
             try {
                 static_cast<void>(repeaterWithFirstRow(firstRow));
             } catch (const std::runtime_error& error) {
-                rejected = std::string(error.what()).find("Invalid repeater index") !=
-                           std::string::npos;
+                rejected =
+                    std::string(error.what()).find("Invalid repeater index") != std::string::npos;
             }
             require(rejected, "negative or invalid repeater starting row is rejected");
         }
         for (const std::string& masterTile : {"-1", "0", "1"}) {
-            const auto parsedRepeater = loadVersionedObject(
-                "14", "[splineAttachement_repeater]\n0\n" + masterTile +
-                          "\n2\nScenery\\lamp.sco\n8\n0\n"
-                          "0\n0\n0\n0\n0\n0\n5\n15\n0\n0\n");
+            const auto parsedRepeater =
+                loadVersionedObject("14", "[splineAttachement_repeater]\n0\n" + masterTile +
+                                              "\n2\nScenery\\lamp.sco\n8\n0\n"
+                                              "0\n0\n0\n0\n0\n0\n5\n15\n0\n0\n");
             require(parsedRepeater.splineAttachments.size() == 1 &&
                         parsedRepeater.splineRepeaterCount == 1 &&
                         parsedRepeater.splineAttachments[0].repeater &&
@@ -1370,13 +1656,13 @@ void runFixtureProbe() {
         for (const std::string& masterTile : {"0x2", "$2", "x2", "X2"}) {
             bool rejected = false;
             try {
-                static_cast<void>(loadVersionedObject(
-                    "14", "[splineAttachement_repeater]\n0\n" + masterTile +
-                              "\n2\nScenery\\lamp.sco\n8\n0\n"
-                              "0\n0\n0\n0\n0\n0\n5\n15\n0\n0\n"));
+                static_cast<void>(loadVersionedObject("14", "[splineAttachement_repeater]\n0\n" +
+                                                                masterTile +
+                                                                "\n2\nScenery\\lamp.sco\n8\n0\n"
+                                                                "0\n0\n0\n0\n0\n0\n5\n15\n0\n0\n"));
             } catch (const std::runtime_error& error) {
-                rejected = std::string(error.what()).find("Invalid repeater index") !=
-                           std::string::npos;
+                rejected =
+                    std::string(error.what()).find("Invalid repeater index") != std::string::npos;
             }
             require(rejected, "hexadecimal repeater master is rejected");
         }
@@ -1388,8 +1674,8 @@ void runFixtureProbe() {
                           "1\n2\n3\n0\n0\n0\n10\n20\n0\n" +
                               countAndPayload));
             } catch (const std::runtime_error& error) {
-                rejected = std::string(error.what()).find("Invalid label count") !=
-                           std::string::npos;
+                rejected =
+                    std::string(error.what()).find("Invalid label count") != std::string::npos;
             }
             require(rejected, "invalid and truncated spline attachment label counts are rejected");
         }
@@ -1405,8 +1691,7 @@ void runFixtureProbe() {
         };
         const auto version5Spline = loadVersionedSpline(
             "5", "[spline]\nSplines\\legacy.sli\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n3\n4\n");
-        require(version5Spline.splines.size() == 1 &&
-                    version5Spline.splines[0].splineId == -1 &&
+        require(version5Spline.splines.size() == 1 && version5Spline.splines[0].splineId == -1 &&
                     version5Spline.splines[0].assetPath == "Splines\\legacy.sli" &&
                     version5Spline.splines[0].geometryValid &&
                     version5Spline.splines[0].localX == 10.0 &&
@@ -1417,22 +1702,23 @@ void runFixtureProbe() {
                 "version 5 spline reads cant directly as map-editor percentage points");
         const auto version5MixedRecords = loadVersionedSpline(
             "5", "[spline]\nSplines\\legacy.sli\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n3\n4\n"
-                  "[object]\nScenery\\legacy.sco\n1\n2\n0\n0\n"
-                  "Legacy attachment\n[attachObj]\n0\nScenery\\legacy-attached.sco\n44\n"
-                  "0\n1\n0\n0\n0\n0\n");
-        require(version5MixedRecords.splines.size() == 1 &&
-                    version5MixedRecords.splines[0].splineId == -1 &&
-                    version5MixedRecords.sceneryObjects.size() == 1 &&
-                    version5MixedRecords.sceneryObjects[0].id == -2 &&
-                    version5MixedRecords.attachedObjects.size() == 1 &&
-                    version5MixedRecords.attachedObjects[0].id == -3 &&
-                    version5MixedRecords.attachedObjects[0].attachedToObjectId == 44 &&
-                    version5MixedRecords.attachedObjects[0].attachPointIndexValue == 1 &&
-                    version5MixedRecords.attachedObjects[0].rotationDegrees ==
-                        std::array<double, 3>{0.0, 0.0, 0.0} &&
-                    version5MixedRecords.attachedObjects[0].transformValid &&
-                    !version5MixedRecords.attachedObjects[0].hasExplicitId,
-                "pre-v6 automatic IDs are shared across spline, object, and attached-object records");
+                 "[object]\nScenery\\legacy.sco\n1\n2\n0\n0\n"
+                 "Legacy attachment\n[attachObj]\n0\nScenery\\legacy-attached.sco\n44\n"
+                 "0\n1\n0\n0\n0\n0\n");
+        require(
+            version5MixedRecords.splines.size() == 1 &&
+                version5MixedRecords.splines[0].splineId == -1 &&
+                version5MixedRecords.sceneryObjects.size() == 1 &&
+                version5MixedRecords.sceneryObjects[0].id == -2 &&
+                version5MixedRecords.attachedObjects.size() == 1 &&
+                version5MixedRecords.attachedObjects[0].id == -3 &&
+                version5MixedRecords.attachedObjects[0].attachedToObjectId == 44 &&
+                version5MixedRecords.attachedObjects[0].attachPointIndexValue == 1 &&
+                version5MixedRecords.attachedObjects[0].rotationDegrees ==
+                    std::array<double, 3>{0.0, 0.0, 0.0} &&
+                version5MixedRecords.attachedObjects[0].transformValid &&
+                !version5MixedRecords.attachedObjects[0].hasExplicitId,
+            "pre-v6 automatic IDs are shared across spline, object, and attached-object records");
         const auto malformedAttachedObject = loadVersionedSpline(
             "14", "Attached object\n[attachObj]\n0\nScenery\\opaque.sco\n99\n5\n0\n"
                   "bad-index\n0\n2.5\nNaN\nnot-a-count\nopaque tail\n");
@@ -1446,8 +1732,9 @@ void runFixtureProbe() {
                         std::vector<std::string>{"opaque tail", ""},
                 "attached-object numeric conversions are non-destructive and count stays opaque");
         const auto version7Splines = loadVersionedSpline(
-            "7", "[spline]\nSplines\\legacy.sli\n71\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n"
-                  "3\n4\n[spline]\nSplines\\legacy.sli\n72\n1\n11\n21\n0.5\n90\n40\n-20\n1\n2\n3\n4\n");
+            "7",
+            "[spline]\nSplines\\legacy.sli\n71\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n"
+            "3\n4\n[spline]\nSplines\\legacy.sli\n72\n1\n11\n21\n0.5\n90\n40\n-20\n1\n2\n3\n4\n");
         require(version7Splines.splines.size() == 2 &&
                     version7Splines.splines[0].nextSplineId == 72 &&
                     version7Splines.splines[1].previousSplineId == 71 &&
@@ -1455,10 +1742,10 @@ void runFixtureProbe() {
                     version7Splines.splines[1].cantEnd == 4.0 &&
                     version7Splines.splines[1].geometryValid,
                 "version 7 links and direct percentage-point cant fields are decoded");
-        const auto version11Spline = loadVersionedSpline(
-            "11", "[spline]\n0\nSplines\\modern.sli\n111\n110\n112\n1\n2\n0.5\n45\n50\n-30\n0\n0\n1.5\n2.5\n18\n");
-        require(version11Spline.splines.size() == 1 &&
-                    version11Spline.splines[0].splineId == 111 &&
+        const auto version11Spline =
+            loadVersionedSpline("11", "[spline]\n0\nSplines\\modern.sli\n111\n110\n112\n1\n2\n0."
+                                      "5\n45\n50\n-30\n0\n0\n1.5\n2.5\n18\n");
+        require(version11Spline.splines.size() == 1 && version11Spline.splines[0].splineId == 111 &&
                     version11Spline.splines[0].previousSplineId == 110 &&
                     version11Spline.splines[0].nextSplineId == 112 &&
                     version11Spline.splines[0].cantStart == 1.5 &&
@@ -1466,10 +1753,10 @@ void runFixtureProbe() {
                     version11Spline.splines[0].chainOffsetValid &&
                     version11Spline.splines[0].chainOffset == 18.0,
                 "version 11 spline reads direct cant percentages and chain texture offset");
-        const auto version14Spline = loadVersionedSpline(
-            "14", "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0.5\n45\n50\n-30\n0\n0\n-50\n50\n11.25\n22.5\n77\nmirror\n");
-        require(version14Spline.splines.size() == 1 &&
-                    version14Spline.splines[0].geometryValid &&
+        const auto version14Spline =
+            loadVersionedSpline("14", "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0."
+                                      "5\n45\n50\n-30\n0\n0\n-50\n50\n11.25\n22.5\n77\nmirror\n");
+        require(version14Spline.splines.size() == 1 && version14Spline.splines[0].geometryValid &&
                     version14Spline.splines[0].cantStart == -50.0 &&
                     version14Spline.splines[0].cantEnd == 50.0 &&
                     version14Spline.splines[0].skewStart == 11.25 &&
@@ -1493,10 +1780,13 @@ void runFixtureProbe() {
             loadVersionedSpline("14", alignmentSpline + "[spline_terrain_align]\n");
         require(splineMarker.splines.size() == 1 &&
                     !splineMarker.splines[0].splineTerrainAlign2.has_value() &&
-                    std::ranges::any_of(splineMarker.diagnostics.entries, [](const auto& entry) {
-                        return entry.keyword == "spline_terrain_align" &&
-                               entry.message == "marker has no supported preceding object record";
-                    }),
+                    std::ranges::any_of(
+                        splineMarker.diagnostics.entries,
+                        [](const auto& entry) {
+                            return entry.keyword == "spline_terrain_align" &&
+                                   entry.message ==
+                                       "marker has no supported preceding object record";
+                        }),
                 "marker after spline is not applied and produces a warning");
 
         const openbus::map::TerrainGrid terrain =
@@ -1507,10 +1797,8 @@ void runFixtureProbe() {
         const openbus::map::WaterData water =
             openbus::map::loadWaterData(definition.tiles[0].waterPath);
         require(water.surfaces.size() == 2 &&
-                    water.surfaces[0].heights ==
-                        std::array<float, 4>{1.25F, 2.5F, 3.75F, 5.0F} &&
-                    water.surfaces[1].heights ==
-                        std::array<float, 4>{-1.0F, 0.0F, 12.5F, 40.0F},
+                    water.surfaces[0].heights == std::array<float, 4>{1.25F, 2.5F, 3.75F, 5.0F} &&
+                    water.surfaces[1].heights == std::array<float, 4>{-1.0F, 0.0F, 12.5F, 40.0F},
                 "water sidecar count and four little-endian heights per surface decoded");
         const std::filesystem::path malformedWaterPath = root / "malformed.map.water";
         {
@@ -1529,28 +1817,28 @@ void runFixtureProbe() {
         std::ifstream statusLogInput(statusLogPath);
         const std::string statusLog((std::istreambuf_iterator<char>(statusLogInput)),
                                     std::istreambuf_iterator<char>());
-        require(statusLogInput.is_open() &&
-                    statusLog.find("Configuration tag [map] recognized and active") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [backgroundimage] recognized but ignored") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [unknown_global] unknown") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [version] recognized and active") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [variable_terrain] recognized but ignored") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [unknown_future_section] unknown") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [sky_textures] recognized but ignored") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [cloudtype] recognized but ignored") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [startdate] recognized and active") !=
-                        std::string::npos &&
-                    statusLog.find("Configuration tag [unknown_environment] unknown") !=
-                        std::string::npos,
-                "global, environment, and map tile records log active, ignored, and unknown statuses");
+        require(
+            statusLogInput.is_open() &&
+                statusLog.find("Configuration tag [map] recognized and active") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [backgroundimage] recognized but ignored") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [unknown_global] unknown") != std::string::npos &&
+                statusLog.find("Configuration tag [version] recognized and active") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [variable_terrain] recognized but ignored") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [unknown_future_section] unknown") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [sky_textures] recognized but ignored") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [cloudtype] recognized but ignored") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [startdate] recognized and active") !=
+                    std::string::npos &&
+                statusLog.find("Configuration tag [unknown_environment] unknown") !=
+                    std::string::npos,
+            "global, environment, and map tile records log active, ignored, and unknown statuses");
     } catch (...) {
         openbus::probe::removeProbeDirectory(root);
         throw;
@@ -1578,8 +1866,8 @@ void runInstalledMapProbe(const std::filesystem::path& root) {
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(reference);
         splineCount += tile.splineCount + tile.elevatedSplineCount;
         sceneryPlacementCount += tile.sceneryObjects.size() + tile.splineAttachments.size();
-        objectCount += tile.objectCount + tile.attachedObjects.size() +
-                       tile.splineAttachmentCount + tile.splineRepeaterCount;
+        objectCount += tile.objectCount + tile.attachedObjects.size() + tile.splineAttachmentCount +
+                       tile.splineRepeaterCount;
         if (reference.hasTerrainFile) {
             const openbus::map::TerrainGrid terrain =
                 openbus::map::loadTerrainGrid(reference.terrainPath);
@@ -1642,9 +1930,8 @@ void runSplineAttachmentAudit(const std::filesystem::path& root) {
                 continue;
             }
             const auto [existing, inserted] = splinesById.try_emplace(
-                spline.splineId,
-                openbus::map::MapSplinePlacementReference{
-                    spline, reference.x, reference.y, definition.coordinates});
+                spline.splineId, openbus::map::MapSplinePlacementReference{
+                                     spline, reference.x, reference.y, definition.coordinates});
             if (!inserted) {
                 splinesById.erase(existing);
                 ambiguousSplineIds.insert(spline.splineId);
@@ -1654,8 +1941,7 @@ void runSplineAttachmentAudit(const std::filesystem::path& root) {
     }
 
     const openbus::map::MapSplineChainResolver resolver =
-        [&splinesById](int splineId)
-        -> std::optional<openbus::map::MapSplinePlacementReference> {
+        [&splinesById](int splineId) -> std::optional<openbus::map::MapSplinePlacementReference> {
         const auto found = splinesById.find(splineId);
         return found == splinesById.end()
                    ? std::nullopt

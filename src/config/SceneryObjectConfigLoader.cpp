@@ -52,7 +52,8 @@ bool readDoubles(Reader& reader, const std::string& keyword, std::size_t count,
 
 } // namespace
 
-SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath) {
+SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath,
+                                          bool convertScripts) {
     SceneryObjectConfig result;
     result.sourcePath = configPath;
     Reader reader(configPath);
@@ -198,10 +199,12 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             Line value;
             if (reader.readPayload(value, result.diagnostics, keyword)) {
                 VehicleConfig cabin;
-                cabin.passengerCabinConfigPath =
+                result.passengerCabinConfigPath =
                     openbus::assets::resolveReferencedPath(configPath, value.text);
+                cabin.passengerCabinConfigPath = result.passengerCabinConfigPath;
                 loadPassengerCabinConfiguration(cabin);
                 result.passengerPositions = std::move(cabin.passengerPositions);
+                result.passengerCabinDiagnostics = cabin.passengerCabinDiagnostics;
                 for (const ConfigurationDiagnostic& diagnostic : cabin.diagnostics.entries) {
                     result.diagnostics.entries.push_back(diagnostic);
                 }
@@ -713,7 +716,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     result.scriptConfiguration.variableLists = result.variableLists;
     result.scriptConfiguration.stringVariableLists = result.stringVariableLists;
     result.scriptConfiguration.constantFiles = result.constantFiles;
-    prepareScriptConfiguration(result.scriptConfiguration);
+    prepareScriptConfiguration(result.scriptConfiguration, convertScripts);
     result.diagnostics.entries.insert(result.diagnostics.entries.end(),
                                       result.scriptConfiguration.diagnostics.entries.begin(),
                                       result.scriptConfiguration.diagnostics.entries.end());

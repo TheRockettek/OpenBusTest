@@ -3,6 +3,7 @@
 #include "render/map/MapSceneLoader.h"
 
 #include "core/Utf8Path.h"
+#include "map/MapCarparkList.h"
 
 namespace openbus::rendering {
 
@@ -380,19 +381,14 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             if (carParkChancePercent_ <= 0.0) {
                 return;
             }
-            int listIndex = 0;
-            if (!placementLabels.empty() && !placementLabels.front().empty()) {
-                const std::string& selector = placementLabels.front();
-                const auto [end, error] =
-                    std::from_chars(selector.data(), selector.data() + selector.size(), listIndex);
-                if (error != std::errc{} || end != selector.data() + selector.size() ||
-                    listIndex < 0) {
-                    recordSkipped(skipped, "[carpark_p] markers with invalid park-list indexes",
-                                  description + " index=" + selector, 1, LogLevel::Warning);
-                    return;
-                }
+            const auto listIndex = openbus::map::carparkListIndex(placementLabels);
+            if (!listIndex) {
+                recordSkipped(skipped, "[carpark_p] markers with invalid park-list indexes",
+                              description + " index=" + placementLabels.front(), 1,
+                              LogLevel::Warning);
+                return;
             }
-            const std::vector<std::string>& candidates = loadCarparkVehicleList(listIndex);
+            const std::vector<std::string>& candidates = loadCarparkVehicleList(*listIndex);
             const std::optional<std::size_t> selected = openbus::map::selectMapCarparkVehicle(
                 carParkChancePercent_, candidates.size(), tileX, tileY, mapObjectId.value_or(0));
             if (!selected.has_value()) {

@@ -232,7 +232,7 @@ void loadVariableFile(const std::filesystem::path& configPath, const std::string
     Reader reader(path);
     if (!reader.isOpen()) {
         result.diagnostics.error(0, stringVariables ? "stringvarnamelist" : "varnamelist",
-                                 "unable to open " + path.string());
+                                 "unable to open " + path.string(), referencedPath);
         return;
     }
     Line line;
@@ -250,7 +250,7 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
     const std::filesystem::path path = resolveReferencedPath(configPath, referencedPath);
     Reader reader(path);
     if (!reader.isOpen()) {
-        result.diagnostics.error(0, "constfile", "unable to open " + path.string());
+        result.diagnostics.error(0, "constfile", "unable to open " + path.string(), referencedPath);
         return;
     }
     Line line;
@@ -327,10 +327,12 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
     if (source.passengerCabinConfigPath.empty()) {
         return;
     }
+    const std::size_t diagnosticsStart = result.diagnostics.entries.size();
     Reader reader(source.passengerCabinConfigPath);
     if (!reader.isOpen()) {
         result.diagnostics.error(0, "passengercabin",
                                  "unable to open " + source.passengerCabinConfigPath.string());
+        result.passengerCabinDiagnostics.entries.push_back(result.diagnostics.entries.back());
         return;
     }
 
@@ -375,7 +377,7 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
         }
         if (keyword == "passpos" || keyword == "drivpos") {
             std::vector<double> values;
-            if (!readDoubleRecord(reader, keyword, 5, values, result.diagnostics)) {
+            if (!readDoubleRecord(reader, keyword, 5, values, result.diagnostics, line.number)) {
                 continue;
             }
             PassengerCabinPosition position;
@@ -529,15 +531,20 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
             openbus::config::ConfigurationTagStatus::Unknown,
             "passenger-cabin keyword is not recognized");
     }
+    for (std::size_t index = diagnosticsStart; index < result.diagnostics.entries.size(); ++index) {
+        result.passengerCabinDiagnostics.entries.push_back(result.diagnostics.entries[index]);
+    }
 }
 
 void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
     if (source.pathsConfigPath.empty()) {
         return;
     }
+    const std::size_t diagnosticsStart = result.diagnostics.entries.size();
     Reader reader(source.pathsConfigPath);
     if (!reader.isOpen()) {
         result.diagnostics.error(0, "paths", "unable to open " + source.pathsConfigPath.string());
+        result.pathsDiagnostics.entries.push_back(result.diagnostics.entries.back());
         return;
     }
 
@@ -546,9 +553,9 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
     while (reader.next(line)) {
         if (!line.isKeyword()) {
             int parsedIndex = -1;
-            if (parseInt(line.text, parsedIndex)) {
-                pendingPointIndex = parsedIndex;
-            }
+            const auto suffixStart = line.text.find_first_of(" \t");
+            const auto index = line.text.substr(0, suffixStart);
+            pendingPointIndex = parseInt(index, parsedIndex) ? parsedIndex : -1;
             continue;
         }
         const std::string keyword = lower(line.keyword());
@@ -636,16 +643,20 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
                                                    openbus::config::ConfigurationTagStatus::Unknown,
                                                    "passenger-path keyword is not recognized");
     }
+    for (std::size_t index = diagnosticsStart; index < result.diagnostics.entries.size(); ++index) {
+        result.pathsDiagnostics.entries.push_back(result.diagnostics.entries[index]);
+    }
 }
 
 void loadRegistrationEntries(const std::filesystem::path& path, std::vector<std::string>& entries,
-                             VehicleConfig& result) {
+                             VehicleConfig& result, ConfigurationDiagnostics& resourceDiagnostics) {
     if (path.empty()) {
         return;
     }
     std::ifstream input(path);
     if (!input) {
         result.diagnostics.error(0, "registration", "unable to open " + path.string());
+        resourceDiagnostics.entries.push_back(result.diagnostics.entries.back());
         return;
     }
     std::string value;
@@ -1336,8 +1347,10 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
     prepareScriptConfiguration(result, convertScripts);
     loadPassengerCabin(result, result);
     loadPassengerPaths(result, result);
-    loadRegistrationEntries(result.numberConfigPath, result.vehicleNumbers, result);
-    loadRegistrationEntries(result.registrationListConfigPath, result.registrationNumbers, result);
+    loadRegistrationEntries(result.numberConfigPath, result.vehicleNumbers, result,
+                            result.numberDiagnostics);
+    loadRegistrationEntries(result.registrationListConfigPath, result.registrationNumbers, result,
+                            result.registrationListDiagnostics);
     if (!result.vehicleNumbers.empty() && !result.registrationNumbers.empty() &&
         result.vehicleNumbers.size() != result.registrationNumbers.size()) {
         result.diagnostics.warning(

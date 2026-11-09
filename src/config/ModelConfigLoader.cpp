@@ -1091,9 +1091,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {
                 Line value;
-                const bool hasValue = reader.next(value);
-                if (!hasValue || value.isKeyword() || isSeparatorLine(value.text)) {
-                    if (hasValue) {
+                const bool hasValue = reader.nextIncludingBlank(value);
+                if (!hasValue || value.text.empty() || value.isKeyword() ||
+                    isSeparatorLine(value.text)) {
+                    if (hasValue && !value.text.empty()) {
                         reader.pushBack(std::move(value));
                     }
                     current->transmapTextureName.clear();

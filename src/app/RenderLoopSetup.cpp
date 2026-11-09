@@ -8,15 +8,23 @@
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/Utf8Path.h"
+#include "map/MapAssetValidation.h"
 #include "physics/BusConfiguration.h"
+#include "render/AssetRequestManager.h"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <array>
+
 #include <cctype>
 #include <chrono>
 #include <ctime>
+#include <future>
+#include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <numbers>
 #include <string>
 #include <system_error>
@@ -24,6 +32,11 @@
 namespace {
 
 using openbus::pathToUtf8;
+
+struct AssetValidationProgressState {
+    std::mutex mutex;
+    openbus::map::MapAssetValidationProgress progress;
+};
 
 std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& omsiRoot) {
     openbus::rendering::TraceScope trace("startup", "startup.discoverMaps");
@@ -164,6 +177,13 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     int selectedSpawn = 0;
     std::optional<openbus::map::MapDefinition> selectedDefinition;
     std::string mapLoadError;
+    std::future<openbus::map::MapAssetValidationReport> assetValidationRequest;
+    std::filesystem::path assetValidationMap;
+    std::optional<openbus::map::MapAssetValidationReport> assetValidationReport;
+    std::shared_ptr<AssetValidationProgressState> assetValidationProgress;
+    std::string assetValidationError;
+    bool showAssetValidationWindow = false;
+    int selectedAssetFinding = -1;
     bool waitingForInitialMapWindow = false;
     std::optional<TraceScope> initialMapWaitTrace;
     bool restoreSetupDialogSize = false;
@@ -194,6 +214,20 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         glfwPollEvents();
         if (shouldClose()) {
             return false;
+        }
+        if (assetValidationRequest.valid() &&
+            assetValidationRequest.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            try {
+                assetValidationReport = assetValidationRequest.get();
+                if (!assetValidationReport->complete) {
+                    gameLog.Warning("Map asset check is incomplete for '" +
+                                    pathToUtf8(assetValidationMap) + "'.");
+                }
+            } catch (const std::exception& error) {
+                assetValidationError = error.what();
+                gameLog.Error("Map asset check failed for '" + pathToUtf8(assetValidationMap) +
+                              "': " + error.what());
+            }
         }
         const auto [framebufferWidth, framebufferHeight] = framebufferSize();
         const auto [windowWidth, windowHeight] = windowSize();
@@ -278,6 +312,34 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             }
             ImGui::EndCombo();
         }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(assetValidationRequest.valid());
+        if (ImGui::Button("Check assets")) {
+            assetValidationMap = maps[selectedMapIndex];
+            assetValidationReport.reset();
+            assetValidationError.clear();
+            selectedAssetFinding = -1;
+            showAssetValidationWindow = true;
+            try {
+                const auto mapDirectory = assetValidationMap;
+                const auto rootDirectory = omsiRoot;
+                assetValidationProgress = std::make_shared<AssetValidationProgressState>();
+                const auto progressState = assetValidationProgress;
+                assetValidationRequest = assetRequestManager_->submit([mapDirectory, rootDirectory,
+                                                                       progressState] {
+                    openbus::map::MapAssetValidationOptions options;
+                    options.onProgress = [progressState](const auto& progress) {
+                        std::lock_guard lock(progressState->mutex);
+                        progressState->progress = progress;
+                    };
+                    return openbus::map::validateMapAssets(mapDirectory, rootDirectory, options);
+                });
+            } catch (const std::exception& error) {
+                assetValidationError = error.what();
+                gameLog.Error("Could not start map asset check: " + assetValidationError);
+            }
+        }
+        ImGui::EndDisabled();
         ImGui::TextUnformatted("Date");
         ImGui::SetNextItemWidth(125.0F);
         ImGui::InputInt("Year", &year, 1, 1);
@@ -370,6 +432,120 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         }
         ImGui::EndDisabled();
         ImGui::End();
+
+        if (showAssetValidationWindow) {
+            ImGui::SetNextWindowSize(ImVec2(760.0F, 600.0F), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Map asset check", &showAssetValidationWindow)) {
+                ImGui::Text("Map: %s", pathToUtf8(assetValidationMap).c_str());
+                if (assetValidationRequest.valid()) {
+                    openbus::map::MapAssetValidationProgress progress;
+                    if (assetValidationProgress) {
+                        std::lock_guard lock(assetValidationProgress->mutex);
+                        progress = assetValidationProgress->progress;
+                    }
+                    ImGui::Text("%s", progress.phase.empty() ? "Checking map assets..."
+                                                             : progress.phase.c_str());
+                    if (progress.total > 0) {
+                        const float fraction = std::clamp(static_cast<float>(progress.completed) /
+                                                              static_cast<float>(progress.total),
+                                                          0.0F, 1.0F);
+                        ImGui::ProgressBar(fraction, ImVec2(-1.0F, 0.0F));
+                    } else if (progress.completed > 0) {
+                        ImGui::Text("Processed %zu items", progress.completed);
+                    }
+                } else if (!assetValidationError.empty()) {
+                    ImGui::TextColored(ImVec4(1.0F, 0.4F, 0.3F, 1.0F), "Check failed");
+                    ImGui::TextWrapped("%s", assetValidationError.c_str());
+                } else if (assetValidationReport.has_value()) {
+                    const auto& report = *assetValidationReport;
+                    ImGui::Text("Scanned %zu base tiles, %zu independent Chrono tiles, "
+                                "%zu combined Chrono tiles, and %zu timetable dates.",
+                                report.tilesScanned, report.chronoTilesScanned,
+                                report.chronoCombinedTilesScanned,
+                                report.chronoTimetableDatesScanned);
+                    if (report.complete) {
+                        ImGui::TextColored(ImVec4(0.35F, 0.85F, 0.4F, 1.0F),
+                                           "Scan complete: %zu finding(s).",
+                                           report.findings.size());
+                    } else {
+                        ImGui::TextColored(
+                            ImVec4(1.0F, 0.75F, 0.25F, 1.0F),
+                            "INCOMPLETE: a clean result does not certify full OMSI coverage.");
+                        ImGui::Text("%zu finding(s).", report.findings.size());
+                    }
+
+                    std::map<std::string, std::size_t> findingCounts;
+                    for (const auto& finding : report.findings) {
+                        ++findingCounts[finding.category];
+                    }
+                    for (const auto& [category, count] : findingCounts) {
+                        ImGui::SameLine();
+                        ImGui::Text("%s: %zu", category.c_str(), count);
+                    }
+
+                    const int findingCount = static_cast<int>(
+                        std::min(report.findings.size(),
+                                 static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+                    ImGui::BeginChild("asset-check-findings", ImVec2(0.0F, -150.0F), true);
+                    ImGuiListClipper clipper;
+                    clipper.Begin(findingCount);
+                    while (clipper.Step()) {
+                        for (int index = clipper.DisplayStart; index < clipper.DisplayEnd;
+                             ++index) {
+                            const auto& finding = report.findings[static_cast<std::size_t>(index)];
+                            const std::string label =
+                                std::string(finding.unsupported ? "UNSUPPORTED " : "") +
+                                finding.category + ": " +
+                                (finding.reference.empty() ? finding.detail : finding.reference);
+                            if (ImGui::Selectable(label.c_str(), selectedAssetFinding == index)) {
+                                selectedAssetFinding = index;
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                    if (selectedAssetFinding >= 0 &&
+                        static_cast<std::size_t>(selectedAssetFinding) < report.findings.size()) {
+                        const auto& finding =
+                            report.findings[static_cast<std::size_t>(selectedAssetFinding)];
+                        if (finding.unsupported) {
+                            ImGui::TextColored(ImVec4(1.0F, 0.75F, 0.25F, 1.0F),
+                                               "UNSUPPORTED BY OPENBUS");
+                        }
+                        ImGui::TextWrapped("%s", finding.detail.c_str());
+                        if (!finding.reference.empty()) {
+                            ImGui::TextWrapped("Reference: %s", finding.reference.c_str());
+                        }
+                        ImGui::TextWrapped("Source: %s", pathToUtf8(finding.source).c_str());
+                        if (!finding.context.empty()) {
+                            ImGui::TextWrapped("Context: %s", pathToUtf8(finding.context).c_str());
+                        }
+                    }
+                } else {
+                    ImGui::TextWrapped(
+                        "Select a map and click Check assets. This scan does not yet cover every "
+                        "OMSI format; the README lists known unsupported content.");
+                }
+                if (ImGui::TreeNode("Known OpenBus support gaps")) {
+                    ImGui::BulletText(
+                        "Animated or skinned .x content, complete .sli semantics, cross-tile "
+                        "repeater and attachment behavior, and scenery scripting are partial.");
+                    ImGui::BulletText(
+                        "Water rendering, dynamic terrain and lightmaps, and tile or seasonal "
+                        "ground-texture rendering are not implemented.");
+                    ImGui::BulletText(
+                        "Chrono and timetable parity is incomplete; the checker also misses some "
+                        "runtime repaint/free-texture variants, sound directives, and audio "
+                        "formats beyond WAV.");
+                    ImGui::TextWrapped(
+                        "Unknown sections retained from global.cfg and tile files are shown as "
+                        "UNSUPPORTED findings. This does not discover every unsupported "
+                        "reference or certify complete OMSI compatibility. See the README for "
+                        "the detailed support notes.");
+                    ImGui::TreePop();
+                }
+            }
+            ImGui::End();
+        }
         imguiLayer_->render();
         glfwSwapBuffers(window_);
     }

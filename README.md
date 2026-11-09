@@ -420,6 +420,8 @@ established. Road UV V uses a valid parsed v11+ spline chain offset as its
 longitudinal origin; visual continuity and OMSI parity still need confirmation
 against linked installed splines.
 
+### Map behavior not implemented or partial
+
 The following map behavior is **not implemented** or remains explicitly partial:
 
 - Animated/skinned DirectX `.x` content; static text, binary, and
@@ -626,6 +628,193 @@ callbacks during the setup screen and normal frames. Startup loading may block
 callbacks temporarily. Failures are logged under `Steam` and do not prevent
 OpenBus from running. Successful initialization is not proof that Steam displays
 the expected presence: check the Steam client while OpenBus is running.
+
+## Experimental map asset check
+
+Run the map asset check from OpenBus's startup map-selection screen with
+**Check assets**. The scan runs on an asset worker so the setup UI remains
+responsive; findings can be selected to inspect their source, reference, and
+context. Unknown sections retained from `global.cfg`, environment config files,
+base tiles, Chrono tile overlays, and `Chrono.cfg` are labeled `UNSUPPORTED`
+rather than reported as missing assets. This is a partial checker, not a
+complete Blue Sky replacement.
+
+The command-line checker is also available. Build the `OpenBusMapAssetCheck`
+target, then provide the map directory and OMSI installation root, for example
+on Windows:
+
+```powershell
+.\build-ninja\OpenBusMapAssetCheck.exe "C:\OMSI 2\maps\MyMap" "C:\OMSI 2"
+```
+
+It reports the source and missing reference for listed base tiles, terrain and
+water sidecars,
+objects and spline placements, spline textures, ground textures, and configured
+environment sky and cloud textures, plus AI vehicle,
+pedestrian, and driver entries understood by the current parsers. It also checks
+referenced object, vehicle and human model configurations and supported meshes,
+OBJ material libraries, scenery and human CFG and mesh-embedded textures,
+configured vehicle resource files, scripts, and referenced variable, string-variable
+and constant files. It checks vehicle sound configuration `[sound]` and
+`[loopsound]` references for missing files and decodes referenced audio with the
+same WAV loader used at runtime. Passenger `[stepsoundpack]` references are
+checked under `Sounds\Passengers` and decoded with that loader as well.
+Ambiguous blank filenames are reported as uncertain rather than as missing files.
+For base-tile car-park markers it checks their selected park-list files and all
+listed scenery objects and their dependencies, regardless of occupancy. Invalid,
+missing, empty and unreadable lists are reported.
+The checker also examines each matching tile in a directory with a `Chrono.cfg`
+as an independent overlay on its base tile, using the runtime's overlay parser.
+It checks added and replaced objects and splines, changed car-park selections,
+and existing terrain and water sidecars. It checks authored scenarios even when
+their dates are inactive or invalid, so findings do not establish that a
+scenario is active. It also checks the final tile produced by each distinct
+date-selected combination of valid scenarios, including selectors targeting
+placements introduced by another overlay. It samples scenario start dates and
+the days after inclusive end dates, using the runtime's parser and ordering.
+Repeated combination diagnostics retain one example date.
+If scenario discovery or configuration loading fails, it reports that combined
+checks were skipped. These checks reflect OpenBus's current Chrono interpretation,
+not verified OMSI parity. When a matching Chrono tile scenario has its own
+selected `parklist_p*.txt`, the checker validates that list and its scenery
+dependencies instead of silently substituting the base-map list; for combined
+overlays it checks matching scenario lists before falling back to the base list.
+For configured scenarios without a matching tile overlay, it also checks any
+scenario-specific lists whose indices are used by base-map car-park markers;
+an absent scenario-specific list is not treated as missing by this supplemental
+check. The independent and combined overlay counts are separate from the base-tile count.
+It also runs the runtime timetable merge at each valid scenario date transition
+and reports parser diagnostics from date-selected timetable files, such as a
+departure referencing a missing trip. Station-based passenger trips are retained
+when optional route display metadata is absent; a referenced `.ttp` that exists
+but has no supported route data is distinguished from a missing trip file;
+files without `[station]` or `[station_typ2]` records are identified as such.
+The date count is separate from tile counts; this does not establish parity
+with all OMSI timetable formats. Fully authored `[station]` routes with aligned
+station IDs and nonempty `.ttr` track data do not require `Busstops.cfg` or
+`StnLinks.cfg` matching. Stop-link resolution is also skipped for timetables
+without scheduled departures; scheduled trips with unresolved stop IDs still
+report diagnostics. Unhandled section headers in parsed `.ttp`, `.ttr`, `.ttl`,
+`Busstops.cfg`, and `StnLinks.cfg` files are
+reported as unsupported and keep the scan incomplete.
+An empty display line name does not prevent loading a route when its trip name
+and destination are present. A missing destination is also allowed for an
+authored station route with a valid matching `.ttr`; the trip key is used as its
+display destination.
+For supported authored `.ttr` routes, including date-selected Chrono timetable
+routes, each track-entry ID is checked against IDs found on parsed spline and
+object placements in base tiles and independent Chrono variants. This is a
+map-wide ID-presence check; it does not verify the track type, the route's
+specific tile, or presence on every scenario date.
+Unresolved track-entry findings include the source `.ttr` line number.
+For ID-only routes, repeated directed station links are considered equivalent
+only when their complete track-entry paths match; divergent paths remain
+ambiguous.
+BOM-less text is kept unchanged when it is valid UTF-8; on Windows, otherwise
+the active Windows code page is used to decode legacy text to UTF-8 before
+timetable names are matched against Unicode filenames.
+Base AI lists and Chrono `ailists_#upd.cfg` files are scanned for `.bus` and
+`.ovh` references in supported `[ailist]`, `[aigroup_2]`, and
+`[aigroup_depot_typgroup_*]` sections. `.zug` consists referenced by base
+`[ailist]`/`[aigroup_2]` and Chrono `[ailist]`/`[aigroup_2]` sections are also read for
+their `.bus` and `.ovh` vehicle entries, which then use the regular vehicle
+dependency checks. Consists are resolved from both the OMSI root and its
+`Trains` directory, supporting bare filenames and explicit `Trains\` paths.
+Unhandled section headers in parsed train consists are reported as unsupported.
+Unhandled section headers in a matched HOF file are also reported as unsupported.
+For base `[aigroup_2]` groups with an optional HOF name and `[aigroup_depot]`
+entries, and Chrono `[aigroup_2]` groups and `[aigroup_depot]` entries, the
+declared HOF name is matched against HOFs discoverable for each linked bus type;
+unmatched associations are reported against the source list file.
+Group and depot association findings use separate categories.
+Referenced vehicle path configs accept descriptive labels after the numeric
+index in `[pathpnt]` records.
+Chrono references are checked across all discovered
+scenarios, not date-filtered AI-list content; other traffic update formats and
+human/driver changes inside other Chrono update formats remain unchecked.
+Scenario-local `humans.txt` and `drivers.txt` lists, when present, are checked
+like the base map's lists; non-comment lines that are not `.hum` paths are
+reported as unsupported. Explicit `.hum` path lines in `humans_#upd.cfg` and
+`drivers_#upd.cfg` are checked, but those update formats remain unsupported.
+For vehicle models with resolved meshes, it checks configured primary base
+textures, lightmaps, nightmaps, transparency maps, bump maps, active-strength
+environment maps, and file-backed free-texture defaults, including material
+change items. Used mesh materials are matched to their model-config material
+state by index to check the effective base texture, including OBJ, O3D, X, and
+OBJ-bundle materials. It uses the vehicle texture lookup rules, skips generated
+script/text textures, and reports lookup access errors separately from missing
+files. For CTC models, discovered CTI replacement textures are checked for slots
+declared by the model's CTC texture configuration. Runtime appearance selection
+and other dynamically selected texture variants are not evaluated, so this is
+not a guarantee that every possible paint selection resolves.
+Vehicle `[couple_back]` references are followed transitively with cycle protection;
+this does not imply articulated vehicles are fully implemented in the runtime.
+Existing base-tile terrain and water sidecars are also parsed to detect malformed
+data using the same readers as the runtime. Configured ticket-pack and currency
+files are resolved against the OMSI root and checked for missing files and parser
+diagnostics; unhandled ticket-pack and currency sections are explicitly reported
+as unsupported. Brace-enclosed currency template examples are ignored, while
+malformed data entries still produce diagnostics. Authored coin and bill model
+meshes are resolved relative to their currency configuration, parsed, and checked
+for embedded material textures. Ticket-pack and currency overrides in every discovered Chrono scenario's
+`Chrono.cfg` are checked as well, including inactive scenarios. Other
+unrecognized `Chrono.cfg` sections are labeled unsupported. Parser
+warnings describe OpenBus's current interpretation and do not necessarily mean
+the original OMSI file is invalid. Vehicle model collision meshes, including mesh-bundle entries,
+and authored scenery collision meshes are parsed and checked for usable triangles
+using their respective runtime rules.
+The scan does not convert scripts or write to the OMSI installation.
+Otherwise-uninventoried regular files beneath the map root and discovered
+Chrono scenario directories are included as unsupported findings. This
+conservative inventory does not decode opaque payloads or resolve references
+inside them.
+The CLI prints a finding count by category after the detailed findings. By
+default the checker prints warnings and findings without creating a log file.
+Set `OPENBUS_LOG_LEVEL` or `OPENBUS_LOG_FILE` to override those defaults.
+
+Known checker gaps include all runtime-selected repaint or free-texture
+variants, references hidden in unsupported sound directives and audio formats
+beyond the runtime WAV decoder, `[backgroundimage]` fields whose asset-reference
+semantics are not established, some Chrono timetable formats,
+`chrono_#upd.cfg` and other unrecognized Chrono update contents, and OMSI
+formats outside the parsers listed above. Unsupported sections are reported
+when preserved by
+OpenBus's global, environment, tile, scenery-object, model, vehicle, human,
+spline-profile, timetable, train-consist, HOF, or base/Chrono AI-list parser;
+unknown references inside unsupported sections are not resolved. OpenBus's
+current runtime map limitations are listed in
+[Map behavior not implemented or partial](#map-behavior-not-implemented-or-partial).
+A map with no reported
+findings is **not**
+certified complete or ready to bake. If the manifest cannot be parsed or lists
+no tiles, the scan fails instead of producing a complete missing-file list.
+The in-game **Check assets** window reports map-input, tile, Chrono, and vehicle
+scan progress. This is diagnostic progress only; no bake operation is available
+yet. See the
+[optional bake workflow and compatibility gates](Docs/MAP_BAKING.md).
+The tool returns 1 for findings and 2 for
+an incomplete scan without findings, an execution failure, or invalid arguments;
+0 is reserved for a future complete scan.
+
+## Experimental map bake archive
+
+A version-1 indexed chunk container, manifest codec, and map-wide tile-index
+codec are implemented and covered by probes. The manifest can fingerprint an
+explicitly supplied set of source files with SHA-256 and compare dependencies
+and settings, but complete
+map dependency discovery, map-data serialization, archive building, and runtime
+stale-cache handling are not implemented. The archive writer can append chunks
+incrementally, stream payloads, and atomically publish a completed container;
+it does not yet bake map data or change runtime loading. The original OMSI map
+path remains unchanged. The asset validator exposes a partial, deduplicated
+source inventory that can be
+mapped to rooted logical keys, but it does not certify that the dependency
+closure is complete. Scanned vehicle `.cti` appearance and `.hof` depot files
+are included in that inventory. The in-game checker reports progress, but bake
+progress, cancellation, production building, and runtime cache loading remain
+unimplemented. See the
+[bake workflow](Docs/MAP_BAKING.md) and
+[the archive format specification](Docs/MAP_BAKE_FORMAT.md).
 
 ## Running all test probes
 

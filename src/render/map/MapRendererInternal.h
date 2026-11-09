@@ -28,7 +28,7 @@
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
 #include "render/RenderPrimitives.h"
-#include "render/SceneryMaterialBinding.h"
+#include "map/SceneryMaterialBinding.h"
 #include "render/map/MapRenderer.h"
 #include "render/map/TreeSeason.h"
 #include "scripting/ScriptRuntime.h"

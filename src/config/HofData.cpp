@@ -109,6 +109,13 @@ HofData loadHofData(const std::filesystem::path& path) {
             ++index;
             continue;
         }
+        if (section != "name" && section != "end" && section != "global_strings" &&
+            section != "addterminus" && section != "addterminus_allexit" &&
+            section != "addterminus_list" && section != "addbusstop" &&
+            section != "addbusstop_list" && section != "infosystem_trip" &&
+            section != "infosystem_busstop_list") {
+            parsed.unsupportedSections.push_back({section, index + 1});
+        }
         std::size_t cursor = index + 1;
         if (section == "global_strings") {
             std::size_t count = 0;

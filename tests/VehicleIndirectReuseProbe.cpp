@@ -585,9 +585,13 @@ struct VehicleTextureLookupProbe {
         std::filesystem::create_directories(texture / "nested");
         std::ofstream(texture / "Sprinter.png") << "fixture";
         std::ofstream(texture / "nested" / "Plate.png") << "fixture";
+        const auto sameFile = [](const std::filesystem::path& actual,
+                                 const std::filesystem::path& expected) {
+            return !actual.empty() && std::filesystem::equivalent(actual, expected);
+        };
         const bool passed =
-            Vehicle::findTexture(model, "Sprinter.png") == texture / "Sprinter.png" &&
-            Vehicle::findTexture(model, "plate.PNG") == texture / "nested" / "Plate.png" &&
+            sameFile(Vehicle::findTexture(model, "Sprinter.png"), texture / "Sprinter.png") &&
+            sameFile(Vehicle::findTexture(model, "plate.PNG"), texture / "nested" / "Plate.png") &&
             Vehicle::findTexture(model, "missing.png").empty();
         openbus::probe::removeProbeDirectory(root);
         if (!passed) {

@@ -13,20 +13,26 @@
 namespace openbus::assets {
 
 inline std::filesystem::path textureSubdirectoryPath(const std::filesystem::path& root,
-                                                      const std::filesystem::path& relative) {
+                                                     const std::filesystem::path& relative) {
     if (relative.parent_path().empty()) {
         return {};
     }
     return root / relative.parent_path() / "texture" / relative.filename();
 }
 
-inline std::filesystem::path
-resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
+inline std::filesystem::path resolveCaseInsensitivePath(const std::filesystem::path& requestedPath,
+                                                        bool strictAccess = false) {
     const std::filesystem::path requested = requestedPath.lexically_normal();
     std::error_code error;
     if (std::filesystem::exists(requested, error) && !error) {
         return requested;
     }
+    const auto checkError = [&](const std::filesystem::path& path) {
+        if (strictAccess && error && error != std::errc::no_such_file_or_directory) {
+            throw std::filesystem::filesystem_error("Could not resolve path", path, error);
+        }
+    };
+    checkError(requested);
 
     const auto lowercase = [](std::string value) {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
@@ -43,9 +49,12 @@ resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
             resolved = exact;
             continue;
         }
+        checkError(exact);
 
         error.clear();
-        if (!std::filesystem::is_directory(resolved, error) || error) {
+        const bool directory = std::filesystem::is_directory(resolved, error);
+        checkError(resolved);
+        if (!directory || error) {
             return requested;
         }
         const std::string targetName = lowercase(openbus::pathToUtf8(component));
@@ -61,6 +70,7 @@ resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
                 matchedPath = entry->path();
             }
         }
+        checkError(resolved);
         if (error || matchedPath.empty()) {
             return requested;
         }
@@ -68,7 +78,9 @@ resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
     }
 
     error.clear();
-    return std::filesystem::exists(resolved, error) && !error ? resolved : requested;
+    const bool exists = std::filesystem::exists(resolved, error);
+    checkError(resolved);
+    return exists && !error ? resolved : requested;
 }
 
 inline std::filesystem::path resolveTexturePath(const std::filesystem::path& requestedPath) {
@@ -104,11 +116,53 @@ inline std::filesystem::path resolveTexturePath(const std::filesystem::path& req
     return requestedPath;
 }
 
+inline std::array<std::filesystem::path, 13>
+sceneryTextureCandidates(const std::filesystem::path& objectRoot,
+                         const std::filesystem::path& modelRoot,
+                         const std::filesystem::path& omsiRoot, const std::string& textureName) {
+    std::string normalized = textureName;
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    const std::filesystem::path relative = openbus::pathFromUtf8(normalized);
+    const auto packageRoot = objectRoot.parent_path();
+    const auto modelPackageRoot = modelRoot.parent_path();
+    return {objectRoot / "texture" / relative,
+            objectRoot / relative,
+            modelRoot / relative,
+            packageRoot / "texture" / relative,
+            packageRoot / relative,
+            modelPackageRoot / "texture" / relative,
+            modelPackageRoot / relative,
+            textureSubdirectoryPath(objectRoot, relative),
+            textureSubdirectoryPath(modelRoot, relative),
+            textureSubdirectoryPath(packageRoot, relative),
+            textureSubdirectoryPath(modelPackageRoot, relative),
+            omsiRoot / relative,
+            omsiRoot / "Texture" / relative};
+}
+
+inline std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot,
+                                                const std::filesystem::path& modelRoot,
+                                                const std::filesystem::path& omsiRoot,
+                                                const std::string& textureName) {
+    const auto candidates = sceneryTextureCandidates(objectRoot, modelRoot, omsiRoot, textureName);
+    for (const auto& candidate : candidates) {
+        if (!candidate.empty()) {
+            const auto resolved = resolveTexturePath(candidate);
+            if (std::filesystem::is_regular_file(resolved)) {
+                return resolved;
+            }
+        }
+    }
+    return {};
+}
+
 inline std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,
-                                                   const std::string& referencedPath) {
+                                                   const std::string& referencedPath,
+                                                   bool strictAccess = false) {
     std::string normalized = referencedPath;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    return resolveCaseInsensitivePath(configPath.parent_path() / normalized);
+    return resolveCaseInsensitivePath(configPath.parent_path() / openbus::pathFromUtf8(normalized),
+                                      strictAccess);
 }
 
 } // namespace openbus::assets

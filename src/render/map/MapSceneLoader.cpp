@@ -36,8 +36,7 @@ double carParkChancePercent() {
 
 } // namespace
 
-std::string
-MapSceneLoader::sceneryConfigIdentityKey(const std::filesystem::path& configPath) {
+std::string MapSceneLoader::sceneryConfigIdentityKey(const std::filesystem::path& configPath) {
     std::string key = openbus::pathToUtf8(configPath.lexically_normal());
 #if defined(_WIN32) || defined(WIN32)
     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
@@ -2281,11 +2280,12 @@ void MapSceneLoader::indexMapContent() {
                 requiredSplineAttachmentIds.insert(attachment.id);
             }
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
-                recordSkipped(skipped,
-                              "duplicate spline-attachment ID index entries "
-                              "(visual placements processed independently; ID references ambiguous)",
-                              tileLabel(tileReference.x, tileReference.y) +
-                                  " spline attachment ID=" + std::to_string(attachment.id));
+                recordSkipped(
+                    skipped,
+                    "duplicate spline-attachment ID index entries "
+                    "(visual placements processed independently; ID references ambiguous)",
+                    tileLabel(tileReference.x, tileReference.y) +
+                        " spline attachment ID=" + std::to_string(attachment.id));
             }
         }
         if (!tile.splineAttachments.empty()) {

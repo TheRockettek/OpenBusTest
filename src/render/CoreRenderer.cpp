@@ -2155,8 +2155,7 @@ std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness) {
 void setWeatherLighting(std::optional<double> brightness, bool reflectionPass) {
     const auto color = weatherBackgroundColor(brightness);
     const float value = static_cast<float>(brightness.value_or(1.0));
-    const float ambientLight =
-        std::max(0.58F * value, reflectionPass ? 0.25F : 0.0F);
+    const float ambientLight = std::max(0.58F * value, reflectionPass ? 0.25F : 0.0F);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms},

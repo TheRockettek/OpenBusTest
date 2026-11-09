@@ -18,7 +18,8 @@ namespace openbus::rendering {
 
 class SharedMapTextureImages {
   public:
-    using SeasonalPaths = std::array<std::filesystem::path, map_detail::treeSeasonDirectories.size()>;
+    using SeasonalPaths =
+        std::array<std::filesystem::path, map_detail::treeSeasonDirectories.size()>;
 
     struct Stats {
         std::size_t decodeAttempts;

@@ -574,8 +574,8 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                     if (now >= active->second.nextRetry) {
                         active->second.handle = playback.play(file, true, parameters);
                         if (active->second.handle == 0) {
-                            active->second.nextRetry = std::chrono::steady_clock::now() +
-                                                       TRIGGERED_LOOP_RETRY_INTERVAL;
+                            active->second.nextRetry =
+                                std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
                         }
                     }
                 } else if (definition.loop) {
@@ -603,8 +603,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         if (handle != 0 || definition.loop) {
             ActiveSound sound{file, handle, definition, controlValue, parameters};
             if (handle == 0) {
-                sound.nextRetry =
-                    std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
+                sound.nextRetry = std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
             }
             ownedSources.emplace(definition.id, std::move(sound));
         }
@@ -646,8 +645,7 @@ void VehicleSoundBank::updateActiveSounds(SoundPlayback& playback, const Variabl
             sound.file = openbus::assets::resolveCaseInsensitivePath(sound.file);
             sound.handle = playback.play(sound.file, true, parameters);
             if (sound.handle == 0) {
-                sound.nextRetry =
-                    std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
+                sound.nextRetry = std::chrono::steady_clock::now() + TRIGGERED_LOOP_RETRY_INTERVAL;
             }
             sound.parameters = parameters;
             return;

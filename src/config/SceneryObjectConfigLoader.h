@@ -57,6 +57,8 @@ struct SceneryObjectMapLight {
 struct SceneryObjectConfig {
     std::filesystem::path sourcePath;
     std::filesystem::path modelPath;
+    std::filesystem::path passengerCabinConfigPath;
+    ConfigurationDiagnostics passengerCabinDiagnostics;
     std::filesystem::path collisionMesh;
     bool noCollision = false;
     bool surface = false;
@@ -92,7 +94,8 @@ struct SceneryObjectConfig {
     ConfigurationDiagnostics diagnostics;
 };
 
-SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath);
+SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath,
+                                          bool convertScripts = true);
 std::filesystem::path resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration);
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,

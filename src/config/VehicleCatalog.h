@@ -33,9 +33,13 @@ discoverVehicleCatalog(const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleAppearance>
 discoverVehicleAppearances(const std::filesystem::path& vehicleConfigPath,
                            const std::filesystem::path& vehiclesDirectory,
-                           const std::vector<ModelCtcTemplate>& ctcTemplates = {});
+                           const std::vector<ModelCtcTemplate>& ctcTemplates = {},
+                           std::vector<std::filesystem::path>* sourceFiles = nullptr);
 const VehicleAppearance* findVehicleAppearance(const std::vector<VehicleAppearance>& appearances,
                                                const std::string& name);
+std::vector<std::filesystem::path>
+discoverVehicleDepotSourceFiles(const std::filesystem::path& vehicleConfigPath,
+                                const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleDepot> discoverVehicleDepots(const std::filesystem::path& vehicleConfigPath,
                                                 const std::filesystem::path& vehiclesDirectory);
 std::vector<VehicleDepot> discoverAllVehicleDepots(const std::filesystem::path& vehiclesDirectory);

@@ -1373,8 +1373,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     }
     openbus::rendering::setVehicleSpotlights(viewSpotlights);
     {
-        TraceScope phase("passenger",
-                         "RenderLoop::draw.refreshPassengerWaitingPositions");
+        TraceScope phase("passenger", "RenderLoop::draw.refreshPassengerWaitingPositions");
         refreshPassengerWaitingPositions();
     }
     const auto queuePose = [this](int stopId, std::size_t queueSlot) {
@@ -3869,9 +3868,8 @@ void RenderLoop::endFrame() {
             imguiLayer_->render();
         }
     }
-    static const bool finishBeforeSwap =
-        openbus::rendering::parseEnabledFlag(openbus::getEnvironment(
-            "OPENBUS_GL_FINISH_BEFORE_SWAP"));
+    static const bool finishBeforeSwap = openbus::rendering::parseEnabledFlag(
+        openbus::getEnvironment("OPENBUS_GL_FINISH_BEFORE_SWAP"));
     if (finishBeforeSwap) {
         TraceScope phase("frame", "RenderLoop::endFrame.glFinishBeforeSwap");
         glFinish();

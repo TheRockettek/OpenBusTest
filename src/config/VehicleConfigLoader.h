@@ -149,7 +149,9 @@ struct VehicleConfig {
     std::filesystem::path soundConfigPath;
     std::filesystem::path soundAiConfigPath;
     std::filesystem::path pathsConfigPath;
+    ConfigurationDiagnostics pathsDiagnostics;
     std::filesystem::path passengerCabinConfigPath;
+    ConfigurationDiagnostics passengerCabinDiagnostics;
     bool passengerCabinLoaded = false;
     std::vector<PassengerCabinPosition> passengerPositions;
     std::optional<PassengerCabinPosition> driverPosition;
@@ -169,7 +171,9 @@ struct VehicleConfig {
     int passengerPathNextStepSound = -1;
     std::vector<double> passengerPathNextRoomHeights;
     std::filesystem::path numberConfigPath;
+    ConfigurationDiagnostics numberDiagnostics;
     std::filesystem::path registrationListConfigPath;
+    ConfigurationDiagnostics registrationListDiagnostics;
     bool registrationListsLoaded = false;
     // The [number] fleet identifiers and [registration_list] plate strings
     // are parallel, order-preserving lists.

@@ -2048,8 +2048,7 @@ int main() {
                 populationTrace.finish();
                 preFrameSetupTrace.finish();
 
-                renderer.showStartupStatus(
-                    "Finishing spawn-area collision.");
+                renderer.showStartupStatus("Finishing spawn-area collision.");
                 {
                     openbus::rendering::TraceScope waitCollisionTrace("startup",
                                                                       "main.waitForSpawnCollision");

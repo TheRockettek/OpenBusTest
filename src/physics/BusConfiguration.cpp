@@ -7,6 +7,7 @@
 #include "config/ModelConfigLoader.h"
 #include "assets/O3DLoader.h"
 #include "assets/ObjLoader.h"
+#include "assets/CollisionMesh.h"
 #include "core/PerfTrace.h"
 #include "core/Variables.h"
 #include "assets/XLoader.h"
@@ -211,38 +212,20 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
         }
         const std::size_t initialVertexCount = configuration.collisionMeshVertices.size();
         for (const openbus::rendering::ObjTriangle& triangle : parsed->triangles) {
-            std::array<const openbus::rendering::ObjPosition*, 3> positions = {};
-            bool validTriangle = true;
-            for (std::size_t corner = 0; corner < triangle.indices.size(); ++corner) {
-                const int index = triangle.indices[corner].position;
-                if (index <= 0 || static_cast<std::size_t>(index) > parsed->positions.size()) {
-                    validTriangle = false;
-                    break;
-                }
-                positions[corner] = &parsed->positions[static_cast<std::size_t>(index - 1)];
-            }
-            if (!validTriangle) {
+            if (!openbus::assets::isUsableCollisionTriangle(*parsed, triangle)) {
                 continue;
             }
             const std::size_t nextVertex = configuration.collisionMeshVertices.size() / 3;
             if (nextVertex > static_cast<std::size_t>(std::numeric_limits<int>::max()) - 3) {
                 throw std::runtime_error("Bus model collision mesh exceeds ODE's vertex limit");
             }
-            for (std::size_t corner = 0; corner < positions.size(); ++corner) {
-                const auto& position = *positions[corner];
+            for (std::size_t corner = 0; corner < triangle.indices.size(); ++corner) {
+                const auto& position = parsed->positions[static_cast<std::size_t>(
+                    triangle.indices[corner].position - 1)];
                 const std::array<double, 3> converted = {position.y, -position.x, position.z};
-                if (!std::all_of(converted.begin(), converted.end(),
-                                 [](double value) { return std::isfinite(value); })) {
-                    validTriangle = false;
-                    break;
-                }
                 configuration.collisionMeshVertices.insert(
                     configuration.collisionMeshVertices.end(), converted.begin(), converted.end());
                 configuration.collisionMeshIndices.push_back(static_cast<int>(nextVertex + corner));
-            }
-            if (!validTriangle) {
-                configuration.collisionMeshVertices.resize(nextVertex * 3);
-                configuration.collisionMeshIndices.resize(nextVertex);
             }
         }
         if (configuration.collisionMeshVertices.size() == initialVertexCount) {

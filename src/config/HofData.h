@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -25,11 +26,17 @@ struct HofRoute {
     std::string line;
 };
 
+struct HofUnsupportedSection {
+    std::string keyword;
+    std::size_t line = 0;
+};
+
 struct HofData {
     std::vector<HofTerminus> termini;
     std::vector<HofBusstop> busstops;
     std::vector<HofRoute> routes;
     std::vector<std::string> globalStrings;
+    std::vector<HofUnsupportedSection> unsupportedSections;
 };
 
 HofData loadHofData(const std::filesystem::path& path);
