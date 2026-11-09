@@ -69,6 +69,11 @@ struct PassengerCabinTravelPathData {
     std::optional<std::size_t> doorPointIndex;
 };
 
+struct PassengerCabinSectionPose {
+    const VehicleConfig* configuration = nullptr;
+    openbus::map::MapTrafficPose pose;
+};
+
 inline PassengerCabinTravelPathData passengerCabinTravelPath(
     const VehicleConfig& cabin, const openbus::map::MapTrafficPose& vehiclePose,
     const std::array<double, 3>& startWorld, const std::array<double, 3>& endLocal, bool boarding,
@@ -154,6 +159,219 @@ inline PassengerCabinTravelPathData passengerCabinTravelPath(
     for (auto& point : path.positions) {
         point = passengerCabinWorldPoint(vehiclePose, point);
     }
+    return path;
+}
+
+inline PassengerCabinTravelPathData passengerCabinTravelPath(
+    const std::vector<PassengerCabinSectionPose>& sections, std::size_t startSectionIndex,
+    const std::array<double, 3>& startWorld, std::size_t endSectionIndex,
+    const std::array<double, 3>& endLocal, bool boarding, std::size_t doorSectionIndex,
+    std::optional<std::size_t> doorIndex) {
+    if (sections.empty() || startSectionIndex >= sections.size() ||
+        endSectionIndex >= sections.size() || doorSectionIndex >= sections.size() ||
+        std::ranges::any_of(sections, [](const PassengerCabinSectionPose& section) {
+            return section.configuration == nullptr;
+        }) ||
+        !doorIndex) {
+        return {};
+    }
+
+    struct Edge {
+        std::size_t destination = 0;
+        std::optional<std::size_t> linkIndex;
+        double distance = 0.0;
+    };
+    std::vector<std::size_t> pointOffsets(sections.size() + 1, 0);
+    std::vector<std::size_t> linkOffsets(sections.size() + 1, 0);
+    for (std::size_t sectionIndex = 0; sectionIndex < sections.size(); ++sectionIndex) {
+        const auto& cabin = *sections[sectionIndex].configuration;
+        pointOffsets[sectionIndex + 1] =
+            pointOffsets[sectionIndex] + cabin.passengerPathPoints.size();
+        linkOffsets[sectionIndex + 1] =
+            linkOffsets[sectionIndex] + cabin.passengerPathLinks.size();
+    }
+    if (pointOffsets.back() == 0) {
+        return {};
+    }
+
+    const auto pointIndex = [&](std::size_t sectionIndex, int id)
+        -> std::optional<std::size_t> {
+        const auto& points = sections[sectionIndex].configuration->passengerPathPoints;
+        const auto point = std::find_if(points.begin(), points.end(),
+                                        [id](const PassengerPathPoint& candidate) {
+                                            return candidate.index == id;
+                                        });
+        if (point == points.end()) {
+            return std::nullopt;
+        }
+        return pointOffsets[sectionIndex] +
+               static_cast<std::size_t>(std::distance(points.begin(), point));
+    };
+    const auto sectionForNode = [&](std::size_t nodeIndex) {
+        return static_cast<std::size_t>(
+            std::upper_bound(pointOffsets.begin(), pointOffsets.end(), nodeIndex) -
+            pointOffsets.begin() - 1);
+    };
+    const auto worldPoint = [&](std::size_t nodeIndex) {
+        const std::size_t sectionIndex = sectionForNode(nodeIndex);
+        const std::size_t localIndex = nodeIndex - pointOffsets[sectionIndex];
+        return passengerCabinWorldPoint(
+            sections[sectionIndex].pose,
+            sections[sectionIndex].configuration->passengerPathPoints[localIndex].position);
+    };
+    const auto targetWorld = passengerCabinWorldPoint(
+        sections[endSectionIndex].pose, endLocal);
+    std::vector<std::array<double, 3>> nodePositions(pointOffsets.back());
+    for (std::size_t nodeIndex = 0; nodeIndex < nodePositions.size(); ++nodeIndex) {
+        nodePositions[nodeIndex] = worldPoint(nodeIndex);
+    }
+
+    const auto distance = [](const std::array<double, 3>& first,
+                             const std::array<double, 3>& second) {
+        return std::hypot(second[0] - first[0], second[1] - first[1],
+                          second[2] - first[2]);
+    };
+    std::vector<std::vector<Edge>> graph(pointOffsets.back());
+    const auto addEdge = [&](std::size_t from, std::size_t to,
+                             std::optional<std::size_t> linkIndex) {
+        graph[from].push_back({to, linkIndex, distance(nodePositions[from], nodePositions[to])});
+    };
+    for (std::size_t sectionIndex = 0; sectionIndex < sections.size(); ++sectionIndex) {
+        const auto& cabin = *sections[sectionIndex].configuration;
+        for (std::size_t linkIndex = 0; linkIndex < cabin.passengerPathLinks.size(); ++linkIndex) {
+            const auto& link = cabin.passengerPathLinks[linkIndex];
+            const auto from = pointIndex(sectionIndex, link.from);
+            const auto to = pointIndex(sectionIndex, link.to);
+            if (!from || !to) {
+                return {};
+            }
+            const std::size_t globalLinkIndex = linkOffsets[sectionIndex] + linkIndex;
+            addEdge(*from, *to, globalLinkIndex);
+            if (!link.oneWay) {
+                addEdge(*to, *from, globalLinkIndex);
+            }
+        }
+    }
+    for (std::size_t sectionIndex = 0; sectionIndex + 1 < sections.size(); ++sectionIndex) {
+        const auto& current = *sections[sectionIndex].configuration;
+        const auto& next = *sections[sectionIndex + 1].configuration;
+        const auto connect = [&](const std::optional<int>& currentPoint,
+                                 const std::optional<int>& nextPoint) {
+            if (!currentPoint || !nextPoint) {
+                return;
+            }
+            const auto from = pointIndex(sectionIndex, *currentPoint);
+            const auto to = pointIndex(sectionIndex + 1, *nextPoint);
+            if (!from || !to) {
+                return;
+            }
+            addEdge(*from, *to, std::nullopt);
+            addEdge(*to, *from, std::nullopt);
+        };
+        connect(current.passengerPathPointToNextVehicle,
+                next.passengerPathPointToPreviousVehicle);
+        connect(current.passengerPathPointToPreviousVehicle,
+                next.passengerPathPointToNextVehicle);
+    }
+
+    const auto closestNode = [&](std::size_t sectionIndex,
+                                 const std::array<double, 3>& position)
+        -> std::optional<std::size_t> {
+        const std::size_t first = pointOffsets[sectionIndex];
+        const std::size_t last = pointOffsets[sectionIndex + 1];
+        if (first == last) {
+            return std::nullopt;
+        }
+        std::size_t closest = first;
+        double closestDistance = distance(nodePositions[first], position);
+        for (std::size_t node = first + 1; node < last; ++node) {
+            const double candidateDistance = distance(nodePositions[node], position);
+            if (candidateDistance < closestDistance) {
+                closest = node;
+                closestDistance = candidateDistance;
+            }
+        }
+        return closest;
+    };
+    const auto& doorCabin = *sections[doorSectionIndex].configuration;
+    const auto& doors = boarding ? doorCabin.passengerEntryPathPoints
+                                 : doorCabin.passengerExitPathPoints;
+    if (*doorIndex >= doors.size()) {
+        return {};
+    }
+    const auto doorNode = pointIndex(doorSectionIndex, doors[*doorIndex]);
+    const auto startNode =
+        boarding ? doorNode : closestNode(startSectionIndex, startWorld);
+    const auto endNode = boarding ? closestNode(endSectionIndex, targetWorld) : doorNode;
+    if (!startNode || !endNode) {
+        return {};
+    }
+
+    std::vector<double> distances(graph.size(), std::numeric_limits<double>::infinity());
+    std::vector<std::optional<std::size_t>> previousNodes(graph.size());
+    std::vector<std::optional<std::size_t>> previousLinks(graph.size());
+    std::vector<bool> visited(graph.size(), false);
+    distances[*startNode] = 0.0;
+    for (std::size_t iteration = 0; iteration < graph.size(); ++iteration) {
+        std::optional<std::size_t> currentNode;
+        for (std::size_t node = 0; node < graph.size(); ++node) {
+            if (!visited[node] &&
+                (!currentNode || distances[node] < distances[*currentNode])) {
+                currentNode = node;
+            }
+        }
+        if (!currentNode || !std::isfinite(distances[*currentNode])) {
+            break;
+        }
+        if (*currentNode == *endNode) {
+            break;
+        }
+        visited[*currentNode] = true;
+        for (const Edge& edge : graph[*currentNode]) {
+            const double candidateDistance = distances[*currentNode] + edge.distance;
+            if (candidateDistance < distances[edge.destination]) {
+                distances[edge.destination] = candidateDistance;
+                previousNodes[edge.destination] = *currentNode;
+                previousLinks[edge.destination] = edge.linkIndex;
+            }
+        }
+    }
+    if (!std::isfinite(distances[*endNode])) {
+        return {};
+    }
+    std::vector<std::size_t> routeNodes;
+    std::vector<std::optional<std::size_t>> routeLinks;
+    for (std::size_t node = *endNode;; node = *previousNodes[node]) {
+        routeNodes.push_back(node);
+        if (node == *startNode) {
+            break;
+        }
+        if (!previousNodes[node]) {
+            return {};
+        }
+        routeLinks.push_back(previousLinks[node]);
+    }
+    std::ranges::reverse(routeNodes);
+    std::ranges::reverse(routeLinks);
+
+    PassengerCabinTravelPathData path;
+    path.positions.push_back(startWorld);
+    const auto appendPoint = [&](const std::array<double, 3>& point,
+                                 std::optional<std::size_t> linkIndex) {
+        if (path.positions.back() != point) {
+            path.segmentLinkIndices.push_back(linkIndex);
+            path.positions.push_back(point);
+        }
+        return path.positions.size() - 1;
+    };
+    for (std::size_t index = 0; index < routeNodes.size(); ++index) {
+        const auto routePointIndex = appendPoint(
+            nodePositions[routeNodes[index]], index == 0 ? std::nullopt : routeLinks[index - 1]);
+        if (routeNodes[index] == *doorNode) {
+            path.doorPointIndex = routePointIndex;
+        }
+    }
+    appendPoint(targetWorld, std::nullopt);
     return path;
 }
 
@@ -254,6 +472,41 @@ inline void updatePassengerCabinPathOccupancy(
     }
     const double duration = passengerCabinTravelDuration(
         path, startWorld, passengerCabinWorldPoint(vehiclePose, endLocal), hasSeat);
+    if (boarding) {
+        service.setPassengerAnimationDurationForSeat(seatIndex, duration);
+    } else {
+        service.setAlightingPassengerAnimationDuration(duration);
+    }
+    if (!boarding) {
+        service.setAlightingDoorWaitProgress(passengerAlightingDoorWaitProgress(path, hasSeat));
+    }
+    auto profile = passengerSeatPathLinkProfile(
+        passengerPathLinkProgressProfile(path.positions, path.segmentLinkIndices), boarding,
+        hasSeat);
+    if (boarding) {
+        service.setPassengerPathLinkProgressProfileForSeat(seatIndex, std::move(profile));
+    } else {
+        service.setAlightingPassengerPathLinkProgressProfile(std::move(profile));
+    }
+}
+
+inline void updatePassengerCabinPathOccupancy(
+    openbus::map::MapPassengerServiceRuntime& service,
+    const std::vector<PassengerCabinSectionPose>& sections, std::size_t startSectionIndex,
+    const std::array<double, 3>& startWorld, std::size_t endSectionIndex,
+    const std::array<double, 3>& endLocal, bool boarding, std::size_t seatIndex,
+    bool hasSeat, std::size_t doorSectionIndex, std::optional<std::size_t> doorIndex,
+    std::optional<std::array<double, 3>> fallbackVia = std::nullopt) {
+    auto path = passengerCabinTravelPath(sections, startSectionIndex, startWorld,
+                                         endSectionIndex, endLocal, boarding,
+                                         doorSectionIndex, doorIndex);
+    const auto endWorld = passengerCabinWorldPoint(sections.at(endSectionIndex).pose, endLocal);
+    if (path.positions.empty() && fallbackVia) {
+        path.positions = {startWorld, *fallbackVia, endWorld};
+        path.segmentLinkIndices = {std::nullopt, std::nullopt};
+    }
+    const double duration =
+        passengerCabinTravelDuration(path, startWorld, endWorld, hasSeat);
     if (boarding) {
         service.setPassengerAnimationDurationForSeat(seatIndex, duration);
     } else {

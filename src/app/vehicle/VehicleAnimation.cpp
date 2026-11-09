@@ -135,10 +135,12 @@ Matrix4 Vehicle::animationTransformForPart(const DisplayPart& part,
     if (part.animationCacheGeneration == animationGeneration) {
         return part.cachedAnimationTransform;
     }
-    if (wheelsFromOde && odeSimulation != nullptr && part.odeWheelIndex >= 0) {
+    if (wheelsFromOde && odeSimulation != nullptr && part.odeWheelIndex >= 0 &&
+        static_cast<std::size_t>(part.odeWheelIndex) >= odeWheelIndexOffset) {
+        const std::size_t wheelIndex =
+            static_cast<std::size_t>(part.odeWheelIndex) - odeWheelIndexOffset;
         const BodyPose chassis = odeSimulation->chassisPose();
-        const BodyPose wheel =
-            odeSimulation->wheelPose(static_cast<std::size_t>(part.odeWheelIndex));
+        const BodyPose wheel = odeSimulation->wheelPose(wheelIndex);
         part.cachedAnimationTransform = openbus::rendering::makeOdeWheelAnimationTransform(
             chassis, wheel, part.center, modelOffsetZ);
         part.animationCacheGeneration = animationGeneration;

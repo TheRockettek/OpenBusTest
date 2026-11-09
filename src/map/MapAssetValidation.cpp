@@ -2073,16 +2073,14 @@ void checkUnclassifiedDirectoryFiles(
                     std::error_code targetError;
                     const bool directoryTarget =
                         std::filesystem::is_directory(entry.path(), targetError);
-                    report.findings.push_back({
-                        "map inventory", entry.path(), pathToUtf8(entry.path().filename()),
-                        targetError
-                            ? "Could not inspect map-root symlink target: " +
-                                  targetError.message()
-                            : directoryTarget
-                                  ? location +
-                                        " directory symlink is not traversed; its contents were "
-                                        "not validated"
-                                  : "Map-root symlink does not resolve to a regular file"});
+                    report.findings.push_back(
+                        {"map inventory", entry.path(), pathToUtf8(entry.path().filename()),
+                         targetError
+                             ? "Could not inspect map-root symlink target: " + targetError.message()
+                         : directoryTarget
+                             ? location + " directory symlink is not traversed; its contents were "
+                                          "not validated"
+                             : "Map-root symlink does not resolve to a regular file"});
                 }
                 continue;
             }
@@ -2091,17 +2089,16 @@ void checkUnclassifiedDirectoryFiles(
             const bool alreadyInventoried =
                 std::any_of(report.sourceFiles.begin(), report.sourceFiles.end(),
                             [&](const auto& source) { return cacheKey(source) == key; });
-            const bool alreadyReported =
-                std::any_of(report.findings.begin(), report.findings.end(),
-                            [&](const auto& finding) {
-                                if (cacheKey(finding.source) == key) {
-                                    return true;
-                                }
-                                if (finding.reference.empty()) {
-                                    return false;
-                                }
-                                return cacheKey(pathFromUtf8(finding.reference)) == key;
-                            });
+            const bool alreadyReported = std::any_of(
+                report.findings.begin(), report.findings.end(), [&](const auto& finding) {
+                    if (cacheKey(finding.source) == key) {
+                        return true;
+                    }
+                    if (finding.reference.empty()) {
+                        return false;
+                    }
+                    return cacheKey(pathFromUtf8(finding.reference)) == key;
+                });
             if (!alreadyInventoried && !alreadyReported) {
                 recordSourceFile(report, entry.path());
                 report.findings.push_back(

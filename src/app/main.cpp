@@ -1169,6 +1169,139 @@ int main() {
                 Vehicle* playerVehicle = nullptr;
                 Vehicle* mapBusVehicle = nullptr;
                 std::filesystem::path playerBusConfigPath;
+                struct ArticulatedRearRuntime {
+                    std::unique_ptr<BusSimulation> simulation;
+                    std::optional<ArticulatedBusCoupling> coupling;
+                    Vehicle* vehicle = nullptr;
+                    Vehicle* frontVehicle = nullptr;
+                    double centerOfGravityHeight = 0.0;
+                };
+                ArticulatedRearRuntime articulatedRear;
+                const auto createArticulatedRear = [&](Vehicle& frontVehicle,
+                                                       const std::filesystem::path& frontConfigPath,
+                                                       const VehiclePlacement& frontPlacement,
+                                                       BusSimulation& frontSimulation, bool frozen,
+                                                       ModelLoadingPolicy loadingPolicy) {
+                    ArticulatedRearRuntime rear;
+                    if (!frontVehicle.rearCouplingReference.has_value()) {
+                        return rear;
+                    }
+                    const std::filesystem::path rearConfigPath =
+                        frontVehicle.rearCouplingReference->vehicleConfigPath;
+                    if (rearConfigPath.empty()) {
+                        throw std::runtime_error(
+                            "The front bus has an empty rear coupling configuration path");
+                    }
+
+                    BusConfiguration frontConfiguration = loadBusConfiguration(
+                        frontConfigPath, modelConfigurationPathForBusFromConfig(frontConfigPath));
+                    BusConfiguration rearConfiguration = loadBusConfiguration(
+                        rearConfigPath, modelConfigurationPathForBusFromConfig(rearConfigPath));
+                    const VehiclePlacement rearPlacement = articulatedRearPlacement(
+                        frontConfiguration, frontPlacement, rearConfiguration);
+                    rear.centerOfGravityHeight = rearConfiguration.centerOfGravityHeight;
+                    rear.simulation = std::make_unique<BusSimulation>(
+                        *world, std::move(rearConfiguration), rearPlacement,
+                        frontSimulation.physicsHz(), 8);
+                    rear.simulation->setFrozen(frozen);
+                    rear.coupling.emplace(
+                        BusSimulation::coupleRearSection(frontSimulation, *rear.simulation));
+                    rear.vehicle = renderer.AddVehicle(
+                        rearConfigPath, modelConfigurationPathForBusFromConfig(rearConfigPath),
+                        rearPlacement, loadingPolicy, false, {}, false);
+                    rear.frontVehicle = &frontVehicle;
+                    rear.vehicle->setOdeSimulation(*rear.simulation);
+                    rear.vehicle->setPassengerMassSimulation(*rear.simulation);
+                    rear.vehicle->wheelsFromOde = true;
+                    rear.vehicle->odeWheelIndexOffset = frontSimulation.wheelCount();
+                    rear.vehicle->updateSimulationVariables(*rear.simulation, 0.0, 0.0, 0.0);
+                    return rear;
+                };
+                const auto clearArticulatedRear = [&]() {
+                    articulatedRear.coupling.reset();
+                    if (articulatedRear.vehicle != nullptr) {
+                        if (articulatedRear.frontVehicle != nullptr) {
+                            articulatedRear.frontVehicle->detachPassengerServiceSection(
+                                *articulatedRear.vehicle);
+                        }
+                        renderer.RemoveCoupledVehicle(articulatedRear.vehicle);
+                        articulatedRear.vehicle = nullptr;
+                        articulatedRear.frontVehicle = nullptr;
+                    }
+                    articulatedRear.simulation.reset();
+                    articulatedRear.centerOfGravityHeight = 0.0;
+                };
+                const auto updateArticulatedRearPlacement = [&]() {
+                    if (articulatedRear.simulation == nullptr ||
+                        articulatedRear.vehicle == nullptr) {
+                        return;
+                    }
+                    const BodyPose pose = articulatedRear.simulation->chassisPose();
+                    const auto& rotation = pose.rotation;
+                    const double pitch = std::asin(std::clamp(rotation[6], -1.0, 1.0));
+                    const double cosinePitch = std::cos(pitch);
+                    const double roll =
+                        std::abs(cosinePitch) > 1.0e-8 ? std::atan2(rotation[7], rotation[8]) : 0.0;
+                    const double yaw = std::atan2(rotation[3], rotation[0]);
+                    articulatedRear.vehicle->placement = {
+                        {pose.position[0] - articulatedRear.centerOfGravityHeight * rotation[2],
+                         pose.position[1] - articulatedRear.centerOfGravityHeight * rotation[5],
+                         pose.position[2] - articulatedRear.centerOfGravityHeight * rotation[8]},
+                        yaw * 180.0 / std::numbers::pi,
+                        pitch * 180.0 / std::numbers::pi,
+                        roll * 180.0 / std::numbers::pi};
+                };
+                const auto updateArticulatedRearVariables = [&]() {
+                    if (articulatedRear.simulation == nullptr ||
+                        articulatedRear.vehicle == nullptr) {
+                        return;
+                    }
+                    Vehicle& rearVehicle = *articulatedRear.vehicle;
+                    BusSimulation& rearSimulation = *articulatedRear.simulation;
+                    rearVehicle.updateSimulationVariables(
+                        rearSimulation, rearVehicle.variables.get("throttle"),
+                        rearVehicle.variables.get("steering"), rearVehicle.variables.get("brake"));
+                    if (const std::optional<BusCollisionEvent> collision =
+                            rearSimulation.consumeCollisionEvent();
+                        collision.has_value()) {
+                        rearVehicle.variables.set("coll_pos_x",
+                                                  static_cast<float>(collision->position[0]));
+                        rearVehicle.variables.set("coll_pos_y",
+                                                  static_cast<float>(collision->position[1]));
+                        rearVehicle.variables.set("coll_pos_z",
+                                                  static_cast<float>(collision->position[2]));
+                        rearVehicle.variables.set("coll_energy",
+                                                  static_cast<float>(collision->energy));
+                        if (rearVehicle.scripts) {
+                            rearVehicle.scripts->invokeSystemTrigger("collision");
+                        }
+                    }
+                };
+                const auto updatePlayerPhysics = [&](double elapsedSeconds) {
+                    const std::vector<double> frontBrakes =
+                        renderer.physicsWheelBrakeForces(simulation->axleCount());
+                    const std::vector<double> frontSprings =
+                        renderer.physicsAxleSpringFactors(simulation->axleCount());
+                    if (articulatedRear.simulation == nullptr) {
+                        simulation->updateWithWheelTorqueAndBrakeForces(
+                            elapsedSeconds, renderer.physicsWheelTorque(),
+                            renderer.physicsSteering(), frontBrakes, frontSprings);
+                        return;
+                    }
+                    const BusStepInput frontInput{renderer.physicsWheelTorque(),
+                                                  renderer.physicsSteering(), frontBrakes,
+                                                  frontSprings, true};
+                    const BusStepInput rearInput{
+                        0.0, 0.0,
+                        renderer.physicsWheelBrakeForces(*articulatedRear.vehicle,
+                                                         articulatedRear.simulation->axleCount()),
+                        renderer.physicsAxleSpringFactors(*articulatedRear.vehicle,
+                                                          articulatedRear.simulation->axleCount()),
+                        true};
+                    BusSimulation::updateTogether(*simulation, frontInput,
+                                                  *articulatedRear.simulation, rearInput,
+                                                  elapsedSeconds);
+                };
                 renderer.showStartupStatus("Preparing the player vehicle and map traffic.");
                 openbus::rendering::TraceScope preFrameSetupTrace(
                     "startup", "main.prepareInitialVehiclesAndTraffic");
@@ -1182,6 +1315,12 @@ int main() {
                                             false, startupSelection.vehicleSetup);
                     mapBusVehicle = playerVehicle;
                     playerBusConfigPath = busConfigPath;
+                    articulatedRear = createArticulatedRear(
+                        *playerVehicle, playerBusConfigPath, busPlacement, *simulation,
+                        !benchmarkMode, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+                    if (articulatedRear.vehicle != nullptr) {
+                        playerVehicle->attachPassengerServiceSection(*articulatedRear.vehicle);
+                    }
                     renderer.SetPlayerVehicle(playerVehicle);
                     applicationLog.Log(
                         "Player vehicle initialized; preparing AI traffic and pedestrians.");
@@ -2058,6 +2197,9 @@ int main() {
                 }
                 if (benchmarkMode) {
                     simulation->setFrozen(false);
+                    if (articulatedRear.simulation != nullptr) {
+                        articulatedRear.simulation->setFrozen(false);
+                    }
                 }
                 reportedCollisionTileCount = collisionStreamer->loadedTileCount();
 
@@ -2085,13 +2227,10 @@ int main() {
                             renderer.setBenchmarkFrame(phase, frameInPhase, framesInPhase);
                         renderer.updatePlayerVariables(*simulation, input.throttle, input.steering,
                                                        input.brake);
-                        simulation->updateWithWheelTorqueAndBrakeForces(
-                            benchmarkTimeStep, renderer.physicsWheelTorque(),
-                            renderer.physicsSteering(),
-                            renderer.physicsWheelBrakeForces(simulation->axleCount()),
-                            renderer.physicsAxleSpringFactors(simulation->axleCount()));
+                        updatePlayerPhysics(benchmarkTimeStep);
                         updateMapTrafficPopulation();
                         renderer.updatePostPhysicsVariables(*simulation);
+                        updateArticulatedRearVariables();
                         renderer.updateMapStreaming(simulation->positionX(),
                                                     simulation->positionY());
                         const auto loadedTiles = renderer.loadedMapTiles();
@@ -2103,6 +2242,7 @@ int main() {
                         }
                         collisionStreamer->update(simulation->positionX(), simulation->positionY(),
                                                   loadedTiles);
+                        updateArticulatedRearPlacement();
                         renderer.updateMapPoleStates(world->mapPoleStates());
                         const std::size_t collisionTileCount = collisionStreamer->loadedTileCount();
                         if (collisionTileCount != reportedCollisionTileCount) {
@@ -2245,13 +2385,27 @@ int main() {
                                 const double previousSimulationTime = simulation->simulationTime();
                                 const bool busIsOccupied = playerVehicle != nullptr;
                                 replacementSimulation->setFrozen(!busIsOccupied);
+                                ArticulatedRearRuntime replacementRear = createArticulatedRear(
+                                    *mapBusVehicle, playerBusConfigPath, *teleportRequest,
+                                    *replacementSimulation, !busIsOccupied,
+                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
                                 mapBusVehicle->placement = *teleportRequest;
                                 if (!busIsOccupied) {
                                     mapBusVehicle->odeSimulation = nullptr;
                                 }
                                 auto previousSimulation = std::move(simulation);
+                                clearArticulatedRear();
                                 simulation = std::move(replacementSimulation);
+                                articulatedRear = std::move(replacementRear);
+                                if (articulatedRear.vehicle != nullptr) {
+                                    mapBusVehicle->attachPassengerServiceSection(
+                                        *articulatedRear.vehicle);
+                                }
+                                if (busIsOccupied) {
+                                    mapBusVehicle->setOdeSimulation(*simulation);
+                                }
                                 previousSimulation.reset();
+                                updateArticulatedRearPlacement();
                                 rebaseMapClockAfterSimulationReplacement(previousSimulationTime);
                                 reportedCollisionTileCount = collisionStreamer->loadedTileCount();
                                 applicationLog.Log("Player bus teleported to " +
@@ -2266,6 +2420,9 @@ int main() {
                             renderer.SetPlayerVehicle(mapBusVehicle);
                             playerVehicle = mapBusVehicle;
                             simulation->setFrozen(false);
+                            if (articulatedRear.simulation != nullptr) {
+                                articulatedRear.simulation->setFrozen(false);
+                            }
                             applicationLog.Log("Entered the parked player bus.");
                         }
                         if (renderer.consumeLeaveMapBusRequest() && playerVehicle != nullptr) {
@@ -2275,6 +2432,10 @@ int main() {
                             mapBusVehicle->placement = busPlacement;
                             mapBusVehicle->odeSimulation = nullptr;
                             simulation->setFrozen(true);
+                            if (articulatedRear.simulation != nullptr) {
+                                articulatedRear.simulation->setFrozen(true);
+                            }
+                            updateArticulatedRearPlacement();
                             renderer.SetPlayerVehicle(nullptr);
                             playerVehicle = nullptr;
                             renderer.SetNoBusSpawnPoint(onFootExitPlacement(
@@ -2305,6 +2466,7 @@ int main() {
                             collisionStreamer->waitForTileCollision(
                                 placement.position[0], placement.position[1], removalGeometryTiles);
 
+                            clearArticulatedRear();
                             renderer.RemovePlayerVehicle();
                             playerVehicle = nullptr;
                             mapBusVehicle = nullptr;
@@ -2327,6 +2489,8 @@ int main() {
                             mapBusVehicle == nullptr) {
                             openbus::rendering::TraceScope spawnTrace("startup",
                                                                       "main.spawnSelectedMapBus");
+                            Vehicle* selectedPlayerVehicle = nullptr;
+                            ArticulatedRearRuntime replacementRear;
                             try {
                                 const std::vector<std::pair<int, int>> spawnGeometryTiles =
                                     waitForMapGeometry(spawnRequest->placement.position[0],
@@ -2366,7 +2530,6 @@ int main() {
                                 }
                                 const double previousSimulationTime = simulation->simulationTime();
                                 replacementSimulation->setFrozen(!spawnRequest->spawnInBus);
-                                Vehicle* selectedPlayerVehicle = nullptr;
                                 {
                                     openbus::rendering::TraceScope vehicleTrace(
                                         "startup", "spawnSelectedMapBus.addPlayerVehicle");
@@ -2376,11 +2539,25 @@ int main() {
                                         {AssetLoadingMode::Deferred, AssetLoadingMode::Eager},
                                         false, spawnRequest->setupOptions);
                                 }
+                                replacementRear = createArticulatedRear(
+                                    *selectedPlayerVehicle, selectedBusConfig,
+                                    spawnRequest->placement, *replacementSimulation,
+                                    !spawnRequest->spawnInBus,
+                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
                                 {
                                     openbus::rendering::TraceScope replaceTrace(
                                         "startup", "spawnSelectedMapBus.replaceSimulation");
                                     auto previousSimulation = std::move(simulation);
+                                    clearArticulatedRear();
                                     simulation = std::move(replacementSimulation);
+                                    articulatedRear = std::move(replacementRear);
+                                    if (articulatedRear.vehicle != nullptr) {
+                                        selectedPlayerVehicle->attachPassengerServiceSection(
+                                            *articulatedRear.vehicle);
+                                    }
+                                    if (spawnRequest->spawnInBus) {
+                                        selectedPlayerVehicle->setOdeSimulation(*simulation);
+                                    }
                                     previousSimulation.reset();
                                 }
                                 mapBusVehicle = selectedPlayerVehicle;
@@ -2394,6 +2571,7 @@ int main() {
                                     playerVehicle = nullptr;
                                     renderer.SetParkedPlayerBus(selectedPlayerVehicle);
                                 }
+                                updateArticulatedRearPlacement();
                                 rebaseMapClockAfterSimulationReplacement(previousSimulationTime);
                                 reportedCollisionTileCount = collisionStreamer->loadedTileCount();
                                 applicationLog.Log(
@@ -2402,6 +2580,19 @@ int main() {
                                           "bus."
                                         : "Selected bus spawned parked; player remains on foot.");
                             } catch (const std::exception& error) {
+                                replacementRear.coupling.reset();
+                                if (replacementRear.vehicle != nullptr) {
+                                    if (replacementRear.frontVehicle != nullptr) {
+                                        replacementRear.frontVehicle
+                                            ->detachPassengerServiceSection(
+                                                *replacementRear.vehicle);
+                                    }
+                                    renderer.RemoveCoupledVehicle(replacementRear.vehicle);
+                                }
+                                if (selectedPlayerVehicle != nullptr &&
+                                    selectedPlayerVehicle != mapBusVehicle) {
+                                    renderer.RemoveCoupledVehicle(selectedPlayerVehicle);
+                                }
                                 const std::string message = error.what();
                                 applicationLog.Error("Unable to spawn selected bus: " + message);
                                 renderer.SetSpawnBusError(message);
@@ -2409,6 +2600,9 @@ int main() {
                         }
                         if (!renderer.isPaused() && renderer.consumeRaisePlayerRequest()) {
                             simulation->translateVertically(5.0);
+                            if (articulatedRear.simulation != nullptr) {
+                                articulatedRear.simulation->translateVertically(5.0);
+                            }
                             applicationLog.Log(
                                 "Raised player vehicle 5 m above its current location");
                         }
@@ -2416,12 +2610,10 @@ int main() {
                         if (!renderer.isPaused()) {
                             renderer.updatePlayerVariables(*simulation, renderer.throttle(),
                                                            renderer.steering(), renderer.brake());
-                            simulation->updateWithWheelTorqueAndBrakeForces(
-                                elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                                renderer.physicsWheelBrakeForces(simulation->axleCount()),
-                                renderer.physicsAxleSpringFactors(simulation->axleCount()));
+                            updatePlayerPhysics(elapsed);
                             updateMapTrafficPopulation();
                             renderer.updatePostPhysicsVariables(*simulation);
+                            updateArticulatedRearVariables();
                             const auto streamingPosition = renderer.streamingPosition(*simulation);
                             renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
                             const auto loadedTiles = renderer.loadedMapTiles();
@@ -2433,6 +2625,7 @@ int main() {
                             }
                             collisionStreamer->update(streamingPosition[0], streamingPosition[1],
                                                       loadedTiles);
+                            updateArticulatedRearPlacement();
                             renderer.updateMapPoleStates(world->mapPoleStates());
                             const std::size_t collisionTileCount =
                                 collisionStreamer->loadedTileCount();
@@ -2443,6 +2636,7 @@ int main() {
                                 reportedCollisionTileCount = collisionTileCount;
                             }
                         }
+                        updateArticulatedRearPlacement();
                         renderer.draw(*simulation, *world);
 
                         if (renderer.consumeCaptureRequest()) {

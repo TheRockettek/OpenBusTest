@@ -18,6 +18,13 @@ struct BusAxle {
     bool driven;
 };
 
+struct BusCouplingCharacter {
+    double alphaDegrees = 0.0;
+    double minimumBetaDegrees = 0.0;
+    double maximumBetaDegrees = 0.0;
+    int type = 0;
+};
+
 struct BusConfiguration {
     double mass;
     // When absent, physics retains the historical mass-scaled resistance fallback.
@@ -40,6 +47,9 @@ struct BusConfiguration {
     std::array<double, 3> momentOfInertia = {};
     double centerOfGravityHeight;
     bool articulated;
+    std::optional<std::array<double, 3>> frontCouplingPoint;
+    std::optional<std::array<double, 3>> rearCouplingPoint;
+    std::optional<BusCouplingCharacter> frontCouplingCharacter;
     std::vector<BusAxle> axles;
     double inverseMinimumTurnRadius = 0.0;
     bool collisionEnabled = true;

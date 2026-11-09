@@ -89,7 +89,35 @@ int checkedOdeCount(std::size_t count, const char* label) {
 
 } // namespace
 
+class ArticulatedBusCouplingState {
+  public:
+    explicit ArticulatedBusCouplingState(dJointID joint) : joint_(joint) {}
+
+    ~ArticulatedBusCouplingState() {
+        destroy();
+    }
+
+    void destroy() noexcept {
+        if (joint_ != nullptr) {
+            dJointDestroy(joint_);
+            joint_ = nullptr;
+        }
+    }
+
+    void setJoint(dJointID joint) {
+        joint_ = joint;
+    }
+
+  private:
+    dJointID joint_ = nullptr;
+};
+
 struct BusSimulation::Impl {
+    struct PairCollisionContext {
+        Impl* first;
+        Impl* second;
+    };
+
     struct CollisionPairCounters {
         std::uint64_t calls = 0;
         std::uint64_t hits = 0;
@@ -179,6 +207,7 @@ struct BusSimulation::Impl {
     double chassisCollisionStepEnergy = 0.0;
     BusCollisionEvent chassisCollisionStepEvent = {};
     std::optional<BusCollisionEvent> pendingCollisionEvent;
+    std::weak_ptr<ArticulatedBusCouplingState> articulatedCoupling;
 
     dReal totalMassKg() const {
         dReal mass = static_cast<dReal>(configuration.mass);
@@ -319,6 +348,10 @@ struct BusSimulation::Impl {
     }
 
     ~Impl() {
+        if (const std::shared_ptr<ArticulatedBusCouplingState> coupling =
+                articulatedCoupling.lock()) {
+            coupling->destroy();
+        }
         for (PassengerMassBody& passenger : passengerMassBodies) {
             if (passenger.joint) {
                 dJointDestroy(passenger.joint);
@@ -354,8 +387,11 @@ struct BusSimulation::Impl {
         }
     }
 
-    static void nearCallback(void* context, dGeomID first, dGeomID second) {
-        auto* simulation = static_cast<Impl*>(context);
+    bool ownsGeometry(dGeomID geometry) const {
+        return chassisGeom == geometry || wheelGeometries.contains(geometry);
+    }
+
+    static void processCollisionPair(Impl* simulation, dGeomID first, dGeomID second) {
         const bool profileRecording = openbus::rendering::IsRecording();
         if (profileRecording) {
             ++simulation->collisionProfileCounters.callbackPairs;
@@ -456,6 +492,30 @@ struct BusSimulation::Impl {
                     ++simulation->collisionProfileCounters.contactJoints;
                 }
             }
+        }
+    }
+
+    static void nearCallback(void* context, dGeomID first, dGeomID second) {
+        processCollisionPair(static_cast<Impl*>(context), first, second);
+    }
+
+    static void pairNearCallback(void* context, dGeomID first, dGeomID second) {
+        auto* pair = static_cast<PairCollisionContext*>(context);
+        const bool firstOwnedByFront = pair->first->ownsGeometry(first);
+        const bool secondOwnedByFront = pair->first->ownsGeometry(second);
+        const bool firstOwnedByRear = pair->second->ownsGeometry(first);
+        const bool secondOwnedByRear = pair->second->ownsGeometry(second);
+        const bool crossesSections =
+            (firstOwnedByFront && secondOwnedByRear) || (firstOwnedByRear && secondOwnedByFront);
+        if (crossesSections) {
+            return;
+        }
+
+        Impl* simulation = firstOwnedByFront || secondOwnedByFront ? pair->first
+                           : firstOwnedByRear || secondOwnedByRear ? pair->second
+                                                                   : nullptr;
+        if (simulation != nullptr) {
+            processCollisionPair(simulation, first, second);
         }
     }
 
@@ -955,16 +1015,19 @@ struct BusSimulation::Impl {
                               localAngularY * BODY_ATTITUDE_DAMPING,
                           0.0);
     }
-    void fixedUpdate(double driveCommand, double steering,
-                     const std::vector<double>& wheelBrakeForces,
-                     const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
-        openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
+    void prepareFixedUpdate(double driveCommand, double steering,
+                            const std::vector<double>& wheelBrakeForces,
+                            const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
         if (!frozen) {
             applyCornerForces(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
                               scriptDriven);
             chassisCollisionDetectedThisStep = false;
             chassisCollisionStepEnergy = 0.0;
-            world.collideAndStep(fixedStep, this, &nearCallback);
+        }
+    }
+
+    void finishFixedUpdate() {
+        if (!frozen) {
             if (chassisCollisionDetectedThisStep && !chassisCollisionActive &&
                 !pendingCollisionEvent.has_value()) {
                 pendingCollisionEvent = chassisCollisionStepEvent;
@@ -974,6 +1037,18 @@ struct BusSimulation::Impl {
         }
         logCollisionProfileIfDue();
         simulationTime += fixedStep;
+    }
+
+    void fixedUpdate(double driveCommand, double steering,
+                     const std::vector<double>& wheelBrakeForces,
+                     const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
+        prepareFixedUpdate(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
+                           scriptDriven);
+        if (!frozen) {
+            world.collideAndStep(fixedStep, this, &nearCallback);
+        }
+        finishFixedUpdate();
     }
 
     void update(double elapsedSeconds, double driveCommand, double steering,
@@ -1009,12 +1084,125 @@ BusSimulation::BusSimulation(World& world, BusConfiguration configuration,
                              WheelStaticContactSettings wheelStaticContact)
     : impl_(std::make_unique<Impl>(world, std::move(configuration), placement, physicsHz,
                                    maxCatchUpSteps, wheelStaticContact)) {
+    impl_->world.registerBusSimulation();
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }
 
 BusSimulation::~BusSimulation() {
+    impl_->world.unregisterBusSimulation();
     simulationLog.Log("Bus simulation stopped at " + std::to_string(impl_->simulationTime) +
                       " seconds");
+}
+
+void BusSimulation::validatePair(const BusSimulation& first, const BusSimulation& second) {
+    if (&first == &second) {
+        throw std::invalid_argument("A bus simulation cannot be stepped together with itself");
+    }
+    if (&first.impl_->world != &second.impl_->world) {
+        throw std::invalid_argument("Articulated bus simulations must share one physics world");
+    }
+    if (first.impl_->fixedStep != second.impl_->fixedStep ||
+        first.impl_->maxCatchUpSteps != second.impl_->maxCatchUpSteps) {
+        throw std::invalid_argument(
+            "Articulated bus simulations must use the same fixed-step settings");
+    }
+    if (first.impl_->frozen != second.impl_->frozen) {
+        throw std::invalid_argument("Articulated bus simulations must share frozen state");
+    }
+}
+
+ArticulatedBusCoupling BusSimulation::coupleRearSection(BusSimulation& front, BusSimulation& rear) {
+    validatePair(front, rear);
+    const BusConfiguration& frontConfiguration = front.impl_->configuration;
+    const BusConfiguration& rearConfiguration = rear.impl_->configuration;
+    if (!frontConfiguration.rearCouplingPoint.has_value() ||
+        !rearConfiguration.frontCouplingPoint.has_value() ||
+        !rearConfiguration.frontCouplingCharacter.has_value()) {
+        throw std::invalid_argument(
+            "Articulated coupling requires a front rear-point, rear front-point, and rear "
+            "coupling character");
+    }
+    const BusCouplingCharacter& character = *rearConfiguration.frontCouplingCharacter;
+    if (character.type != 1) {
+        throw std::invalid_argument(
+            "Only type 1 two-degree-of-freedom bus couplings are currently supported");
+    }
+    if (!std::isfinite(character.alphaDegrees) || character.alphaDegrees < 0.0 ||
+        character.alphaDegrees > 180.0 || !std::isfinite(character.minimumBetaDegrees) ||
+        !std::isfinite(character.maximumBetaDegrees) ||
+        character.minimumBetaDegrees > character.maximumBetaDegrees ||
+        character.minimumBetaDegrees < -90.0 || character.maximumBetaDegrees > 90.0 ||
+        !std::all_of(frontConfiguration.rearCouplingPoint->begin(),
+                     frontConfiguration.rearCouplingPoint->end(),
+                     [](double value) { return std::isfinite(value); }) ||
+        !std::all_of(rearConfiguration.frontCouplingPoint->begin(),
+                     rearConfiguration.frontCouplingPoint->end(),
+                     [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Articulated coupling contains invalid limits or anchors");
+    }
+
+    Impl& frontImpl = *front.impl_;
+    Impl& rearImpl = *rear.impl_;
+    if (!frontImpl.articulatedCoupling.expired() || !rearImpl.articulatedCoupling.expired()) {
+        throw std::invalid_argument("A bus simulation already has an articulated coupling");
+    }
+    const dReal* frontPosition = dBodyGetPosition(frontImpl.chassis);
+    const dReal* frontRotation = dBodyGetRotation(frontImpl.chassis);
+    const auto& localAnchor = *frontConfiguration.rearCouplingPoint;
+    const dReal anchorX =
+        frontPosition[0] + frontRotation[0] * localAnchor[0] + frontRotation[1] * localAnchor[1] +
+        frontRotation[2] * (localAnchor[2] - frontConfiguration.centerOfGravityHeight);
+    const dReal anchorY =
+        frontPosition[1] + frontRotation[4] * localAnchor[0] + frontRotation[5] * localAnchor[1] +
+        frontRotation[6] * (localAnchor[2] - frontConfiguration.centerOfGravityHeight);
+    const dReal anchorZ =
+        frontPosition[2] + frontRotation[8] * localAnchor[0] + frontRotation[9] * localAnchor[1] +
+        frontRotation[10] * (localAnchor[2] - frontConfiguration.centerOfGravityHeight);
+    if (!std::isfinite(anchorX) || !std::isfinite(anchorY) || !std::isfinite(anchorZ)) {
+        throw std::invalid_argument("Articulated coupling anchor is outside the finite range");
+    }
+
+    auto state = std::make_shared<ArticulatedBusCouplingState>(nullptr);
+    dJointID joint = dJointCreateUniversal(frontImpl.world.physicsWorld(), nullptr);
+    if (joint == nullptr) {
+        throw std::runtime_error("Failed to create articulated bus coupling joint");
+    }
+    state->setJoint(joint);
+    dJointAttach(joint, frontImpl.chassis, rearImpl.chassis);
+    dJointSetUniversalAnchor(joint, anchorX, anchorY, anchorZ);
+    // Type 1 uses alpha about world up and beta about the lead section's lateral axis.
+    dJointSetUniversalAxis1(joint, 0.0, 0.0, 1.0);
+    dJointSetUniversalAxis2(joint, frontRotation[0], frontRotation[4], frontRotation[8]);
+    const dReal alphaLimit = character.alphaDegrees * PI / 180.0;
+    dJointSetUniversalParam(joint, dParamLoStop, -alphaLimit);
+    dJointSetUniversalParam(joint, dParamHiStop, alphaLimit);
+    dJointSetUniversalParam(joint, dParamLoStop2, character.minimumBetaDegrees * PI / 180.0);
+    dJointSetUniversalParam(joint, dParamHiStop2, character.maximumBetaDegrees * PI / 180.0);
+    frontImpl.articulatedCoupling = state;
+    rearImpl.articulatedCoupling = state;
+    return ArticulatedBusCoupling(std::move(state));
+}
+
+ArticulatedBusCoupling::ArticulatedBusCoupling(std::shared_ptr<ArticulatedBusCouplingState> state)
+    : state_(std::move(state)) {}
+
+ArticulatedBusCoupling::ArticulatedBusCoupling(ArticulatedBusCoupling&& other) noexcept
+    : state_(std::move(other.state_)) {}
+
+ArticulatedBusCoupling& ArticulatedBusCoupling::operator=(ArticulatedBusCoupling&& other) noexcept {
+    if (this != &other) {
+        if (state_) {
+            state_->destroy();
+        }
+        state_ = std::move(other.state_);
+    }
+    return *this;
+}
+
+ArticulatedBusCoupling::~ArticulatedBusCoupling() {
+    if (state_) {
+        state_->destroy();
+    }
 }
 
 void BusSimulation::update(double elapsedSeconds, double throttle, double steering, double brake) {
@@ -1055,6 +1243,82 @@ void BusSimulation::stepWithWheelTorqueAndBrakeForces(
     impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, wheelSpringFactors, true);
 }
 
+void BusSimulation::stepTogether(BusSimulation& first, const BusStepInput& firstInput,
+                                 BusSimulation& second, const BusStepInput& secondInput) {
+    validatePair(first, second);
+    if (first.impl_->world.busSimulationCount_ != 2) {
+        throw std::invalid_argument(
+            "Paired stepping requires exactly two bus simulations in the shared world");
+    }
+
+    Impl& firstImpl = *first.impl_;
+    Impl& secondImpl = *second.impl_;
+    firstImpl.prepareFixedUpdate(firstInput.driveCommand, firstInput.steering,
+                                 firstInput.wheelBrakeForces, firstInput.wheelSpringFactors,
+                                 firstInput.scriptDriven);
+    secondImpl.prepareFixedUpdate(secondInput.driveCommand, secondInput.steering,
+                                  secondInput.wheelBrakeForces, secondInput.wheelSpringFactors,
+                                  secondInput.scriptDriven);
+    if (!firstImpl.frozen) {
+        Impl::PairCollisionContext context{&firstImpl, &secondImpl};
+        firstImpl.world.collideAndStep(firstImpl.fixedStep, &context, &Impl::pairNearCallback);
+    }
+    firstImpl.finishFixedUpdate();
+    secondImpl.finishFixedUpdate();
+}
+
+void BusSimulation::updateTogether(BusSimulation& first, const BusStepInput& firstInput,
+                                   BusSimulation& second, const BusStepInput& secondInput,
+                                   double elapsedSeconds) {
+    validatePair(first, second);
+    if (!std::isfinite(elapsedSeconds)) {
+        throw std::invalid_argument("Articulated simulation elapsed time must be finite");
+    }
+    Impl& firstImpl = *first.impl_;
+    Impl& secondImpl = *second.impl_;
+    if (firstImpl.world.busSimulationCount_ != 2) {
+        throw std::invalid_argument(
+            "Paired stepping requires exactly two bus simulations in the shared world");
+    }
+    if (firstImpl.accumulator != secondImpl.accumulator) {
+        throw std::invalid_argument(
+            "Articulated bus simulations must have synchronized time accumulators");
+    }
+
+    const double elapsed = std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
+    firstImpl.accumulator += elapsed;
+    secondImpl.accumulator += elapsed;
+    firstImpl.lastSteps = 0;
+    secondImpl.lastSteps = 0;
+    firstImpl.dropped = false;
+    secondImpl.dropped = false;
+    while (firstImpl.accumulator >= firstImpl.fixedStep &&
+           firstImpl.lastSteps < firstImpl.maxCatchUpSteps) {
+        stepTogether(first, firstInput, second, secondInput);
+        firstImpl.accumulator -= firstImpl.fixedStep;
+        secondImpl.accumulator -= secondImpl.fixedStep;
+        ++firstImpl.lastSteps;
+        ++secondImpl.lastSteps;
+    }
+    if (firstImpl.accumulator >= firstImpl.fixedStep) {
+        firstImpl.dropped = true;
+        secondImpl.dropped = true;
+        if (!firstImpl.dropReported || !secondImpl.dropReported) {
+            simulationLog.Warning(
+                "Dropped accumulated articulated simulation time after exceeding catch-up "
+                "limit. Dropped seconds: " +
+                std::to_string(elapsedSeconds));
+        }
+        firstImpl.dropReported = true;
+        secondImpl.dropReported = true;
+        firstImpl.accumulator = std::fmod(firstImpl.accumulator, firstImpl.fixedStep);
+        secondImpl.accumulator = std::fmod(secondImpl.accumulator, secondImpl.fixedStep);
+    } else {
+        firstImpl.dropReported = false;
+        secondImpl.dropReported = false;
+    }
+}
+
 void BusSimulation::setFrozen(bool frozen) {
     if (impl_->frozen == frozen) {
         return;
@@ -1077,7 +1341,8 @@ double BusSimulation::totalMassKg() const {
 }
 
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,
-                                    double steering, double brake) const {
+                                    double steering, double brake,
+                                    std::size_t axleIndexOffset) const {
     variables.set("throttle", std::clamp(throttle, -1.0, 1.0));
     variables.set("brake", std::clamp(brake, 0.0, 1.0));
     const double groundSpeedKmh = speed() * 3.6;
@@ -1091,13 +1356,14 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
     double totalBrakeForce = 0.0;
     for (std::size_t index = 0; index < impl_->corners.size(); ++index) {
         const std::size_t axleIndex = index / 2;
+        const std::size_t variableAxleIndex = axleIndex + axleIndexOffset;
         const char* side = index % 2 == 0 ? "l" : "r";
-        const std::string prefix = "_" + std::to_string(axleIndex) + "_" + side;
+        const std::string prefix = "_" + std::to_string(variableAxleIndex) + "_" + side;
         variables.set("wheel_rotation" + prefix, impl_->corners[index].wheelRotation);
         const double wheelSpeedRpm = impl_->corners[index].wheelOmega * radiansPerSecondToRpm;
         variables.set("wheel_rotationspeed" + prefix, wheelSpeedRpm);
         variables.set("axle_suspension" + prefix, impl_->corners[index].animationSuspension);
-        variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
+        variables.set("axle_steering_" + std::to_string(variableAxleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
         variables.set("axle_brakeforce_actual" + prefix, impl_->corners[index].brakeForce);
         totalBrakeForce += impl_->corners[index].brakeForce;

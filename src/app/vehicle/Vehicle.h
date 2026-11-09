@@ -422,7 +422,8 @@ struct Vehicle {
     std::vector<VehicleControlCable> frontControlCables;
     std::vector<VehicleControlCable> rearControlCables;
     std::unique_ptr<ScriptRuntime> scripts;
-    std::unique_ptr<openbus::app::vehicle::PassengerState> passengers;
+    std::shared_ptr<openbus::app::vehicle::PassengerState> passengers;
+    std::size_t passengerCabinSectionIndex = 0;
     SoundEngine* soundPlayback = nullptr;
     VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
@@ -440,6 +441,7 @@ struct Vehicle {
     Matrix4 interiorLightRootModelView = identityMatrix();
     std::string modelCacheKey;
     std::shared_ptr<const SharedVehicleDefinition> deferredDefinition;
+    std::shared_ptr<const SharedVehicleDefinition> sharedDefinition;
     AssetRequestManager* assets;
     VehiclePlacement placement;
     std::optional<VehiclePlacement> trafficRenderPlacement;
@@ -490,7 +492,9 @@ struct Vehicle {
     std::uint64_t animationGeneration = 1;
     std::uint64_t clickableStateRevision = 1;
     bool wheelsFromOde = false;
+    std::size_t odeWheelIndexOffset = 0;
     const BusSimulation* odeSimulation = nullptr;
+    BusSimulation* passengerMassSimulation = nullptr;
     std::chrono::steady_clock::time_point textureUploadStart;
 
     std::string resolveCtcTextureName(const std::string& textureName) const;
@@ -519,8 +523,9 @@ struct Vehicle {
     static void setOneSidedFrontFaceConvention();
 
     void updateFrameVariables(bool isAiVehicle, double timeStep);
-
     void updateScripts(bool isAiVehicle);
+    void attachPassengerServiceSection(Vehicle& section);
+    void detachPassengerServiceSection(Vehicle& section);
 
     void initializePlayerSystems();
 
@@ -543,6 +548,7 @@ struct Vehicle {
                                       double speedMetersPerSecond);
 
     void setOdeSimulation(const BusSimulation& simulation);
+    void setPassengerMassSimulation(BusSimulation& simulation);
 
     bool clickablePartVisible(const DisplayPart& part, std::size_t partIndex,
                               RenderViewContext context) const;
@@ -588,6 +594,7 @@ struct Vehicle {
                      bool passengerServiceRequired = false)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey + "|" + selectedSetupOptions.appearanceKey),
+          sharedDefinition(definition),
           assets(&manager), placement(configuredPlacement), modelOffsetZ(configuredModelOffsetZ),
           setupOptions(std::move(selectedSetupOptions)),
           wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
@@ -614,6 +621,9 @@ struct Vehicle {
         rearControlCables = vehicleConfiguration.rearControlCables;
         passengers =
             openbus::app::vehicle::makePassengerState(definition, passengerServiceRequired);
+        if (passengers) {
+            passengers->bindSectionVehicle(0, this);
+        }
         trafficAxles = vehicleConfiguration.axles;
         trafficWheelHalfWidthMeters = vehicleConfiguration.wheelHalfWidth;
         const auto axleIndexForVariable =

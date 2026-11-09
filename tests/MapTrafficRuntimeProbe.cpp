@@ -382,6 +382,58 @@ void verifyPassengerDoorGating() {
 
 void verifyPassengerServiceRetirement() {
     using namespace openbus::map;
+    {
+        auto leadDefinition = std::make_shared<SharedVehicleDefinition>();
+        leadDefinition->vehicleConfiguration.passengerPositions.resize(2);
+        leadDefinition->vehicleConfiguration.passengerPathLinks = {{0, 1, false}};
+        auto trailerDefinition = std::make_shared<SharedVehicleDefinition>();
+        trailerDefinition->vehicleConfiguration.passengerPositions.resize(3);
+        trailerDefinition->vehicleConfiguration.passengerPathLinks = {{0, 1, false}};
+        openbus::app::vehicle::PassengerState articulatedState(leadDefinition);
+        articulatedState.appendSection(trailerDefinition, nullptr);
+        require(articulatedState.service.seatCount() == 5 &&
+                    articulatedState.sectionIndexForSeat(1) == 0 &&
+                    articulatedState.sectionIndexForSeat(2) == 1 &&
+                    articulatedState.localSeatIndex(4) == 2 &&
+                    articulatedState.globalPathLinkIndex(1, 0) == 1,
+                "articulated passenger state maps trailer seats and links after lead indices");
+
+        VehicleConfig leadCabin;
+        leadCabin.passengerPathPoints = {{0, {0.0, 0.0, 0.0}}, {1, {0.0, 1.0, 0.0}}};
+        leadCabin.passengerPathLinks = {{0, 1, false}};
+        leadCabin.passengerEntryPathPoints = {0};
+        leadCabin.passengerExitPathPoints = {0};
+        leadCabin.passengerPathPointToPreviousVehicle = 1;
+        VehicleConfig trailerCabin;
+        trailerCabin.passengerPathPoints = {{0, {0.0, -1.0, 0.0}}, {1, {0.0, 0.0, 0.0}}};
+        trailerCabin.passengerPathLinks = {{0, 1, false}};
+        trailerCabin.passengerPathPointToNextVehicle = 0;
+        MapTrafficPose leadPose;
+        MapTrafficPose trailerPose;
+        trailerPose.position = {0.0, 2.0, 0.0};
+        const std::vector<openbus::app::PassengerCabinSectionPose> cabins = {
+            {&leadCabin, leadPose}, {&trailerCabin, trailerPose}};
+        const auto boardingPath = openbus::app::passengerCabinTravelPath(
+            cabins, 0, {-0.5, 0.0, 0.0}, 1, {0.0, 0.0, 0.0}, true, 0, 0);
+        const auto alightingPath = openbus::app::passengerCabinTravelPath(
+            cabins, 1, {0.0, 2.0, 0.0}, 0, {0.0, -0.5, 0.0}, false, 0, 0);
+        require(!boardingPath.positions.empty() && boardingPath.doorPointIndex.has_value() &&
+                    std::ranges::find(boardingPath.segmentLinkIndices,
+                                      std::optional<std::size_t>{0}) !=
+                        boardingPath.segmentLinkIndices.end() &&
+                    std::ranges::find(boardingPath.segmentLinkIndices,
+                                      std::optional<std::size_t>{1}) !=
+                        boardingPath.segmentLinkIndices.end() &&
+                    !alightingPath.positions.empty() &&
+                    std::ranges::find(alightingPath.segmentLinkIndices,
+                                      std::optional<std::size_t>{0}) !=
+                        alightingPath.segmentLinkIndices.end() &&
+                    std::ranges::find(alightingPath.segmentLinkIndices,
+                                      std::optional<std::size_t>{1}) !=
+                        alightingPath.segmentLinkIndices.end(),
+                "articulated passenger paths cross reciprocal cabin links in both directions");
+    }
+
     MapPassengerServiceRuntime service(2);
     service.setWaitingPassengers(10, 1);
     require(service.arrive({.stopId = 10, .dwellSeconds = 0.75, .nextStopId = 20}),
@@ -2509,6 +2561,20 @@ void verifyPassengerServiceBehavior() {
 
     MapPassengerServiceRuntime service(2);
     require(service.seatCount() == 2, "vehicle passenger seats define service capacity");
+    MapPassengerServiceRuntime articulatedService(1);
+    articulatedService.setWaitingPassengers(90, 2);
+    require(articulatedService.arrive({.stopId = 90, .dwellSeconds = 2.0, .nextStopId = 91}),
+            "single-section passenger service can start before trailer seats are attached");
+    articulatedService.advance(0.75);
+    articulatedService.appendSeats(2);
+    require(articulatedService.seatCount() == 3 &&
+                articulatedService.passengerCountOnSeat(0) == 1 &&
+                articulatedService.passengerCountOnSeat(1) == 0 &&
+                articulatedService.passengerCountOnSeat(2) == 0,
+            "appending articulated seats preserves existing passengers and initializes trailer seats");
+    articulatedService.advance(0.75);
+    require(articulatedService.passengerCountOnSeat(1) == 1,
+            "newly appended trailer seats accept later boarding assignments");
     service.setWaitingPassengers(100, 4);
     require(service.arrive({.stopId = 100, .dwellSeconds = 2.0, .nextStopId = 200}) &&
                 service.dwelling() && service.currentStopId() == 100 &&
@@ -4281,6 +4347,22 @@ void verifyDrivingBehavior() {
                                                        partiallyCommitted.lengthMeters * 0.5) &&
             mapTrafficActorOnJunctionPath(partiallyCommitted, partiallyCommitted.distanceMeters),
         "a vehicle commits when its front, not only its center or rear, enters the junction");
+    MapTrafficRoute articulatedJunctionRoute = junctionClassificationRoute;
+    articulatedJunctionRoute.segments.push_back(straight(1208, 0.0, 10.0, 0.0, 50.0));
+    articulatedJunctionRoute.cumulativeEndDistances = {40.0, 50.0, 100.0};
+    articulatedJunctionRoute.totalLength = 100.0;
+    auto rearOnlyJunctionActor = makeMapTrafficActor(
+        articulatedJunctionRoute, "rear-only-junction.bus", 8.0, 0.0, false);
+    rearOnlyJunctionActor.distanceMeters = 55.0;
+    rearOnlyJunctionActor.articulatedRear =
+        MapTrafficActor::ArticulatedRear{{-2.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 4.0, 2.0};
+    auto ordinaryAtJunctionExit = rearOnlyJunctionActor;
+    ordinaryAtJunctionExit.articulatedRear.reset();
+    require(!mapTrafficActorOnJunctionPath(ordinaryAtJunctionExit,
+                                           ordinaryAtJunctionExit.distanceMeters) &&
+                mapTrafficActorOnJunctionPath(rearOnlyJunctionActor,
+                                              rearOnlyJunctionActor.distanceMeters),
+            "an articulated actor remains committed while its rear section occupies the junction");
     committedJunctionRoute.segments.front().pathRules.groups.push_back(committedPathRules);
     MapTrafficRoute approachingJunctionRoute = oneSegment(straight(1205, -40.0, 0.0, 90.0, 100.0));
     approachingJunctionRoute.segments.front().pathRules.groups.push_back(approachingPathRules);
@@ -4317,6 +4399,30 @@ void verifyDrivingBehavior() {
         route.totalLength = 86.0;
         return route;
     };
+    auto rearOccupyingJunction = makeMapTrafficActor(
+        throughJunction(1680, 0.0, -40.0, 0.0, 0.0, 1.0), "rear-occupying.bus", 0.0, 0.0,
+        false);
+    rearOccupyingJunction.lengthMeters = 4.0;
+    rearOccupyingJunction.widthMeters = 2.0;
+    rearOccupyingJunction.distanceMeters = 50.0;
+    rearOccupyingJunction.articulatedRear =
+        MapTrafficActor::ArticulatedRear{{-2.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 4.0, 2.0};
+    auto waitingForRearClearance = makeMapTrafficActor(
+        throughJunction(1683, -40.0, 5.0, 90.0, 1.0, 0.0), "rear-clearance.ovh", 8.0, 0.0,
+        false);
+    waitingForRearClearance.distanceMeters = 20.0;
+    for (int frame = 0; frame < 20; ++frame) {
+        advanceMapTrafficDriving({&waitingForRearClearance, &rearOccupyingJunction}, {}, 0.1);
+    }
+    require(rearOccupyingJunction.distanceMeters == 50.0 &&
+                waitingForRearClearance.distanceMeters < 32.0,
+            "a trailer still in the junction reserves the crossing before the lead enters");
+    rearOccupyingJunction.distanceMeters = 58.0;
+    for (int frame = 0; frame < 60; ++frame) {
+        advanceMapTrafficDriving({&waitingForRearClearance, &rearOccupyingJunction}, {}, 0.1);
+    }
+    require(waitingForRearClearance.distanceMeters > 34.0,
+            "a crossing proceeds after the articulated rear clears the junction");
     MapTrafficRoute turningBusRoute;
     MapTrafficRouteSegment turningBusJunction;
     turningBusJunction.points = {{0.0, 0.0, 0.0}, {0.0, 4.0, 0.0}};

@@ -1,5 +1,6 @@
 #include "app/RenderLoopInternal.h"
 #include "app/MapTrafficWorker.h"
+#include "app/traffic/ArticulatedTrafficPlacement.h"
 #include "app/traffic/ScheduledBusTiming.h"
 #include "render/map/MapRenderer.h"
 
@@ -137,6 +138,86 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
                         loadedVehicle->scripts->invokeSystemTrigger("ai_scheduled_settarget");
                         if (state.bus->nextPassengerStopIndex < state.bus->passengerStops.size()) {
                             loadedVehicle->scripts->invokeSystemTrigger("ai_scheduled_setbusstop");
+                        }
+                    }
+                    for (TrafficVehicleState& state : trafficFleet_.vehicles) {
+                        if (state.vehicle == nullptr || !state.hasCoupledVehicle ||
+                            state.coupledVehicle != nullptr || state.coupledVehicleLoadFailed ||
+                            state.vehicleLoadFailed) {
+                            continue;
+                        }
+                        try {
+                            if (!state.pendingCoupledInitializationVehicle) {
+                                if (!state.pendingCoupledVehicle.valid() ||
+                                    state.pendingCoupledVehicle.wait_for(std::chrono::seconds(0)) !=
+                                        std::future_status::ready) {
+                                    continue;
+                                }
+                                state.pendingCoupledInitializationVehicle =
+                                    state.pendingCoupledVehicle.get();
+                                if (!state.pendingCoupledInitializationVehicle) {
+                                    throw std::runtime_error(
+                                        "Coupled traffic vehicle loader returned no vehicle");
+                                }
+                                if (state.bus) {
+                                    state.pendingCoupledInitializationVehicle->variables.setString(
+                                        "tt_line_string", state.bus->timetableLineName);
+                                    state.pendingCoupledInitializationVehicle->variables.setString(
+                                        "tt_busstop_name", state.bus->timetableDestinationName);
+                                    state.pendingCoupledInitializationVehicle->variables.set(
+                                        "tt_busstop_count",
+                                        static_cast<float>(state.bus->passengerStops.size()));
+                                    state.pendingCoupledInitializationVehicle->variables.set(
+                                        "tt_busstop_index", 0.0F);
+                                    for (std::size_t stopIndex = 0;
+                                         stopIndex < state.bus->passengerStops.size();
+                                         ++stopIndex) {
+                                        state.pendingCoupledInitializationVehicle->variables
+                                            .setString("tt_busstop_name_" +
+                                                           std::to_string(stopIndex),
+                                                       state.bus->passengerStops[stopIndex].name);
+                                    }
+                                    publishTrafficTimetableData(
+                                        *state.pendingCoupledInitializationVehicle, state,
+                                        state.bus->nextScheduledDepartureIndex);
+                                }
+                            }
+                            state.pendingCoupledInitializationVehicle->variables.updateEnvironment(
+                                simulationState_.sharedVariables());
+                            const DeferredStep step = state.pendingCoupledInitializationVehicle
+                                                          ->finishDeferredTrafficInitialization();
+                            if (step == DeferredStep::Complete) {
+                                state.pendingCoupledInitializationVehicle->followsMapTrafficRoute =
+                                    true;
+                                state.pendingCoupledInitializationVehicle->mapTrafficRouteFinished =
+                                    true;
+                                state.pendingCoupledInitializationVehicle->mapTrafficTileActive =
+                                    false;
+                                Vehicle* const loadedVehicle =
+                                    state.pendingCoupledInitializationVehicle.get();
+                                if (state.vehicle == nullptr) {
+                                    throw std::logic_error(
+                                        "Scheduled articulated bus lost its lead vehicle");
+                                }
+                                state.vehicle->attachPassengerServiceSection(*loadedVehicle);
+                                vehicles_.push_back(
+                                    std::move(state.pendingCoupledInitializationVehicle));
+                                state.coupledVehicle = loadedVehicle;
+                                gameLog.Log(
+                                    "Loaded scheduled map AI bus rear section for " +
+                                    state.actor.modelPath + ": " +
+                                    loadedVehicle->setupOptions.vehicleConfigurationPath.string());
+                                break;
+                            }
+                            if (step == DeferredStep::Progressed) {
+                                break;
+                            }
+                        } catch (const std::exception& error) {
+                            state.pendingCoupledInitializationVehicle.reset();
+                            state.coupledVehicleLoadFailed = true;
+                            gameLog.Warning("Could not asynchronously load scheduled map AI bus "
+                                            "rear section '" +
+                                            state.actor.modelPath + "': " + error.what());
                         }
                     }
                 }
@@ -1601,6 +1682,17 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     renderPose->pitchRadians * 180.0 / std::numbers::pi,
                     renderPose->rollRadians * 180.0 / std::numbers::pi};
             }
+            if (trafficVehicle.coupledVehicle != nullptr) {
+                const VehiclePlacement frontRenderPlacement =
+                    trafficVehicle.vehicle->trafficRenderPlacement.value_or(
+                        trafficVehicle.vehicle->placement);
+                trafficVehicle.coupledVehicle->placement = articulatedTrafficRearPlacement(
+                    route, renderSample.distanceMeters, renderSample.lateralOffsetMeters,
+                    frontRenderPlacement, trafficVehicle.frontRearCouplingPoint,
+                    trafficVehicle.coupledFrontCouplingPoint);
+                trafficVehicle.coupledVehicle->trafficRenderPlacement =
+                    trafficVehicle.coupledVehicle->placement;
+            }
             if (!trafficVehicle.vehicle->mapTrafficTileActive) {
                 trafficVehicle.actor.speedMetersPerSecond = 0.0;
             }
@@ -1766,5 +1858,19 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             "tt_delay", static_cast<float>(std::clamp(
                             delaySeconds, -static_cast<double>((std::numeric_limits<float>::max)()),
                             static_cast<double>((std::numeric_limits<float>::max)()))));
+    }
+    for (TrafficVehicleState& state : trafficFleet_.vehicles) {
+        if (state.coupledVehicle == nullptr || state.vehicle == nullptr) {
+            continue;
+        }
+        Vehicle& rear = *state.coupledVehicle;
+        const Vehicle& front = *state.vehicle;
+        rear.mapTrafficTileActive = front.mapTrafficTileActive;
+        rear.mapTrafficRouteFinished = front.mapTrafficRouteFinished;
+        for (const char* variable : {"velocity", "velocity_ground", "ai_blinker_l", "ai_blinker_r",
+                                     "ai_brakelight", "schedule_active", "tt_delay",
+                                     "ai_target_index", "target_index_int", "tt_busstop_index"}) {
+            rear.variables.set(variable, front.variables.get(variable));
+        }
     }
 }

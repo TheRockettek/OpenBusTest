@@ -684,6 +684,19 @@ World::World(double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain,
 
 World::~World() = default;
 
+void World::registerBusSimulation() {
+    if (busSimulationCount_ == std::numeric_limits<std::size_t>::max()) {
+        throw std::overflow_error("World bus simulation count exceeds the supported range");
+    }
+    ++busSimulationCount_;
+}
+
+void World::unregisterBusSimulation() noexcept {
+    if (busSimulationCount_ > 0) {
+        --busSimulationCount_;
+    }
+}
+
 void World::updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians,
                          double forward, double right, bool jump) const {
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 || !std::isfinite(yawRadians) ||

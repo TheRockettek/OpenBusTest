@@ -4,6 +4,7 @@
 
 #include <ode/ode.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -56,5 +57,8 @@ class World {
 
   private:
     std::unique_ptr<Impl> impl_;
+    std::size_t busSimulationCount_ = 0;
+    void registerBusSimulation();
+    void unregisterBusSimulation() noexcept;
     friend class BusSimulation;
 };

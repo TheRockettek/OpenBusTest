@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
+#include <vector>
 
 namespace openbus::app {
 
@@ -134,19 +136,64 @@ inline openbus::map::MapTrafficPose passengerCurbPose(const openbus::map::MapTra
     return pose;
 }
 
+inline openbus::map::MapTrafficPose passengerCabinSectionPose(
+    const Vehicle& lead, std::size_t sectionIndex,
+    const openbus::map::MapTrafficPose& leadPose, bool useRenderedPlacement = false) {
+    if (sectionIndex == 0) {
+        return leadPose;
+    }
+    const Vehicle* sectionVehicle = lead.passengers->sectionVehicle(sectionIndex);
+    if (sectionVehicle == nullptr) {
+        throw std::logic_error("Articulated passenger cabin section has no vehicle pose");
+    }
+    const VehiclePlacement& placement =
+        useRenderedPlacement && sectionVehicle->trafficRenderPlacement
+            ? *sectionVehicle->trafficRenderPlacement
+            : sectionVehicle->placement;
+    openbus::map::MapTrafficPose pose;
+    pose.position = placement.position;
+    pose.headingRadians = (90.0 - placement.yawDegrees) * std::numbers::pi / 180.0;
+    pose.pitchRadians = placement.pitchDegrees * std::numbers::pi / 180.0;
+    pose.rollRadians = placement.rollDegrees * std::numbers::pi / 180.0;
+    return pose;
+}
+
+inline std::vector<PassengerCabinSectionPose> passengerCabinSectionPoses(
+    const Vehicle& lead, const openbus::map::MapTrafficPose& leadPose,
+    bool useRenderedPlacement = false) {
+    std::vector<PassengerCabinSectionPose> sections;
+    sections.reserve(lead.passengers->sections.size());
+    for (std::size_t sectionIndex = 0; sectionIndex < lead.passengers->sections.size();
+         ++sectionIndex) {
+        sections.push_back({&lead.passengers->sectionConfiguration(sectionIndex),
+                            passengerCabinSectionPose(lead, sectionIndex, leadPose,
+                                                      useRenderedPlacement)});
+    }
+    return sections;
+}
+
 inline std::vector<std::array<double, 3>>
 passengerAlightingPositions(const Vehicle& bus, const openbus::map::MapTrafficPose& busPose,
                             const openbus::map::MapTrafficPose& stopPose, bool leftHandTraffic,
                             double laneOffset, double vehicleWidth) {
     const auto fallback = passengerCurbPose(stopPose, leftHandTraffic, laneOffset, vehicleWidth);
     std::vector<std::array<double, 3>> positions;
-    positions.reserve(bus.passengers->exitDoorsBySeat.size());
-    for (const auto door : bus.passengers->exitDoorsBySeat) {
-        positions.push_back(passengerConfiguredDoorQueuePose(
-                                bus, busPose, leftHandTraffic,
-                                bus.passengers->configuration().passengerExitPathPoints, door, 0)
-                                .value_or(fallback)
-                                .position);
+    positions.reserve(bus.passengers->service.seatCount());
+    for (std::size_t seatIndex = 0; seatIndex < bus.passengers->service.seatCount();
+         ++seatIndex) {
+        const std::size_t sectionIndex = bus.passengers->sectionIndexForSeat(seatIndex);
+        const Vehicle* sectionVehicle = bus.passengers->sectionVehicle(sectionIndex);
+        if (sectionVehicle == nullptr) {
+            throw std::logic_error("Passenger alighting seat has no owning vehicle section");
+        }
+        const auto sectionPose = passengerCabinSectionPose(bus, sectionIndex, busPose);
+        const auto& cabin = bus.passengers->sectionConfiguration(sectionIndex);
+        positions.push_back(
+            passengerConfiguredDoorQueuePose(
+                *sectionVehicle, sectionPose, leftHandTraffic, cabin.passengerExitPathPoints,
+                bus.passengers->exitDoorForSeat(seatIndex), 0)
+                .value_or(fallback)
+                .position);
     }
     return positions;
 }

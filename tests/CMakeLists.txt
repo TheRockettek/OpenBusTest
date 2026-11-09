@@ -125,6 +125,10 @@ openbus_add_probe(OpenBusPhysicsContactProbe BusSimulationContactProbe.cpp LIBS 
 openbus_add_probe(OpenBusRoadFeaturesProbe RoadFeaturesProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusBusConfigurationCollisionProbe BusConfigurationCollisionProbe.cpp
     LIBS openbus_physics)
+openbus_add_probe(OpenBusArticulatedConfigurationProbe ArticulatedConfigurationProbe.cpp
+    LIBS openbus_physics)
+openbus_add_probe(OpenBusArticulatedStepProbe BusSimulationArticulatedStepProbe.cpp
+    LIBS openbus_physics)
 
 # Map
 openbus_add_probe(OpenBusMapConfigProbe MapConfigLoaderProbe.cpp LIBS openbus_map)
@@ -182,6 +186,10 @@ target_sources(OpenBusMapTrafficRuntimeProbe PRIVATE
     "${OPENBUS_SOURCE_ROOT}/app/traffic/ScheduledBusTiming.cpp")
 openbus_add_probe(OpenBusTrafficDebugDirectionProbe TrafficDebugDirectionProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusTrafficPresentationProbe TrafficPresentationProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusArticulatedTrafficPlacementProbe ArticulatedTrafficPlacementProbe.cpp
+    LIBS openbus_map)
+openbus_add_probe(OpenBusArticulatedTrafficFootprintProbe ArticulatedTrafficFootprintProbe.cpp
+    LIBS openbus_map)
 add_executable(OpenBusMapTrafficWorkerProbe MapTrafficWorkerProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/MapTrafficWorker.cpp")
 target_include_directories(OpenBusMapTrafficWorkerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")

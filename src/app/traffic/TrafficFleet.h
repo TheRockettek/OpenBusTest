@@ -4,6 +4,7 @@
 #include "app/traffic/TrafficPresentation.h"
 #include "map/MapTrafficRuntime.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <future>
@@ -22,6 +23,13 @@ struct TrafficVehicleState {
     Vehicle* vehicle = nullptr;
     std::future<std::unique_ptr<Vehicle>> pendingVehicle;
     std::unique_ptr<Vehicle> pendingInitializationVehicle;
+    Vehicle* coupledVehicle = nullptr;
+    std::future<std::unique_ptr<Vehicle>> pendingCoupledVehicle;
+    std::unique_ptr<Vehicle> pendingCoupledInitializationVehicle;
+    std::array<double, 3> frontRearCouplingPoint = {};
+    std::array<double, 3> coupledFrontCouplingPoint = {};
+    bool hasCoupledVehicle = false;
+    bool coupledVehicleLoadFailed = false;
     openbus::map::MapTrafficActor actor;
     std::shared_ptr<const openbus::map::MapTrafficActor> workerActorTemplate;
     std::optional<std::size_t> blockingActorStateIndex;

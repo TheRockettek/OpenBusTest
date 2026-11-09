@@ -26,4 +26,7 @@ modelConfigurationPathForVehicle(const std::filesystem::path& vehicleConfigPath,
 ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath);
 ModelConfig loadBusModelConfigurationFromModelConfig(const std::filesystem::path& modelConfigPath);
 void writeBusConfigurationJson(std::ostream& output, const BusConfiguration& configuration);
+VehiclePlacement articulatedRearPlacement(const BusConfiguration& frontConfiguration,
+                                          const VehiclePlacement& frontPlacement,
+                                          const BusConfiguration& rearConfiguration);
 BusConfiguration busConfigurationFor();

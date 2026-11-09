@@ -366,11 +366,19 @@ coupling type/flag. Exact record length varies by vehicle generation.
 
 ### `[coupling_front_character]`
 
-Defines front-coupling articulation limits. The common three values are:
+Defines front-coupling articulation limits. The common four values are:
 
-1. Maximum/minimum alpha range in degrees
+1. Alpha articulation limit/range in degrees (OpenBus currently treats the
+   single value as a symmetric `±` limit)
 2. Minimum beta/down angle in degrees
 3. Maximum beta/up angle in degrees
+4. Coupling type: `0` for a truck (three degrees of freedom), `1` for a bus (two
+   degrees of freedom)
+
+OpenBus currently implements type `1` as a universal joint, mapping alpha to
+yaw about world up and beta to pitch about the lead section's lateral axis.
+Type `0` is diagnosed and rejected by the physics coupling API. Native axis
+orientation and exact limit parity remain unverified.
 
 ### `[couple_back]`
 

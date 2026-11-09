@@ -163,9 +163,14 @@ verified OMSI parity:
   match within 1e-9. Further solver tuning is blocked on a validated
   vehicle/reference envelope; the probe alone does not establish native OMSI
   parity. Do not accept visual smoothness alone as proof of stability.
-- [o] Articulated configuration remains parseable for inspection, but
-  articulated vehicles are outside the currently supported scope; runtime
-  physics, collision, and rendering treat vehicles as single-body.
+- [~] Articulated flags, coupling points, and front-coupling character data are
+  carried into the physics configuration; rear-section placement aligns
+  authored anchors, and the physics API can advance two sections through
+  synchronized fixed-step accumulation and per-section collision dispatch in
+  one shared world step. Type 1 bus coupling uses a universal joint with
+  authored alpha/beta stops and is integrated into player-bus spawn, physics,
+  rendering, and teardown. Type 0 truck coupling, native axis parity, and
+  coupling sounds remain incomplete.
 
 Done when the physics probe is repeatable and reports numerical bounds, and
 both supported vehicles pass it without wheel shake or explosive motion.
@@ -418,6 +423,12 @@ recognized but incomplete semantics.
   and audible coin output remain incomplete. Generic, short-lived coin visuals
   react to `GiveChangeCoin` calls. Map ticket-pack/currency records feed ticket
   and change-coin script macros for player and AI buses.
+  Type-1 articulated buses now share one passenger service across lead and
+  trailer sections: trailer seats participate in assignment/capacity, authored
+  cabin links route passengers between section-local paths, each section
+  renders and publishes its own seat/link variables, and player passenger mass
+  is applied to the owning section's physics model. Native link-tag parity and
+  live in-game boarding/alighting validation remain unverified.
 
   Passenger journey gaps to complete and validate:
 
@@ -571,9 +582,15 @@ The implemented portions should not be mistaken for full native behavior:
   distinct `number`/`ident` strings, initial plate-text rendering, and live
   odometer publication are active; parser coverage remains in
   `OpenBusVehicleConfigProbe`.
-- AI/network vehicle sections and coupling/cable behavior remain absent.
-  Articulated multi-body vehicles are explicitly outside the currently
-  supported scope; the parsed flag does not enable articulated runtime behavior.
+- AI/network vehicle sections and coupling/cable behavior remain incomplete.
+  Type-1 articulated player buses spawn, couple, step, render, and clean up their
+  rear sections. Scheduled map AI buses now load and render a paired type-1 rear
+  section that follows route bends from authored coupling anchors and mirrors
+  basic movement/signaling variables; AI sections remain kinematic and do not
+  use ODE articulation. AI collision sweeps and spawn clearance now include the
+  route-following rear footprint; following/headway and junction-occupancy
+  decisions still use lead-section geometry. The parsed marker alone does not
+  enable pairing, which is driven by the `[couple_back]` reference.
 - Non-OMSI font edge cases such as Windows-1252 glyph validation and remaining
   text format semantics remain. `[texttexture_enh]` alignments 0–5 and grid
   spacing are handled by the text runtime. `[interiorlight]`, `[light_enh]`,
@@ -633,15 +650,24 @@ for alignment is not mistaken for supporting it.
   their family-specific behavior is not implemented.
 - [~] `[coupling_front]` and `[coupling_back]` XYZ points are retained with
   diagnostics, and `[coupling_front_character]` angle limits/type are retained
-  with validation. `[couple_back]` referenced vehicle path and boolean flag are
-  retained; `[couple_front_open_for_sound]` remains explicitly unsupported.
-  Articulated vehicle behavior is not implemented.
+  with validation and transferred to the physics configuration;
+  `[couple_back]` referenced vehicle path and boolean flag are retained.
+  Initial rear-section placement aligns the authored coupling anchors, and
+  type 1 two-DOF bus couplings now drive automatic player rear-section spawning,
+  synchronized physics, ODE-pose rendering, and lifecycle cleanup. The rear
+  currently has no independent drive/steering; its physics braking and
+  suspension consume its own section's script variables.
+  `[couple_front_open_for_sound]` remains
+  explicitly unsupported. Type 0 three-DOF truck coupling, `[couple_back]`
+  flag semantics, and coupling-sound behavior are not implemented; alpha/yaw
+  and beta/pitch mapping remains an OpenBus interpretation without native parity
+  validation.
 - [~] Implement `[control_cable_front]` and `[control_cable_back]` for
   electrical/control-variable transfer between coupled vehicles. Their
   five-line records are validated and retained, and matching active cables
   transfer between uniquely referenced, already-loaded front/rear instances.
-  Automatic coupled-vehicle spawning and physical coupling remain
-  unimplemented.
+  Rear physics consumes its section's axle-brake and spring-factor script
+  outputs; direct cable-to-axle mapping is not implemented.
 - [x] Keep vehicle `[new_attachment]` and the rail/trolley records
   `[contact_shoe]` and `[rail_body_osc]` outside the supported runtime scope.
   BUS and vehicle files recognize these records and report explicit
@@ -775,9 +801,13 @@ for alignment is not mistaken for supporting it.
   is used to associate `[trafficlight]` signal heads with a parent controller's
   phase schedule; this does not provide general scenery-variable inheritance.
 - [~] `[stamper]` index and xyz position, and `[linkToNextVeh]`/
-  `[linkToPrevVeh]` passenger-path point indexes, are retained with diagnostics;
-  ticket-stamping interaction and linked-cabin traversal across coupled
-  vehicles remain unimplemented. Basic `[drivpos]`, `[passpos]`,
+  `[linkToPrevVeh]` passenger-path point indexes, are retained with diagnostics.
+  Type-1 articulated lead/trailer sections now share passenger seats and service,
+  traverse reciprocal cabin links in both directions, render occupants per
+  section, publish section-local seat/link variables, and apply player passenger
+  mass to the owning section. Native link-tag parity and live in-game validation
+  remain unverified. Ticket-stamping interaction remains partial. Basic
+  `[drivpos]`, `[passpos]`,
   `[entry]`, `[exit]`, and illumination records support stop-service seating
   and boarding animation, and connected authored cabin path links are used for
   passenger movement. Ticket interaction remains unimplemented.
@@ -1380,9 +1410,13 @@ the outstanding implementation and validation tasks:
   changes, initially limited to verified same-direction adjacent lanes. Do not
   infer opposing-lane passes without validated visibility and prohibition
   semantics.
-- [o] Extend swept-footprint handling to articulated vehicles; articulated
-  runtime behavior remains outside the currently supported scope (see Section
-  1).
+- [~] Extend swept-footprint handling to articulated vehicles. Player type-1
+  physics coupling and scheduled-AI route-following rear sections are active,
+  and AI collision sweeps/spawn clearance test both body OBBs along the route.
+  Following gaps use the composite longitudinal extent, while junction
+  occupancy and reservation conflicts include both sections and remain active
+  until the rear clears. The AI trailer remains a kinematic route-based
+  approximation; live-map validation and native OMSI parity remain open.
 - [~] **Render configured human models:** pedestrians now render the configured
   `.hum` first-LOD meshes instead of primitive proxies. `.hum`/model CFG
   parsing, mesh parsing, and texture decoding are asynchronous; OpenGL upload

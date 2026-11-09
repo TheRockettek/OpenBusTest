@@ -151,7 +151,9 @@ class RenderLoop {
     Vehicle* AddVehicle(const std::filesystem::path& vehicleConfigPath,
                         const std::filesystem::path& modelConfigPath,
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {},
-                        bool isAiVehicle = false, VehicleSetupOptions setupOptions = {});
+                        bool isAiVehicle = false, VehicleSetupOptions setupOptions = {},
+                        bool configurePlayerView = true);
+    void RemoveCoupledVehicle(Vehicle* vehicle);
     bool AddTrafficVehicle(
         int splineId, int pathTypeCode, const std::filesystem::path& busConfigPath,
         std::optional<std::string> driverModelPath, double speedMetersPerSecond,
@@ -280,7 +282,11 @@ class RenderLoop {
     double physicsWheelTorque() const;
     double physicsSteering() const;
     std::vector<double> physicsWheelBrakeForces(std::size_t axleCount) const;
+    std::vector<double> physicsWheelBrakeForces(const Vehicle& vehicle,
+                                                std::size_t axleCount) const;
     std::vector<double> physicsAxleSpringFactors(std::size_t axleCount) const;
+    std::vector<double> physicsAxleSpringFactors(const Vehicle& vehicle,
+                                                 std::size_t axleCount) const;
 
   private:
     static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset);

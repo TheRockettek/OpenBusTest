@@ -158,6 +158,14 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
 
     BusConfiguration configuration{};
     configuration.articulated = source.articulated;
+    configuration.frontCouplingPoint = source.frontCouplingPoint;
+    configuration.rearCouplingPoint = source.rearCouplingPoint;
+    if (source.frontCouplingCharacter.has_value()) {
+        const VehicleCouplingCharacter& character = *source.frontCouplingCharacter;
+        configuration.frontCouplingCharacter =
+            BusCouplingCharacter{character.alphaDegrees, character.minimumBetaDegrees,
+                                 character.maximumBetaDegrees, character.type};
+    }
     configuration.axles = source.axles;
     configuration.rollingResistanceForceNewtons = source.rollingResistanceForceNewtons;
     configuration.bodyHalfHeight = boundingBox[2] * 0.5;
@@ -517,6 +525,49 @@ void writeBusConfigurationJson(std::ostream& output, const BusConfiguration& con
                   "    }";
     }
     output << "\n  ]\n}\n";
+}
+
+VehiclePlacement articulatedRearPlacement(const BusConfiguration& frontConfiguration,
+                                          const VehiclePlacement& frontPlacement,
+                                          const BusConfiguration& rearConfiguration) {
+    if (!frontConfiguration.rearCouplingPoint.has_value() ||
+        !rearConfiguration.frontCouplingPoint.has_value()) {
+        throw std::invalid_argument("Articulated placement requires both coupling points");
+    }
+    if (!std::all_of(frontPlacement.position.begin(), frontPlacement.position.end(),
+                     [](double value) { return std::isfinite(value); }) ||
+        !std::isfinite(frontPlacement.yawDegrees) || !std::isfinite(frontPlacement.pitchDegrees) ||
+        !std::isfinite(frontPlacement.rollDegrees) ||
+        !std::all_of(frontConfiguration.rearCouplingPoint->begin(),
+                     frontConfiguration.rearCouplingPoint->end(),
+                     [](double value) { return std::isfinite(value); }) ||
+        !std::all_of(rearConfiguration.frontCouplingPoint->begin(),
+                     rearConfiguration.frontCouplingPoint->end(),
+                     [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Articulated placement values must be finite");
+    }
+
+    const double radiansPerDegree = std::acos(-1.0) / 180.0;
+    const double yawRadians = std::remainder(frontPlacement.yawDegrees, 360.0) * radiansPerDegree;
+    const double yawCosine = std::cos(yawRadians);
+    const double yawSine = std::sin(yawRadians);
+    // Physics initializes chassis bodies with yaw only; use the same transform for anchor offsets.
+    const auto rotated = [yawCosine, yawSine](const std::array<double, 3>& point) {
+        return std::array<double, 3>{yawCosine * point[0] - yawSine * point[1],
+                                     yawSine * point[0] + yawCosine * point[1], point[2]};
+    };
+    const std::array<double, 3> frontAnchorOffset = rotated(*frontConfiguration.rearCouplingPoint);
+    const std::array<double, 3> rearAnchorOffset = rotated(*rearConfiguration.frontCouplingPoint);
+
+    VehiclePlacement rearPlacement = frontPlacement;
+    for (std::size_t axis = 0; axis < rearPlacement.position.size(); ++axis) {
+        rearPlacement.position[axis] =
+            frontPlacement.position[axis] + frontAnchorOffset[axis] - rearAnchorOffset[axis];
+        if (!std::isfinite(rearPlacement.position[axis])) {
+            throw std::overflow_error("Articulated rear placement is outside the finite range");
+        }
+    }
+    return rearPlacement;
 }
 
 std::filesystem::path busConfigurationPathFor() {

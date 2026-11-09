@@ -342,31 +342,43 @@ std::optional<MapTrafficWorker::PopulationSpawn> MapTrafficWorker::revalidatePop
         }
         distance = candidate.distanceMeters;
     }
-    const auto pose = sampleMapTrafficActorPose(actor, distance);
-    if (!pose) {
-        throw std::runtime_error("Could not sample a traffic spawn position during admission");
+    const auto footprints = mapTrafficActorFootprints(actor, distance);
+    if (footprints.empty()) {
+        throw std::runtime_error("Traffic spawn admission produced no vehicle footprints");
     }
-    if (!mapTrafficPoseOnActiveTile(*pose, context.activeTiles, context.tileSize) ||
-        (context.playerMoving && mapTrafficSpawnInsideForwardExclusion(
-                                     context.playerPose, context.playerLengthMeters,
-                                     context.playerWidthMeters, *pose, actor.widthMeters, 30.0))) {
+    if (std::ranges::any_of(footprints, [&](const MapTrafficObstacle& footprint) {
+            return !mapTrafficPoseOnActiveTile(footprint.pose, context.activeTiles,
+                                               context.tileSize);
+        })) {
         return std::nullopt;
     }
-    const double radius = std::hypot(actor.lengthMeters, actor.widthMeters) * 0.5 + 2.0;
+    const MapTrafficPose& pose = footprints.front().pose;
+    if (context.playerMoving && mapTrafficSpawnInsideForwardExclusion(
+                                    context.playerPose, context.playerLengthMeters,
+                                    context.playerWidthMeters, pose, actor.widthMeters, 30.0)) {
+        return std::nullopt;
+    }
+    double radius = 0.0;
+    for (const MapTrafficObstacle& footprint : footprints) {
+        const double centerOffset = std::hypot(footprint.pose.position[0] - pose.position[0],
+                                               footprint.pose.position[1] - pose.position[1]);
+        radius = std::max(
+            radius, centerOffset + std::hypot(footprint.lengthMeters, footprint.widthMeters) * 0.5);
+    }
+    radius += 2.0;
     if ((!context.spawnInView &&
          (!context.cameraValid ||
-          !mapTrafficEntryHiddenFromCameras(pose->position, radius, context.mainCamera,
+          !mapTrafficEntryHiddenFromCameras(pose.position, radius, context.mainCamera,
                                             context.reflectionCameras, 50.0))) ||
-        !mapTrafficHasClearance({*pose, actor.lengthMeters, actor.widthMeters}, occupied,
-                                current.isBus ? 2.0 : 3.0)) {
+        !mapTrafficActorHasClearance(actor, distance, occupied, current.isBus ? 2.0 : 3.0)) {
         return std::nullopt;
     }
     const double priority =
         context.hasPlayerPose
-            ? mapTrafficSpawnPriorityDistanceMeters(context.playerPose, *pose,
+            ? mapTrafficSpawnPriorityDistanceMeters(context.playerPose, pose,
                                                     context.predictedForwardDistanceMeters)
             : 0.0;
-    return PopulationSpawn{distance, *pose, index, priority};
+    return PopulationSpawn{distance, pose, index, priority};
 }
 
 struct MapTrafficWorker::Impl {

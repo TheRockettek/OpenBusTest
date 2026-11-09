@@ -161,14 +161,14 @@ std::string ignoredVehicleKeywordReason(const std::string& keyword) {
         return unsupported->second;
     }
     if (keyword == "openbus_articulated") {
-        return "articulated vehicle runtime behavior is not implemented";
+        return "marker is retained but does not enable articulated behavior by itself";
     }
     if (keyword == "rot_pnt_long") {
         return "rotation point is retained but not applied to vehicle physics";
     }
-    if (keyword == "coupling_front" || keyword == "coupling_back" ||
-        keyword == "coupling_front_character" || keyword == "couple_back") {
-        return "articulated vehicle behavior is not implemented";
+    if (keyword == "couple_back") {
+        return "rear path drives supported type-1 player coupling; flag semantics remain "
+               "unsupported";
     }
     if (keyword == "control_cable_front" || keyword == "control_cable_back") {
         return "control-cable transfer requires an already-loaded, uniquely referenced vehicle "
@@ -1199,7 +1199,8 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 }
                 result.diagnostics.warning(
                     line.number, keyword,
-                    "coupling point retained; articulated vehicle behavior is not implemented");
+                    "coupling point is used for supported type-1 player bus placement and "
+                    "physics; type-0 truck coupling is unsupported");
             }
             continue;
         }
@@ -1218,7 +1219,10 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 result.frontCouplingCharacter = character;
                 result.diagnostics.warning(
                     line.number, keyword,
-                    "coupling character retained; articulated vehicle behavior is not implemented");
+                    character.type == 1
+                        ? "type-1 player bus runtime coupling uses this character; axis mapping "
+                          "parity is unverified"
+                        : "type-0 truck coupling is retained but unsupported");
             } else {
                 result.diagnostics.error(
                     line.number, keyword,
@@ -1239,8 +1243,8 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 result.rearCouplingReference = VehicleCouplingReference{
                     resolveReferencedPath(configPath, trim(values[0])), flagValue == "true"};
                 result.diagnostics.warning(line.number, keyword,
-                                           "rear vehicle reference retained; articulated vehicle "
-                                           "behavior is not implemented");
+                                           "rear path drives supported type-1 player bus "
+                                           "spawning; flag semantics remain unsupported");
             }
             continue;
         }

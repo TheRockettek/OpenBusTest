@@ -348,7 +348,8 @@ void RenderLoop::persistPlayerOdometer(bool force) {
 Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy,
-                                bool isAiVehicle, VehicleSetupOptions setupOptions) {
+                                bool isAiVehicle, VehicleSetupOptions setupOptions,
+                                bool configurePlayerView) {
     TraceScope trace("startup", "RenderLoop::AddVehicle");
     const std::filesystem::path resolvedVehicleConfigPath =
         busConfigurationPathFor(vehicleConfigPath);
@@ -369,7 +370,7 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
     }
     const VehicleConfig& vehicleConfiguration = definition->vehicleConfiguration;
     setupOptions.vehicleConfigurationPath = resolvedVehicleConfigPath;
-    if (!isAiVehicle) {
+    if (!isAiVehicle && configurePlayerView) {
         vehicleCameras_.clear();
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
@@ -418,6 +419,24 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
+}
+
+void RenderLoop::RemoveCoupledVehicle(Vehicle* vehicle) {
+    if (vehicle == nullptr) {
+        return;
+    }
+    if (vehicle == playerVehicle_ || vehicle == mapBusVehicle_ || vehicle->followsMapTrafficRoute) {
+        throw std::invalid_argument(
+            "Coupled-section removal cannot remove a player or map-traffic vehicle");
+    }
+    const auto found = std::find_if(vehicles_.begin(), vehicles_.end(),
+                                    [vehicle](const std::unique_ptr<Vehicle>& candidate) {
+                                        return candidate.get() == vehicle;
+                                    });
+    if (found == vehicles_.end()) {
+        throw std::invalid_argument("Coupled-section vehicle is not owned by the render loop");
+    }
+    vehicles_.erase(found);
 }
 
 void RenderLoop::RegisterPlayerTimetableRoutes(const openbus::map::MapAiTrafficData& traffic,
@@ -742,6 +761,64 @@ bool RenderLoop::AddTrafficVehicle(
     SimulationState* const simulationState = &simulationState_;
     SoundEngine* const soundEngine = &soundEngine_;
     openbus::rendering::ViewpointContext* const soundViewpoint = &soundViewpoint_;
+    if (isBus && configuration.rearCouplingReference) {
+        try {
+            const BusConfiguration frontBusConfiguration =
+                loadBusConfiguration(resolvedConfig, modelConfig);
+            const std::filesystem::path rearConfigPath =
+                busConfigurationPathFor(configuration.rearCouplingReference->vehicleConfigPath);
+            const std::filesystem::path rearModelConfigPath =
+                modelConfigurationPathForBusFromConfig(rearConfigPath);
+            const auto rearDefinition =
+                sharedVehicleDefinition(rearConfigPath, rearModelConfigPath, VehicleFileKind::Bus);
+            const BusConfiguration rearBusConfiguration =
+                loadBusConfiguration(rearConfigPath, rearModelConfigPath);
+            const VehicleConfig& rearVehicleConfiguration = rearDefinition->vehicleConfiguration;
+            if (!frontBusConfiguration.rearCouplingPoint.has_value() ||
+                !rearBusConfiguration.frontCouplingPoint.has_value() ||
+                !rearBusConfiguration.frontCouplingCharacter.has_value() ||
+                rearBusConfiguration.frontCouplingCharacter->type != 1 ||
+                !rearVehicleConfiguration.hasBoundingBox ||
+                rearVehicleConfiguration.boundingBox[0] <= 0.0 ||
+                rearVehicleConfiguration.boundingBox[1] <= 0.0) {
+                gameLog.Warning(
+                    "Scheduled map AI bus rear section was not paired: type-1 coupling anchors "
+                    "or a valid rear-section footprint are unavailable for " +
+                    busConfigPath.string());
+            } else {
+                trafficState.frontRearCouplingPoint = *frontBusConfiguration.rearCouplingPoint;
+                trafficState.coupledFrontCouplingPoint = *rearBusConfiguration.frontCouplingPoint;
+                trafficState.actor.articulatedRear = openbus::map::MapTrafficActor::ArticulatedRear{
+                    *frontBusConfiguration.rearCouplingPoint,
+                    *rearBusConfiguration.frontCouplingPoint,
+                    rearVehicleConfiguration.boundingBox[1] +
+                        2.0 * std::abs(rearVehicleConfiguration.boundingBox[4]),
+                    rearVehicleConfiguration.boundingBox[0] +
+                        2.0 * std::abs(rearVehicleConfiguration.boundingBox[3])};
+                trafficState.workerActorTemplate =
+                    std::make_shared<const openbus::map::MapTrafficActor>(trafficState.actor);
+                const VehiclePlacement rearPlacement = articulatedRearPlacement(
+                    frontBusConfiguration, configuredPlacement, rearBusConfiguration);
+                VehicleSetupOptions rearSetupOptions;
+                rearSetupOptions.vehicleConfigurationPath = rearConfigPath;
+                const double rearModelOffsetZ =
+                    -rearDefinition->vehicleConfiguration.centerOfGravityHeight;
+                trafficState.pendingCoupledVehicle = assetRequests->submit(
+                    [rearDefinition, rearPlacement, rearModelOffsetZ, loadingPolicy, assetRequests,
+                     simulationState, soundEngine, soundViewpoint,
+                     rearSetupOptions = std::move(rearSetupOptions)]() mutable {
+                        return std::make_unique<Vehicle>(
+                            rearDefinition, rearPlacement, rearModelOffsetZ, loadingPolicy,
+                            *assetRequests, *simulationState, *soundEngine, *soundViewpoint, true,
+                            true, std::move(rearSetupOptions), true);
+                    });
+                trafficState.hasCoupledVehicle = true;
+            }
+        } catch (const std::exception& error) {
+            gameLog.Warning("Scheduled map AI bus rear section could not be prepared for '" +
+                            busConfigPath.string() + "': " + error.what());
+        }
+    }
     std::future<std::unique_ptr<Vehicle>> pendingVehicle =
         assetRequests->submit([definition, configuredPlacement, modelOffsetZ, loadingPolicy,
                                assetRequests, simulationState, soundEngine, soundViewpoint, isBus] {

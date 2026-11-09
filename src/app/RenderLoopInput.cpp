@@ -623,32 +623,44 @@ double RenderLoop::physicsSteering() const {
 }
 
 std::vector<double> RenderLoop::physicsWheelBrakeForces(std::size_t axleCount) const {
-    std::vector<double> forces(axleCount * 2, 0.0);
     if (playerVehicle_ == nullptr) {
-        return forces;
+        return std::vector<double>(axleCount * 2, 0.0);
     }
+    return physicsWheelBrakeForces(*playerVehicle_, axleCount);
+}
+
+std::vector<double> RenderLoop::physicsWheelBrakeForces(const Vehicle& vehicle,
+                                                        std::size_t axleCount) const {
+    std::vector<double> forces(axleCount * 2, 0.0);
     for (std::size_t axle = 0; axle < axleCount; ++axle) {
-        const std::string prefix = "axle_brakeforce_" + std::to_string(axle) + "_";
-        forces[axle * 2] = playerVehicle_->variables.get(prefix + "l");
-        forces[axle * 2 + 1] = playerVehicle_->variables.get(prefix + "r");
+        const std::size_t variableAxle = axle + vehicle.odeWheelIndexOffset / 2;
+        const std::string prefix = "axle_brakeforce_" + std::to_string(variableAxle) + "_";
+        forces[axle * 2] = vehicle.variables.get(prefix + "l");
+        forces[axle * 2 + 1] = vehicle.variables.get(prefix + "r");
     }
     return forces;
 }
 
 std::vector<double> RenderLoop::physicsAxleSpringFactors(std::size_t axleCount) const {
-    std::vector<double> factors(axleCount * 2, 1.0);
     if (playerVehicle_ == nullptr) {
-        return factors;
+        return std::vector<double>(axleCount * 2, 1.0);
     }
+    return physicsAxleSpringFactors(*playerVehicle_, axleCount);
+}
+
+std::vector<double> RenderLoop::physicsAxleSpringFactors(const Vehicle& vehicle,
+                                                         std::size_t axleCount) const {
+    std::vector<double> factors(axleCount * 2, 1.0);
     for (std::size_t axle = 0; axle < axleCount; ++axle) {
-        const std::string prefix = "axle_springfactor_" + std::to_string(axle) + "_";
+        const std::size_t variableAxle = axle + vehicle.odeWheelIndexOffset / 2;
+        const std::string prefix = "axle_springfactor_" + std::to_string(variableAxle) + "_";
         const std::string leftName = prefix + "l";
         const std::string rightName = prefix + "r";
-        if (playerVehicle_->variables.has(leftName)) {
-            factors[axle * 2] = playerVehicle_->variables.get(leftName);
+        if (vehicle.variables.has(leftName)) {
+            factors[axle * 2] = vehicle.variables.get(leftName);
         }
-        if (playerVehicle_->variables.has(rightName)) {
-            factors[axle * 2 + 1] = playerVehicle_->variables.get(rightName);
+        if (vehicle.variables.has(rightName)) {
+            factors[axle * 2 + 1] = vehicle.variables.get(rightName);
         }
     }
     return factors;

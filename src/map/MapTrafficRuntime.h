@@ -145,6 +145,13 @@ struct MapTrafficActor {
     double cruiseSpeedMetersPerSecond = 0.0;
     double lengthMeters = 4.5;
     double widthMeters = 1.8;
+    struct ArticulatedRear {
+        std::array<double, 3> frontRearCouplingPoint = {};
+        std::array<double, 3> rearFrontCouplingPoint = {};
+        double lengthMeters = 4.5;
+        double widthMeters = 1.8;
+    };
+    std::optional<ArticulatedRear> articulatedRear;
     // Signed longitudinal offset from the model origin to the rear axle.
     // Zero retains the route-centered pose for actors without vehicle axle data.
     double rearAxleOffsetMeters = 0.0;
@@ -399,6 +406,7 @@ class MapPassengerServiceRuntime {
     std::size_t waitingPassengers(int stopId) const noexcept;
     void setPassengerAnimationDuration(double seconds);
     void setPassengerAnimationDurationForSeat(std::size_t seatIndex, double seconds);
+    void appendSeats(std::size_t count);
     void setAlightingPassengerAnimationDuration(double seconds);
     void setQueuedAlightingPassengerAnimation(std::size_t seatIndex, double seconds,
                                               double queueProgress);
@@ -592,6 +600,19 @@ struct MapTrafficObstacle {
     double lengthMeters = 4.5;
     double widthMeters = 1.8;
 };
+
+MapTrafficPose mapTrafficArticulatedRearPose(const MapTrafficRoute& route,
+                                             double frontRouteDistanceMeters,
+                                             double lateralOffsetMeters,
+                                             const MapTrafficPose& frontPose,
+                                             const std::array<double, 3>& frontRearCouplingPoint,
+                                             const std::array<double, 3>& rearFrontCouplingPoint);
+// Returns the lead footprint and, when configured, the route-following rear section footprint.
+std::vector<MapTrafficObstacle> mapTrafficActorFootprints(const MapTrafficActor& actor,
+                                                          double distanceMeters);
+bool mapTrafficActorHasClearance(const MapTrafficActor& actor, double distanceMeters,
+                                 const std::vector<MapTrafficObstacle>& obstacles,
+                                 double clearanceMeters = 0.5);
 
 // True when a route actor is aligned behind an obstacle within the supplied bumper gap.
 bool mapTrafficActorBehindObstacle(const MapTrafficActor& actor, const MapTrafficObstacle& obstacle,

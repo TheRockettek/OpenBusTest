@@ -33,6 +33,18 @@ struct BusPassengerMassPoint {
     std::array<double, 3> localPosition = {};
 };
 
+struct BusStepInput {
+    // Engine throttle when scriptDriven is false; wheel torque when true.
+    double driveCommand = 0.0;
+    double steering = 0.0;
+    std::vector<double> wheelBrakeForces;
+    std::vector<double> wheelSpringFactors;
+    bool scriptDriven = false;
+};
+
+class ArticulatedBusCoupling;
+class ArticulatedBusCouplingState;
+
 class BusSimulation {
   public:
     explicit BusSimulation(World& world, BusConfiguration configuration, VehiclePlacement placement,
@@ -58,12 +70,20 @@ class BusSimulation {
     void stepWithWheelTorqueAndBrakeForces(double wheelTorque, double steering,
                                            const std::vector<double>& wheelBrakeForces,
                                            const std::vector<double>& wheelSpringFactors = {});
+    // Advances two simulations by one fixed step in their shared physics world.
+    static void stepTogether(BusSimulation& first, const BusStepInput& firstInput,
+                             BusSimulation& second, const BusStepInput& secondInput);
+    // Accumulates elapsed time and advances both simulations in synchronized fixed steps.
+    static void updateTogether(BusSimulation& first, const BusStepInput& firstInput,
+                               BusSimulation& second, const BusStepInput& secondInput,
+                               double elapsedSeconds);
+    static ArticulatedBusCoupling coupleRearSection(BusSimulation& front, BusSimulation& rear);
     void setFrozen(bool frozen);
     void setRoadWeather(const openbus::RoadWeatherConditions& conditions);
     void setPassengerMassPoints(const std::vector<BusPassengerMassPoint>& points);
     double totalMassKg() const;
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
-                         double brake) const;
+                         double brake, std::size_t axleIndexOffset = 0) const;
     double positionX() const;
     double positionY() const;
     double positionZ() const;
@@ -98,6 +118,21 @@ class BusSimulation {
     double simulationTime() const;
 
   private:
+    static void validatePair(const BusSimulation& first, const BusSimulation& second);
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+class ArticulatedBusCoupling {
+  public:
+    ArticulatedBusCoupling(const ArticulatedBusCoupling&) = delete;
+    ArticulatedBusCoupling& operator=(const ArticulatedBusCoupling&) = delete;
+    ArticulatedBusCoupling(ArticulatedBusCoupling&& other) noexcept;
+    ArticulatedBusCoupling& operator=(ArticulatedBusCoupling&& other) noexcept;
+    ~ArticulatedBusCoupling();
+
+  private:
+    explicit ArticulatedBusCoupling(std::shared_ptr<ArticulatedBusCouplingState> state);
+    std::shared_ptr<ArticulatedBusCouplingState> state_;
+    friend class BusSimulation;
 };
