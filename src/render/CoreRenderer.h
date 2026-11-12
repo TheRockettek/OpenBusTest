@@ -13,8 +13,6 @@
 namespace openbus::rendering {
 
 constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
-constexpr std::size_t MAX_VEHICLE_SPOTLIGHTS = 128;
-constexpr std::size_t MAX_MAP_LIGHTS = 128;
 
 enum class GpuTimingPass : std::uint8_t { MainView, Reflection };
 
@@ -45,6 +43,27 @@ struct MapPointLight {
     std::array<double, 3> position = {};
     std::array<double, 3> color = {};
     double radius = 0.0;
+};
+
+struct StaticMapLightBuffer {
+    GLuint buffer = 0;
+    GLuint texture = 0;
+    std::uint64_t rendererGeneration = 0;
+    std::uint64_t contentRevision = 0;
+    std::size_t sourceCount = 0;
+    bool sourceUploaded = false;
+    bool residentSources = false;
+    std::size_t validatedSourceCount = 0;
+    std::uint64_t validatedRevision = 0;
+    bool sourceValidationCached = false;
+    bool allSourcesValid = false;
+    std::vector<std::size_t> sourceIndices;
+};
+
+struct StaticMapLightView {
+    std::array<double, 3> position = {};
+    // Index into the sourceIndices argument, not directly into the source array.
+    std::size_t sourceIndex = 0;
 };
 
 enum class HumanBoneSlot : std::uint8_t {
@@ -185,10 +204,46 @@ void deleteRendererBuffers(GLsizei count, const GLuint* buffers);
 // Call with the camera view before applying any object transforms.
 void setLightingViewMatrix(const Matrix4& view,
                            std::optional<std::array<double, 3>> sunDirection = std::nullopt);
+struct LightingBufferUploadStats {
+    std::uint64_t vehicleUploads = 0;
+    std::uint64_t vehicleBytes = 0;
+    std::uint64_t vehicleSets = 0;
+    std::uint64_t vehicleLightsTotal = 0;
+    std::size_t vehicleLightsMax = 0;
+    std::uint64_t vehicleSpotlightTileUploads = 0;
+    std::uint64_t vehicleSpotlightTileBytes = 0;
+    std::uint64_t vehicleSpotlightTileSets = 0;
+    std::uint64_t vehicleSpotlightTileCountTotal = 0;
+    std::uint64_t vehicleSpotlightTileAssignmentsTotal = 0;
+    std::size_t vehicleSpotlightTileAssignmentsMax = 0;
+    std::uint64_t vehicleSpotlightTileFallbackSets = 0;
+    std::uint64_t mapUploads = 0;
+    std::uint64_t mapBytes = 0;
+    std::uint64_t staticMapUploads = 0;
+    std::uint64_t staticMapBytes = 0;
+    std::uint64_t mapViewPreparations = 0;
+    std::uint64_t mapViewReuses = 0;
+    std::uint64_t mapSets = 0;
+    std::uint64_t mapLightsTotal = 0;
+    std::size_t mapLightsMax = 0;
+};
+
+LightingBufferUploadStats lightingBufferUploadStats();
+void resetLightingBufferUploadStats();
+void recordMapLightViewPreparation(bool reused);
+std::size_t mapLightSelectionLimit();
 // Positions and directions are in the current view space.
 void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights);
 // Map-light positions are in the current view space; strength normally follows darkness.
 void setMapLights(const std::vector<MapPointLight>& lights, double strength);
+// Source indices refer to immutable registered lights; increment revision if they change.
+// View indices refer to the compact sourceIndices array.
+// Increment revision when existing sources change or their order changes.
+void setStaticMapLights(StaticMapLightBuffer& cache, const std::vector<MapPointLight>& sources,
+                        const std::vector<std::size_t>& sourceIndices,
+                        const std::vector<StaticMapLightView>& viewLights, double strength,
+                        std::uint64_t revision = 0);
+void releaseStaticMapLights(StaticMapLightBuffer& cache);
 // An absent brightness preserves the renderer's default daylight appearance.
 std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness);
 void setWeatherLighting(std::optional<double> brightness, bool reflectionPass = false);

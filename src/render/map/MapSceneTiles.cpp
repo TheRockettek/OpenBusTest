@@ -116,16 +116,364 @@ void MapSceneLoader::indexSceneryTrafficPathsMapWide() {
     }
 }
 
-void MapSceneLoader::applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
+void MapSceneLoader::registerSceneryMapLights(const SceneryObjectConfig& metadata,
+                                              const openbus::map::MapSceneryPose& pose, int tileX,
+                                              int tileY, int objectId,
+                                              const std::vector<std::string>& labels) {
+    if (metadata.onlyEditor && metadata.trees.empty()) {
+        return;
+    }
+    if (metadata.carPark) {
+        const auto listIndex = openbus::map::carparkListIndex(labels);
+        if (carParkChancePercent_ <= 0.0 || !listIndex) {
+            return;
+        }
+        const auto& candidates = loadCarparkVehicleList(*listIndex);
+        const std::uint64_t placementSeed = std::bit_cast<std::uint64_t>(pose.x) ^
+                                            std::rotl(std::bit_cast<std::uint64_t>(pose.y), 23);
+        const auto selected = openbus::map::selectMapCarparkVehicle(
+            carParkChancePercent_, candidates.size(), tileX, tileY, objectId, placementSeed);
+        if (!selected || resolveSceneryConfigPath(candidates[*selected]).empty()) {
+            return;
+        }
+    }
+    for (const SceneryObjectMapLight& source : metadata.mapLights) {
+        const auto offset = openbus::map::transformMapSceneryVector(pose, source.position);
+        MapPointLight light;
+        light.position = {pose.x + offset[0], pose.y + offset[1], pose.z + offset[2]};
+        light.color = source.color;
+        light.radius = source.radius;
+        impl_->sceneryMapLights.push_back(light);
+        const auto index = impl_->sceneryMapLights.size() - 1;
+        impl_->sceneryMapLightIndex.add(tileKey(tileX, tileY), index);
+        impl_->sceneryMapLightIndex.addInfluence(index, light.position, light.radius,
+                                                 impl_->coordinates.tileSize);
+    }
+}
+
+void MapSceneLoader::indexSceneryLightsMapWide() {
+    TraceScope trace("lighting", "MapSceneLoader.indexSceneryLightsMapWide");
+    indexingSceneryLights_ = true;
+    struct TerrainGuard {
+        MapSceneLoader& loader;
+        ~TerrainGuard() {
+            loader.indexingSceneryLights_ = false;
+            loader.sceneryLightTerrain_.clear();
+            loader.unavailableSceneryLightTerrain_.clear();
+            loader.sceneryLightTerrainReferences_.clear();
+        }
+    } guard{*this};
+    for (const auto& tile : map.tiles) {
+        sceneryLightTerrainReferences_.emplace(tileKey(tile.x, tile.y), &tile);
+    }
+
+    std::size_t unresolvedPlacements = 0;
+    const auto indexObjects = [&](const auto& objects) {
+        std::vector<int> ids;
+        ids.reserve(objects.size());
+        for (const auto& [id, object] : objects) {
+            (void)object;
+            ids.push_back(id);
+        }
+        std::sort(ids.begin(), ids.end());
+        for (const int id : ids) {
+            const auto& object = objects.at(id);
+            const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(object.assetPath);
+            if (metadata == nullptr || ambiguousMapObjectIds.contains(id)) {
+                continue;
+            }
+            if (metadata->mapLights.empty() || (metadata->onlyEditor && metadata->trees.empty())) {
+                indexedSceneryLightObjects_.insert(id);
+                continue;
+            }
+            const auto placement = resolveMapSceneryPlacement(id);
+            if (placement) {
+                const std::size_t firstLight = impl_->sceneryMapLights.size();
+                if (!placement->worldHeightResolved) {
+                    ++unresolvedPlacements;
+                    if (unresolvedPlacements <= 3) {
+                        gameLog.Warning(
+                            "Map-wide scenery light uses a fallback placement: object ID=" +
+                            std::to_string(id));
+                    }
+                }
+                registerSceneryMapLights(*metadata, placement->pose, object.tileX, object.tileY, id,
+                                         object.labels);
+                indexedSceneryLightObjects_.insert(id);
+                if (!placement->worldHeightResolved &&
+                    impl_->sceneryMapLights.size() > firstLight) {
+                    unresolvedSceneryLightPlacements_.push_back(
+                        {id, object.tileX, object.tileY, firstLight,
+                         impl_->sceneryMapLights.size() - firstLight});
+                }
+            }
+        }
+    };
+    indexObjects(sceneryObjectsById);
+    indexObjects(attachedObjectsById);
+    if (unresolvedPlacements > 0) {
+        gameLog.Warning(std::to_string(unresolvedPlacements) +
+                        " map-wide scenery light placements could not be fully resolved.");
+    }
+
+    std::vector<std::size_t> tileIndices;
+    tileIndices.reserve(splineAttachmentParentTiles.size());
+    for (const auto& [tileIndex, tile] : splineAttachmentParentTiles) {
+        (void)tile;
+        tileIndices.push_back(tileIndex);
+    }
+    std::sort(tileIndices.begin(), tileIndices.end());
+    for (const std::size_t tileIndex : tileIndices) {
+        const auto& tile = splineAttachmentParentTiles.at(tileIndex);
+        std::unordered_map<int, std::size_t> attachmentOrdinals;
+        for (const auto& attachment : tile.splineAttachments) {
+            const std::size_t attachmentOrdinal = attachmentOrdinals[attachment.id]++;
+            const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(attachment.assetPath);
+            if (metadata == nullptr || metadata->mapLights.empty() ||
+                (metadata->onlyEditor && metadata->trees.empty()) || !attachment.transformValid) {
+                continue;
+            }
+            auto poses = openbus::map::placeMapSplineAttachment(
+                attachment, tile.splines, tile.reference.x, tile.reference.y, mapSplineResolver,
+                splineCantWidth, map.coordinates);
+            std::vector<std::optional<openbus::map::MapSceneryPose>> cachedPoses;
+            cachedPoses.reserve(poses.size());
+            for (std::size_t poseIndex = 0; poseIndex < poses.size(); ++poseIndex) {
+                auto& pose = poses[poseIndex];
+                const bool aligned =
+                    applyTerrainAlignment(pose, attachment.splineTerrainAlign,
+                                          "spline attachment ID=" + std::to_string(attachment.id));
+                cachedPoses.push_back(aligned ? std::optional{pose} : std::nullopt);
+                const std::size_t firstLight = impl_->sceneryMapLights.size();
+                registerSceneryMapLights(*metadata, pose, tile.reference.x, tile.reference.y,
+                                         attachment.id, attachment.labels);
+                if (!aligned && impl_->sceneryMapLights.size() > firstLight) {
+                    unresolvedSplineLightPlacements_.push_back(
+                        {attachment.id, tile.reference.x, tile.reference.y, attachmentOrdinal,
+                         poseIndex, firstLight, impl_->sceneryMapLights.size() - firstLight});
+                }
+            }
+            resolvedLightSplinePoses.emplace(std::tuple{tileKey(tile.reference.x, tile.reference.y),
+                                                        attachment.id, attachmentOrdinal},
+                                             std::move(cachedPoses));
+        }
+    }
+    gameLog.Log("Registered " + std::to_string(impl_->sceneryMapLights.size()) +
+                " map-wide static scenery lights.");
+}
+
+void MapSceneLoader::refreshUnresolvedSceneryLights(int tileX, int tileY,
+                                                    const openbus::map::MapTileData& tile) {
+    const auto registerMissing = [&](const auto& objects) {
+        for (const auto& object : objects) {
+            if (indexedSceneryLightObjects_.contains(object.id) ||
+                ambiguousMapObjectIds.contains(object.id)) {
+                continue;
+            }
+            const auto* metadata = loadSceneryObjectMetadata(object.assetPath);
+            if (metadata == nullptr) {
+                continue;
+            }
+            if (metadata->mapLights.empty() || (metadata->onlyEditor && metadata->trees.empty())) {
+                indexedSceneryLightObjects_.insert(object.id);
+                continue;
+            }
+            const auto placement = resolveMapSceneryPlacement(object.id);
+            if (!placement) {
+                continue;
+            }
+            const auto firstLight = impl_->sceneryMapLights.size();
+            registerSceneryMapLights(*metadata, placement->pose, tileX, tileY, object.id,
+                                     object.labels);
+            indexedSceneryLightObjects_.insert(object.id);
+            const auto count = impl_->sceneryMapLights.size() - firstLight;
+            if (count > 0) {
+                ++impl_->sceneryMapLightRevision;
+                if (!placement->worldHeightResolved) {
+                    unresolvedSceneryLightPlacements_.push_back(
+                        {object.id, tileX, tileY, firstLight, count});
+                }
+                gameLog.Log("Registered recovered scenery lights: object ID=" +
+                            std::to_string(object.id));
+            }
+        }
+    };
+    registerMissing(tile.sceneryObjects);
+    registerMissing(tile.attachedObjects);
+    std::unordered_map<int, std::size_t> attachmentOrdinals;
+    for (const auto& attachment : tile.splineAttachments) {
+        const auto ordinal = attachmentOrdinals[attachment.id]++;
+        const auto key = std::tuple{tileKey(tileX, tileY), attachment.id, ordinal};
+        if (resolvedLightSplinePoses.contains(key) || !attachment.transformValid) {
+            continue;
+        }
+        const auto* metadata = loadSceneryObjectMetadata(attachment.assetPath);
+        if (metadata == nullptr || metadata->mapLights.empty() ||
+            (metadata->onlyEditor && metadata->trees.empty())) {
+            continue;
+        }
+        auto poses = openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
+                                                            mapSplineResolver, splineCantWidth,
+                                                            map.coordinates);
+        std::vector<std::optional<openbus::map::MapSceneryPose>> cachedPoses;
+        cachedPoses.reserve(poses.size());
+        for (std::size_t poseIndex = 0; poseIndex < poses.size(); ++poseIndex) {
+            auto& pose = poses[poseIndex];
+            const bool aligned =
+                applyTerrainAlignment(pose, attachment.splineTerrainAlign,
+                                      "spline attachment ID=" + std::to_string(attachment.id));
+            cachedPoses.push_back(aligned ? std::optional{pose} : std::nullopt);
+            const auto firstLight = impl_->sceneryMapLights.size();
+            registerSceneryMapLights(*metadata, pose, tileX, tileY, attachment.id,
+                                     attachment.labels);
+            const auto count = impl_->sceneryMapLights.size() - firstLight;
+            if (count > 0) {
+                ++impl_->sceneryMapLightRevision;
+                if (!aligned) {
+                    unresolvedSplineLightPlacements_.push_back(
+                        {attachment.id, tileX, tileY, ordinal, poseIndex, firstLight, count});
+                }
+            }
+        }
+        resolvedLightSplinePoses.emplace(key, std::move(cachedPoses));
+    }
+    for (auto it = unresolvedSceneryLightPlacements_.begin();
+         it != unresolvedSceneryLightPlacements_.end();) {
+        if (it->tileX != tileX || it->tileY != tileY) {
+            ++it;
+            continue;
+        }
+        const auto placement = resolveMapSceneryPlacement(it->objectId);
+        const SceneryObjectConfig* metadata =
+            placement ? loadSceneryObjectMetadata(placement->assetPath) : nullptr;
+        if (!placement || metadata == nullptr) {
+            ++it;
+            continue;
+        }
+        if (metadata->mapLights.size() != it->lightCount ||
+            it->firstLight > impl_->sceneryMapLights.size() ||
+            it->lightCount > impl_->sceneryMapLights.size() - it->firstLight) {
+            throw std::logic_error("Unresolved scenery light registration changed unexpectedly");
+        }
+        bool changed = false;
+        for (std::size_t i = 0; i < it->lightCount; ++i) {
+            const auto& source = metadata->mapLights[i];
+            const auto offset =
+                openbus::map::transformMapSceneryVector(placement->pose, source.position);
+            auto& light = impl_->sceneryMapLights[it->firstLight + i];
+            const std::array<double, 3> position = {placement->pose.x + offset[0],
+                                                    placement->pose.y + offset[1],
+                                                    placement->pose.z + offset[2]};
+            if (light.position != position) {
+                light.position = position;
+                impl_->sceneryMapLightIndex.addInfluence(it->firstLight + i, light.position,
+                                                         light.radius, impl_->coordinates.tileSize);
+                changed = true;
+            }
+        }
+        if (changed) {
+            ++impl_->sceneryMapLightRevision;
+        }
+        if (!placement->worldHeightResolved) {
+            ++it;
+            continue;
+        }
+        gameLog.Log("Resolved map-wide scenery light placement: object ID=" +
+                    std::to_string(it->objectId));
+        const auto index = it - unresolvedSceneryLightPlacements_.begin();
+        if (it != std::prev(unresolvedSceneryLightPlacements_.end())) {
+            *it = std::move(unresolvedSceneryLightPlacements_.back());
+        }
+        unresolvedSceneryLightPlacements_.pop_back();
+        it = unresolvedSceneryLightPlacements_.begin() + index;
+    }
+    std::map<std::pair<int, std::size_t>, std::vector<openbus::map::MapSceneryPose>> splinePoses;
+    for (auto it = unresolvedSplineLightPlacements_.begin();
+         it != unresolvedSplineLightPlacements_.end();) {
+        if (it->tileX != tileX || it->tileY != tileY) {
+            ++it;
+            continue;
+        }
+        std::size_t ordinal = 0;
+        const auto attachment = std::find_if(
+            tile.splineAttachments.begin(), tile.splineAttachments.end(),
+            [&](const auto& candidate) {
+                return candidate.id == it->objectId && ordinal++ == it->attachmentOrdinal;
+            });
+        if (attachment == tile.splineAttachments.end()) {
+            throw std::logic_error("Unresolved spline light attachment was not found");
+        }
+        const auto key = std::pair{it->objectId, it->attachmentOrdinal};
+        auto poses = splinePoses.find(key);
+        if (poses == splinePoses.end()) {
+            poses = splinePoses
+                        .emplace(key, openbus::map::placeMapSplineAttachment(
+                                          *attachment, tile.splines, tileX, tileY,
+                                          mapSplineResolver, splineCantWidth, map.coordinates))
+                        .first;
+        }
+        const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(attachment->assetPath);
+        if (metadata == nullptr) {
+            ++it;
+            continue;
+        }
+        if (it->poseIndex >= poses->second.size() || metadata->mapLights.size() != it->lightCount ||
+            it->firstLight > impl_->sceneryMapLights.size() ||
+            it->lightCount > impl_->sceneryMapLights.size() - it->firstLight) {
+            throw std::logic_error("Unresolved spline light registration changed unexpectedly");
+        }
+        auto pose = poses->second[it->poseIndex];
+        const bool aligned =
+            applyTerrainAlignment(pose, attachment->splineTerrainAlign,
+                                  "spline attachment ID=" + std::to_string(attachment->id));
+        bool changed = false;
+        for (std::size_t i = 0; i < it->lightCount; ++i) {
+            const auto offset =
+                openbus::map::transformMapSceneryVector(pose, metadata->mapLights[i].position);
+            const std::array<double, 3> position = {pose.x + offset[0], pose.y + offset[1],
+                                                    pose.z + offset[2]};
+            auto& light = impl_->sceneryMapLights[it->firstLight + i];
+            if (light.position != position) {
+                light.position = position;
+                impl_->sceneryMapLightIndex.addInfluence(it->firstLight + i, light.position,
+                                                         light.radius, impl_->coordinates.tileSize);
+                changed = true;
+            }
+        }
+        if (changed) {
+            ++impl_->sceneryMapLightRevision;
+        }
+        if (!aligned) {
+            ++it;
+            continue;
+        }
+        auto& cached = resolvedLightSplinePoses.at(
+            std::tuple{tileKey(tileX, tileY), it->objectId, it->attachmentOrdinal});
+        if (it->poseIndex >= cached.size()) {
+            throw std::logic_error("Unresolved spline light cache changed unexpectedly");
+        }
+        cached[it->poseIndex] = pose;
+        const auto index = it - unresolvedSplineLightPlacements_.begin();
+        if (it != std::prev(unresolvedSplineLightPlacements_.end())) {
+            *it = std::move(unresolvedSplineLightPlacements_.back());
+        }
+        unresolvedSplineLightPlacements_.pop_back();
+        it = unresolvedSplineLightPlacements_.begin() + index;
+    }
+}
+
+bool MapSceneLoader::applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
                                            const std::string& description) {
     if (!requested) {
-        return;
+        return true;
     }
     const std::optional<std::array<double, 3>> normal = sampleTerrainNormal(pose.x, pose.y);
     if (!normal || !openbus::map::alignMapSceneryPoseToTerrainNormal(pose, *normal)) {
         recordSkipped(skipped, "[spline_terrain_align] placements without a usable terrain normal",
                       description);
+        return false;
     }
+    return true;
 }
 
 std::optional<MapSceneLoader::ResolvedSceneryPlacement>
@@ -170,10 +518,11 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId, bool useCache) {
         const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(object.assetPath);
         const bool absoluteHeight = metadata != nullptr && metadata->absoluteHeight;
         pose.z = openbus::map::mapSceneryWorldHeight(pose.z, ground.value_or(0.0), absoluteHeight);
-        applyTerrainAlignment(pose, object.splineTerrainAlign,
-                              "object ID=" + std::to_string(objectId));
+        const bool aligned = applyTerrainAlignment(pose, object.splineTerrainAlign,
+                                                   "object ID=" + std::to_string(objectId));
         ResolvedSceneryPlacement resolved{object.assetPath, pose,
-                                          absoluteHeight || ground.has_value()};
+                                          metadata != nullptr &&
+                                              (absoluteHeight || ground.has_value()) && aligned};
         if (useCache && resolved.worldHeightResolved) {
             resolvedPlacements.emplace(objectId, resolved);
         }
@@ -215,9 +564,11 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId, bool useCache) {
                                           openbus::map::composeMapAttachedObjectPose(
                                               parent->pose, attachment.translation,
                                               attachment.rotationDegrees, object.rotationDegrees),
-                                          parent->worldHeightResolved};
-        applyTerrainAlignment(resolved.pose, object.splineTerrainAlign,
-                              "attached object ID=" + std::to_string(objectId));
+                                          parent->worldHeightResolved && parentMetadata != nullptr};
+        const bool aligned =
+            applyTerrainAlignment(resolved.pose, object.splineTerrainAlign,
+                                  "attached object ID=" + std::to_string(objectId));
+        resolved.worldHeightResolved = resolved.worldHeightResolved && aligned;
         if (useCache && resolved.worldHeightResolved) {
             resolvedPlacements.emplace(objectId, resolved);
         }
@@ -250,9 +601,10 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId, bool useCache) {
         return std::nullopt;
     }
     ResolvedSceneryPlacement resolved{record->assetPath, *parentPose, true};
-    applyTerrainAlignment(resolved.pose, record->splineTerrainAlign,
-                          "spline attachment parent ID=" + std::to_string(objectId));
-    if (useCache) {
+    resolved.worldHeightResolved =
+        applyTerrainAlignment(resolved.pose, record->splineTerrainAlign,
+                              "spline attachment parent ID=" + std::to_string(objectId));
+    if (useCache && resolved.worldHeightResolved) {
         resolvedPlacements.emplace(objectId, resolved);
     }
     return resolved;
@@ -691,27 +1043,6 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           LogLevel::Info);
             return;
         }
-        if (!batchIndexes.empty() && objectMetadata != nullptr) {
-            openbus::map::MapSceneryPose pose;
-            pose.x = worldX;
-            pose.y = worldY;
-            pose.z = worldZ;
-            pose.rotationDegrees = rotationDegrees;
-            pose.rotationCount = rotationCount;
-            if (orientationMatrix != nullptr) {
-                pose.orientationMatrix = *orientationMatrix;
-                pose.hasOrientationMatrix = true;
-            }
-            for (const SceneryObjectMapLight& source : objectMetadata->mapLights) {
-                const auto offset = openbus::map::transformMapSceneryVector(pose, source.position);
-                Impl::SceneryMapLight light;
-                light.sourceTileKey = tileKey(tileX, tileY);
-                light.light.position = {worldX + offset[0], worldY + offset[1], worldZ + offset[2]};
-                light.light.color = source.color;
-                light.light.radius = source.radius;
-                impl_->sceneryMapLights.push_back(light);
-            }
-        }
         if (batchIndexes.empty()) {
             recordSkipped(skipped, "scenery placements with no renderable asset batches",
                           description + " config=" + openbus::pathToUtf8(configPath.filename()));
@@ -809,7 +1140,9 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                            object.labels, &object.rules, object.id, object.variableParentId,
                            object.attachedToObjectId);
     }
+    std::unordered_map<int, std::size_t> attachmentOrdinals;
     for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
+        const std::size_t attachmentOrdinal = attachmentOrdinals[attachment.id]++;
         const std::string description =
             tileName + (attachment.repeater ? " splineRepeater=" : " splineAttachment=") +
             attachment.label + " asset=" + attachment.assetPath +
@@ -819,6 +1152,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           description);
             continue;
         }
+        const auto cachedPoses = resolvedLightSplinePoses.find(
+            std::tuple{tileKey(tileX, tileY), attachment.id, attachmentOrdinal});
         const std::vector<openbus::map::MapSceneryPose> poses =
             openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
                                                    mapSplineResolver, splineCantWidth,
@@ -828,9 +1163,14 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           description);
             continue;
         }
-        for (const openbus::map::MapSceneryPose& pose : poses) {
-            openbus::map::MapSceneryPose renderedPose = pose;
-            applyTerrainAlignment(renderedPose, attachment.splineTerrainAlign, description);
+        for (std::size_t poseIndex = 0; poseIndex < poses.size(); ++poseIndex) {
+            openbus::map::MapSceneryPose renderedPose = poses[poseIndex];
+            if (cachedPoses != resolvedLightSplinePoses.end() &&
+                poseIndex < cachedPoses->second.size() && cachedPoses->second[poseIndex]) {
+                renderedPose = *cachedPoses->second[poseIndex];
+            } else {
+                applyTerrainAlignment(renderedPose, attachment.splineTerrainAlign, description);
+            }
             addSceneryInstance(
                 attachment.assetPath, description, renderedPose.x, renderedPose.y, renderedPose.z,
                 0.0, renderedPose.rotationDegrees, renderedPose.rotationCount,

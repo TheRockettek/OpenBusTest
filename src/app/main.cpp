@@ -1618,14 +1618,14 @@ int main() {
                         "startup", "main.prepareScheduledBusTraffic");
                     renderer.RegisterPlayerTimetableRoutes(mapDefinition.aiTraffic,
                                                            scheduledHumanScale);
-                    std::vector<std::string> aiBusConfigurations =
-                        openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
-                    if (aiBusConfigurations.empty()) {
-                        applicationLog.Warning(
-                            "Map AI buses not spawned: ailists.cfg has no loadable depot bus "
-                            "configurations.");
-                    }
-                    {
+                    if (mapAiBusPoolCount != 0) {
+                        std::vector<std::string> aiBusConfigurations =
+                            openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
+                        if (aiBusConfigurations.empty()) {
+                            applicationLog.Warning(
+                                "Map AI buses not spawned: ailists.cfg has no loadable depot bus "
+                                "configurations.");
+                        }
                         constexpr double busTrafficSpeedMetersPerSecond = 11.0;
                         std::size_t addedBuses = 0;
                         std::size_t eligibleTimetableRoutes = 0;
@@ -2300,6 +2300,13 @@ int main() {
                         for (int frame = 0; frame < framesThisPhase; ++frame) {
                             renderBenchmarkFrame(phases[phaseIndex], frame, framesThisPhase);
                         }
+                    }
+
+                    const std::string benchmarkCaptureDirectory =
+                        environmentValue("OPENBUS_BENCHMARK_CAPTURE_DIR");
+                    if (!benchmarkCaptureDirectory.empty()) {
+                        renderer.captureViews(*simulation, *world,
+                                              openbus::pathFromUtf8(benchmarkCaptureDirectory));
                     }
 
                     {

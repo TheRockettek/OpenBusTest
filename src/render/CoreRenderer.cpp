@@ -1,4 +1,6 @@
 #include "render/CoreRenderer.h"
+#include "render/StaticMapLightFallback.h"
+#include "render/VehicleSpotlightTileMask.h"
 #include "render/ComputeCulling.h"
 #include "render/MatrixMath.h"
 #include "core/Environment.h"
@@ -9,10 +11,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <bit>
 #include <chrono>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -20,6 +26,28 @@
 #include <string>
 #include <string_view>
 #include <utility>
+
+#ifndef GL_TEXTURE_BUFFER
+#define GL_TEXTURE_BUFFER 0x8C2A
+#endif
+#ifndef GL_MAX_TEXTURE_BUFFER_SIZE
+#define GL_MAX_TEXTURE_BUFFER_SIZE 0x8C2B
+#endif
+#ifndef GL_RGBA32F
+#define GL_RGBA32F 0x8814
+#endif
+#ifndef GL_RGBA32UI
+#define GL_RGBA32UI 0x8D70
+#endif
+#ifndef GL_MAJOR_VERSION
+#define GL_MAJOR_VERSION 0x821B
+#endif
+#ifndef GL_MINOR_VERSION
+#define GL_MINOR_VERSION 0x821C
+#endif
+#ifndef GL_DEBUG_OUTPUT_SYNCHRONOUS
+#define GL_DEBUG_OUTPUT_SYNCHRONOUS 0x8242
+#endif
 
 namespace openbus::rendering {
 namespace {
@@ -30,12 +58,142 @@ constexpr std::size_t MAX_TEXTURE_UNITS = 16;
 std::size_t submittedFrameTriangleCount = 0;
 std::size_t submittedReflectionTriangleCount = 0;
 bool reflectionTrianglePass = false;
+std::atomic<std::uint64_t> glDebugErrorGeneration = 0;
 
 constexpr std::size_t kGpuTimerQueriesPerPass = 32;
 constexpr std::size_t kGpuTimerPassCount = 2;
 constexpr std::size_t kGpuTimerQueryCount = kGpuTimerQueriesPerPass * kGpuTimerPassCount;
 constexpr auto kGpuTimerPollInterval = std::chrono::milliseconds(100);
 constexpr auto kGpuTimerSummaryInterval = std::chrono::seconds(2);
+
+std::size_t readLightLimit(const char* variableName, std::size_t maximum,
+                           std::size_t defaultLimit) {
+    const char* setting = openbus::getEnvironment(variableName);
+    if (setting == nullptr) {
+        return defaultLimit;
+    }
+
+    const std::string_view value(setting);
+    unsigned int parsed = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (error != std::errc{} || end != value.data() + value.size() || parsed > maximum) {
+        gameLog.Warning(std::string(variableName) + " must be an integer from 0 to " +
+                        std::to_string(maximum) + "; using default limit " +
+                        std::to_string(defaultLimit));
+        return defaultLimit;
+    }
+    gameLog.Log(std::string(variableName) + " set to " + std::to_string(parsed));
+    return parsed;
+}
+
+std::size_t mapLightLimit() {
+    constexpr std::size_t maximum = std::numeric_limits<GLint>::max() / 2;
+    static const std::size_t limit = readLightLimit("OPENBUS_MAP_LIGHT_LIMIT", maximum, maximum);
+    return limit;
+}
+
+std::size_t vehicleSpotlightLimit() {
+    constexpr std::size_t maximum = std::numeric_limits<GLint>::max() / 3;
+    static const std::size_t limit =
+        readLightLimit("OPENBUS_VEHICLE_SPOTLIGHT_LIMIT", maximum, maximum);
+    return limit;
+}
+
+bool mapLightVertexEvaluationEnabled() {
+    static const bool enabled = [] {
+        const char* setting = openbus::getEnvironment("OPENBUS_MAP_LIGHT_VERTEX_EVALUATION");
+        const std::string_view value = setting != nullptr ? setting : "";
+        if (value.empty() || value == "0" || value == "false") {
+            return false;
+        }
+        if (value == "1" || value == "true") {
+            gameLog.Log("Vertex-evaluated scenery map lighting enabled");
+            return true;
+        }
+        gameLog.Warning("OPENBUS_MAP_LIGHT_VERTEX_EVALUATION must be 0, 1, false or true; "
+                        "using 0");
+        return false;
+    }();
+    return enabled;
+}
+
+bool vehicleSpotlightTileCullingEnabled() {
+    static const bool enabled = [] {
+        const char* setting = openbus::getEnvironment("OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING");
+        const std::string_view value = setting != nullptr ? setting : "";
+        if (value == "1" || value == "true") {
+            gameLog.Log("Vehicle spotlight tile culling enabled");
+            return true;
+        }
+        if (value.empty() || value == "0" || value == "false") {
+            gameLog.Log("Vehicle spotlight tile culling disabled");
+            return false;
+        }
+        gameLog.Warning("OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING must be 0, 1, false or true; "
+                        "using 0");
+        return false;
+    }();
+    return enabled;
+}
+
+float reflectionAmbientFloor() {
+    static const float floor = [] {
+        constexpr float defaultFloor = 0.25F;
+        const char* setting = openbus::getEnvironment("OPENBUS_REFLECTION_AMBIENT_FLOOR");
+        if (setting == nullptr) {
+            return defaultFloor;
+        }
+
+        const std::string_view value(setting);
+        float parsed = 0.0F;
+        const auto [end, error] =
+            std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (error != std::errc{} || end != value.data() + value.size() || !std::isfinite(parsed) ||
+            parsed < 0.0F || parsed > 1.0F) {
+            gameLog.Warning("OPENBUS_REFLECTION_AMBIENT_FLOOR must be a number from 0 to 1; "
+                            "using default 0.25");
+            return defaultFloor;
+        }
+        gameLog.Log("OPENBUS_REFLECTION_AMBIENT_FLOOR set to " + std::to_string(parsed));
+        return parsed;
+    }();
+    return floor;
+}
+
+bool validMapLight(const MapPointLight& light) {
+    const auto finite = [](double value) {
+        return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
+    };
+    return std::all_of(light.position.begin(), light.position.end(), finite) &&
+           std::all_of(
+               light.color.begin(), light.color.end(),
+               [](double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; }) &&
+           finite(light.radius) && light.radius >= std::numeric_limits<float>::min();
+}
+
+void APIENTRY reportOpenGlDebugMessage(GLenum, GLenum type, GLuint id, GLenum severity,
+                                       GLsizei length, const char* message, const void*) {
+    if (type != GL_DEBUG_TYPE_ERROR || message == nullptr) {
+        return;
+    }
+    glDebugErrorGeneration.fetch_add(1, std::memory_order_relaxed);
+    const std::size_t messageLength =
+        length > 0 ? static_cast<std::size_t>(length) : std::char_traits<char>::length(message);
+    gameLog.Error("OpenGL API error id=" + std::to_string(id) + " severity=" +
+                  std::to_string(severity) + ": " + std::string(message, messageLength));
+}
+
+std::uint64_t glDebugErrorCheckpoint() {
+    return glDebugErrorGeneration.load(std::memory_order_relaxed);
+}
+
+void validateOpenGlUpload(const char* description, std::uint64_t errorCheckpoint) {
+    if (glDebugErrorGeneration.load(std::memory_order_relaxed) != errorCheckpoint) {
+        throw std::runtime_error(std::string("OpenGL ") + description +
+                                 " upload failed; see "
+                                 "the OpenGL debug error log");
+    }
+}
 
 struct GpuTimerPassState {
     std::array<bool, kGpuTimerQueriesPerPass> pending = {};
@@ -61,6 +219,7 @@ struct GpuTimerState {
 };
 
 GpuTimerState gpuTimerState;
+LightingBufferUploadStats lightUploadStats;
 
 std::size_t gpuTimerPassIndex(GpuTimingPass pass) {
     return static_cast<std::size_t>(pass);
@@ -214,6 +373,33 @@ void pollGpuTimingQueries() {
     appendGpuTimerSummary(summary, "main_view", state.passes[0]);
     appendGpuTimerSummary(summary, "reflection", state.passes[1]);
     gameLog.Log(summary.str());
+    std::ostringstream lightingSummary;
+    lightingSummary << "LIGHTING_UPLOAD interval_s=" << summaryElapsedSeconds
+                    << " vehicle_uploads=" << lightUploadStats.vehicleUploads
+                    << " vehicle_bytes=" << lightUploadStats.vehicleBytes
+                    << " vehicle_sets=" << lightUploadStats.vehicleSets
+                    << " vehicle_lights_total=" << lightUploadStats.vehicleLightsTotal
+                    << " vehicle_lights_max=" << lightUploadStats.vehicleLightsMax
+                    << " spotlight_tile_uploads=" << lightUploadStats.vehicleSpotlightTileUploads
+                    << " spotlight_tile_bytes=" << lightUploadStats.vehicleSpotlightTileBytes
+                    << " spotlight_tile_sets=" << lightUploadStats.vehicleSpotlightTileSets
+                    << " spotlight_tile_count=" << lightUploadStats.vehicleSpotlightTileCountTotal
+                    << " spotlight_tile_assignments="
+                    << lightUploadStats.vehicleSpotlightTileAssignmentsTotal
+                    << " spotlight_tile_max=" << lightUploadStats.vehicleSpotlightTileAssignmentsMax
+                    << " spotlight_tile_fallback_sets="
+                    << lightUploadStats.vehicleSpotlightTileFallbackSets
+                    << " map_uploads=" << lightUploadStats.mapUploads
+                    << " map_bytes=" << lightUploadStats.mapBytes
+                    << " static_map_uploads=" << lightUploadStats.staticMapUploads
+                    << " static_map_bytes=" << lightUploadStats.staticMapBytes
+                    << " map_view_preparations=" << lightUploadStats.mapViewPreparations
+                    << " map_view_reuses=" << lightUploadStats.mapViewReuses
+                    << " map_sets=" << lightUploadStats.mapSets
+                    << " map_lights_total=" << lightUploadStats.mapLightsTotal
+                    << " map_lights_max=" << lightUploadStats.mapLightsMax;
+    gameLog.Log(lightingSummary.str());
+    lightUploadStats = {};
     state.lastSummary = now;
 }
 
@@ -292,8 +478,21 @@ struct Uniforms {
     GLint ambientLight = -1;
     GLint diffuseLight = -1;
     GLint spotlightCount = -1;
+    GLint spotlightTexture = -1;
+    GLint spotlightTileMaskTexture = -1;
+    GLint spotlightTileMaskEnabled = -1;
+    GLint spotlightTileColumns = -1;
+    GLint spotlightTileRows = -1;
+    GLint spotlightTileWordsPerTile = -1;
+    GLint spotlightTileSize = -1;
+    GLint spotlightViewportOrigin = -1;
     GLint mapLightCount = -1;
     GLint mapLightStrength = -1;
+    GLint mapLightTexture = -1;
+    GLint staticMapLightTexture = -1;
+    GLint staticMapViewTexture = -1;
+    GLint staticMapMode = -1;
+    GLint vertexLightEvaluation = -1;
     GLint fogDensity = -1;
     GLint fogColor = -1;
     GLint weatherBrightness = -1;
@@ -336,19 +535,9 @@ struct Uniforms {
     GLint useEnvironment = -1;
 };
 
-struct alignas(16) GpuVehicleSpotlightData {
-    std::array<std::array<float, 4>, MAX_VEHICLE_SPOTLIGHTS> positionRange = {};
-    std::array<std::array<float, 4>, MAX_VEHICLE_SPOTLIGHTS> directionInner = {};
-    std::array<std::array<float, 4>, MAX_VEHICLE_SPOTLIGHTS> colorOuter = {};
-};
-
-struct alignas(16) GpuMapLightData {
-    std::array<std::array<float, 4>, MAX_MAP_LIGHTS> positionRadius = {};
-    std::array<std::array<float, 4>, MAX_MAP_LIGHTS> color = {};
-};
-
-static_assert(sizeof(GpuVehicleSpotlightData) == MAX_VEHICLE_SPOTLIGHTS * 48);
-static_assert(sizeof(GpuMapLightData) == MAX_MAP_LIGHTS * 32);
+static_assert(sizeof(std::array<float, 4>) == 4 * sizeof(float));
+static_assert(sizeof(float) == sizeof(std::uint32_t));
+static_assert(sizeof(std::array<std::uint32_t, 4>) == 4 * sizeof(std::uint32_t));
 
 struct ModelUniformState {
     bool valid = false;
@@ -407,10 +596,28 @@ GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
 GLuint vehicleSpotlightBuffer = 0;
+GLuint vehicleSpotlightTexture = 0;
+GLuint vehicleSpotlightTileMaskBuffer = 0;
+GLuint vehicleSpotlightTileMaskTexture = 0;
+std::size_t vehicleSpotlightCapacity = 0;
+std::size_t vehicleSpotlightTileMaskCapacity = 0;
 GLuint mapLightBuffer = 0;
-constexpr GLuint vehicleSpotlightBinding = 0;
-constexpr GLuint mapLightBinding = 1;
+GLuint mapLightTexture = 0;
+GLuint staticMapViewBuffer = 0;
+GLuint staticMapViewTexture = 0;
+std::size_t mapLightCapacity = 0;
+std::size_t staticMapLightCapacity = 0;
+std::vector<std::array<float, 4>> uploadedVehicleLights;
+std::vector<std::uint32_t> uploadedVehicleSpotlightTileMask;
+std::vector<std::array<float, 4>> uploadedMapLights;
+std::vector<std::array<std::uint32_t, 4>> uploadedStaticMapView;
+constexpr GLenum mapLightTextureUnit = GL_TEXTURE0 + 10;
+constexpr GLenum vehicleSpotlightTextureUnit = GL_TEXTURE0 + 11;
+constexpr GLenum staticMapLightTextureUnit = GL_TEXTURE0 + 12;
+constexpr GLenum staticMapViewTextureUnit = GL_TEXTURE0 + 13;
+constexpr GLenum vehicleSpotlightTileMaskTextureUnit = GL_TEXTURE0 + 14;
 std::vector<GLuint> staticPrimitiveBuffers;
+std::vector<std::pair<GLuint, GLuint>> staticMapLightBuffers;
 std::uint64_t rendererGeneration = 0;
 GLuint textureQuadVertexArray = 0;
 GLuint textureQuadBuffer = 0;
@@ -508,6 +715,11 @@ uniform float uHumanWaistZFraction;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
+out vec3 vVertexMapLighting;
+uniform bool uVertexMapLightEvaluation;
+uniform bool uUseTextTexture;
+uniform bool uWeatherLitDynamicTexture;
+uniform bool uMaterialBatch;
 void main() {
     vec3 position = aPosition;
     vec3 normal = aNormal;
@@ -701,6 +913,11 @@ void main() {
     // scale still receive lighting from the correct surface direction.
     vNormal = mat3(transpose(inverse(uModelView))) * normal;
     vViewPosition = viewPosition.xyz;
+    vVertexMapLighting = vec3(0.0);
+    if (uVertexMapLightEvaluation &&
+        (uMaterialBatch || !uUseTextTexture || uWeatherLitDynamicTexture)) {
+        vVertexMapLighting = mapLightLighting(viewPosition.xyz, normalize(vNormal));
+    }
     gl_Position = uProjection * viewPosition;
 }
 )GLSL";
@@ -710,6 +927,8 @@ const char* modelFragmentShader = R"GLSL(
 in vec3 vTexCoord;
 in vec3 vNormal;
 in vec3 vViewPosition;
+in vec3 vVertexMapLighting;
+uniform bool uVertexMapLightEvaluation;
 uniform mat4 uModelView;
 uniform vec3 uLightDirection;
 uniform float uAmbientLight;
@@ -784,6 +1003,21 @@ void main() {
         }
         color *= sampledTexture;
     }
+    if (!uUseTextTexture && uUseTransmap) {
+        vec2 transmapCoordinate = vTexCoord.xy * uTransmapScale;
+        if (uFlipTransmapY) {
+            transmapCoordinate.y = 1.0 - transmapCoordinate.y;
+        }
+        color.a = uColor.a * texture(uTransmap, transmapCoordinate).a;
+    }
+    float visibilityFade = clamp(uVisibilityFade, 0.0, 1.0);
+    if (!uUseBumpmap) {
+        float fadedAlpha = color.a * visibilityFade;
+        if ((uAlphaMode == 1 && fadedAlpha < 0.5) ||
+            (uAlphaMode == 3 && fadedAlpha < 0.99)) {
+            discard;
+        }
+    }
     vec3 ambientReflectance = color.rgb;
     color.rgb *= uColor.rgb;
     // Empty text-atlas pixels must remain transparent and must not occlude other
@@ -847,13 +1081,6 @@ void main() {
         color.rgb = mix(color.rgb, nightmap.rgb * uColor.rgb,
                         uNightmapStrength * nightmapCoverage);
     }
-    if (!uUseTextTexture && uUseTransmap) {
-        vec2 transmapCoordinate = vTexCoord.xy * uTransmapScale;
-        if (uFlipTransmapY) {
-            transmapCoordinate.y = 1.0 - transmapCoordinate.y;
-        }
-        color.a = uColor.a * texture(uTransmap, transmapCoordinate).a;
-    }
     if (!uUseTextTexture && uUseBumpmap) {
         vec3 surfaceNormal = normalize(vNormal);
         vec3 positionDerivativeX = dFdx(vViewPosition);
@@ -907,8 +1134,11 @@ void main() {
         color.rgb = clamp(color.rgb, 0.0, 1.0);
     }
     if (!uUseTextTexture || uWeatherLitDynamicTexture) {
-        color.rgb += diffuseReflectance * vehicleSpotlightLighting(vViewPosition, normalize(vNormal));
-        color.rgb += diffuseReflectance * mapLightLighting(vViewPosition, normalize(vNormal));
+        vec3 dynamicLighting =
+            vehicleSpotlightLighting(vViewPosition, normalize(vNormal)) +
+            (uVertexMapLightEvaluation ? vVertexMapLighting
+                                       : mapLightLighting(vViewPosition, normalize(vNormal)));
+        color.rgb += diffuseReflectance * dynamicLighting;
     }
     if (!uUseTextTexture && uUseEnvironment) {
         vec3 reflection = reflect(-viewDirection, normalize(vNormal));
@@ -921,11 +1151,9 @@ void main() {
         float transmission = weatherFogTransmission(vViewPosition);
         color.rgb = mix(uFogColor, color.rgb, transmission);
     }
-    color.a *= clamp(uVisibilityFade, 0.0, 1.0);
-    if (uAlphaMode == 1 && color.a < 0.5) {
-        discard;
-    }
-    if (uAlphaMode == 3 && color.a < 0.99) {
+    color.a *= visibilityFade;
+    if (uUseBumpmap &&
+        ((uAlphaMode == 1 && color.a < 0.5) || (uAlphaMode == 3 && color.a < 0.99))) {
         discard;
     }
     fragmentColor = color;
@@ -937,6 +1165,8 @@ const char* materialFragmentShader = R"GLSL(
 in vec3 vTexCoord;
 in vec3 vNormal;
 in vec3 vViewPosition;
+in vec3 vVertexMapLighting;
+uniform bool uVertexMapLightEvaluation;
 uniform vec4 uMaterialColors[128];
 uniform sampler2D uMaterialTextures[8];
 uniform bool uFlipTextureY[8];
@@ -981,8 +1211,11 @@ void main() {
     float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
     vec3 reflectance = color.rgb;
     color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
-    color.rgb += reflectance * vehicleSpotlightLighting(vViewPosition, surfaceNormal);
-    color.rgb += reflectance * mapLightLighting(vViewPosition, surfaceNormal);
+    vec3 dynamicLighting =
+        vehicleSpotlightLighting(vViewPosition, surfaceNormal) +
+        (uVertexMapLightEvaluation ? vVertexMapLighting
+                                   : mapLightLighting(vViewPosition, surfaceNormal));
+    color.rgb += reflectance * dynamicLighting;
     if (uFogDensity > 0.0) {
         float transmission = weatherFogTransmission(vViewPosition);
         color.rgb = mix(uFogColor, color.rgb, transmission);
@@ -1184,54 +1417,142 @@ float weatherFogTransmission(vec3 viewPosition) {
 }
 )GLSL";
 
-const char* vehicleSpotlightShaderFunctions = R"GLSL(
-layout(std140) uniform VehicleSpotlightData {
-    vec4 uSpotlightPositionRange[128];
-    vec4 uSpotlightDirectionInner[128];
-    vec4 uSpotlightColorOuter[128];
-};
+const char* vehicleSpotlightContributionShaderFunctions = R"GLSL(
+uniform samplerBuffer uSpotlightData;
 uniform int uSpotlightCount;
+vec3 vehicleSpotlightContribution(int index, vec3 position, vec3 normal) {
+    vec4 positionRange = texelFetch(uSpotlightData, index * 3);
+    vec3 displacement = position - positionRange.xyz;
+    float distanceSquared = dot(displacement, displacement);
+    if (distanceSquared <= 0.00000001) return vec3(0.0);
+    float range = positionRange.w;
+    vec3 relativeDisplacement = displacement / range;
+    float relativeDistanceSquared = dot(relativeDisplacement, relativeDisplacement);
+    if (relativeDistanceSquared >= 16.0) return vec3(0.0);
+    float relativeDistance = sqrt(relativeDistanceSquared);
+    vec3 ray;
+    if (relativeDistanceSquared == 0.0 || isinf(distanceSquared)) {
+        float scale = max(max(abs(displacement.x), abs(displacement.y)),
+                          abs(displacement.z));
+        if (isinf(scale)) return vec3(0.0);
+        vec3 scaledDisplacement = displacement / scale;
+        ray = scaledDisplacement * inversesqrt(dot(scaledDisplacement, scaledDisplacement));
+    } else {
+        ray = displacement * inversesqrt(distanceSquared);
+    }
+    vec4 directionInner = texelFetch(uSpotlightData, index * 3 + 1);
+    vec4 colorOuter = texelFetch(uSpotlightData, index * 3 + 2);
+    float angle = dot(ray, directionInner.xyz);
+    float inner = directionInner.w;
+    float outer = colorOuter.w;
+    float cone = inner > outer ? clamp((angle - outer) / (inner - outer), 0.0, 1.0)
+                               : step(inner, angle);
+    if (cone == 0.0) return vec3(0.0);
+    float attenuation = 1.0 /
+        (0.2 + relativeDistance + 40.0 * relativeDistance * relativeDistance);
+    float diffuse = max(dot(normal, -ray), 0.0);
+    return colorOuter.rgb * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
+}
+)GLSL";
+
+const char* vehicleSpotlightVertexShaderFunctions = R"GLSL(
 vec3 vehicleSpotlightLighting(vec3 position, vec3 normal) {
     vec3 result = vec3(0.0);
     for (int i = 0; i < uSpotlightCount; ++i) {
-        vec3 displacement = position - uSpotlightPositionRange[i].xyz;
-        float distanceToLight = length(displacement);
-        float range = uSpotlightPositionRange[i].w;
-        if (distanceToLight <= 0.0001 || distanceToLight / range >= 4.0) continue;
-        vec3 ray = displacement / distanceToLight;
-        float angle = dot(ray, uSpotlightDirectionInner[i].xyz);
-        float inner = uSpotlightDirectionInner[i].w;
-        float outer = uSpotlightColorOuter[i].w;
-        float cone = inner > outer ? clamp((angle - outer) / (inner - outer), 0.0, 1.0)
-                                   : step(inner, angle);
-        float relativeDistance = distanceToLight / range;
-        float attenuation = 1.0 /
-            (0.2 + relativeDistance + 40.0 * relativeDistance * relativeDistance);
-        float diffuse = max(dot(normal, -ray), 0.0);
-        result += uSpotlightColorOuter[i].rgb * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
+        result += vehicleSpotlightContribution(i, position, normal);
+    }
+    return result;
+}
+)GLSL";
+
+const char* vehicleSpotlightFragmentShaderFunctions = R"GLSL(
+uniform usamplerBuffer uSpotlightTileMask;
+uniform bool uSpotlightTileMaskEnabled;
+uniform int uSpotlightTileColumns;
+uniform int uSpotlightTileRows;
+uniform int uSpotlightTileWordsPerTile;
+uniform int uSpotlightTileSize;
+uniform vec2 uSpotlightViewportOrigin;
+int spotlightFirstSetBit(uint value) {
+    int bit = 0;
+    if ((value & 65535u) == 0u) { value >>= 16u; bit += 16; }
+    if ((value & 255u) == 0u) { value >>= 8u; bit += 8; }
+    if ((value & 15u) == 0u) { value >>= 4u; bit += 4; }
+    if ((value & 3u) == 0u) { value >>= 2u; bit += 2; }
+    if ((value & 1u) == 0u) bit += 1;
+    return bit;
+}
+vec3 vehicleSpotlightLighting(vec3 position, vec3 normal) {
+    vec3 result = vec3(0.0);
+    if (!uSpotlightTileMaskEnabled) {
+        for (int i = 0; i < uSpotlightCount; ++i) {
+            result += vehicleSpotlightContribution(i, position, normal);
+        }
+        return result;
+    }
+    ivec2 pixel = ivec2(gl_FragCoord.xy - uSpotlightViewportOrigin);
+    ivec2 tile = clamp(pixel / uSpotlightTileSize, ivec2(0),
+                       ivec2(uSpotlightTileColumns - 1, uSpotlightTileRows - 1));
+    int tileOffset = (tile.y * uSpotlightTileColumns + tile.x) * uSpotlightTileWordsPerTile;
+    for (int word = 0; word < uSpotlightTileWordsPerTile; ++word) {
+        uint candidates = texelFetch(uSpotlightTileMask, tileOffset + word).r;
+        while (candidates != 0u) {
+            int index = word * 32 + spotlightFirstSetBit(candidates);
+            if (index >= uSpotlightCount) break;
+            result += vehicleSpotlightContribution(index, position, normal);
+            candidates &= candidates - 1u;
+        }
     }
     return result;
 }
 )GLSL";
 
 const char* mapLightShaderFunctions = R"GLSL(
-layout(std140) uniform MapLightData {
-    vec4 uMapLightPositionRadius[128];
-    vec4 uMapLightColor[128];
-};
+uniform samplerBuffer uMapLightData;
+uniform samplerBuffer uStaticMapLightData;
+uniform usamplerBuffer uStaticMapViewData;
+uniform bool uStaticMapMode;
 uniform int uMapLightCount;
 uniform float uMapLightStrength;
 vec3 mapLightLighting(vec3 position, vec3 normal) {
     vec3 result = vec3(0.0);
     for (int i = 0; i < uMapLightCount; ++i) {
-        vec3 displacement = position - uMapLightPositionRadius[i].xyz;
-        float distanceToLight = length(displacement);
-        if (distanceToLight <= 0.0001) continue;
-        float radius = uMapLightPositionRadius[i].w;
-        float falloff = distanceToLight <= radius ? 1.0 : (radius * radius) /
-                                                           (distanceToLight * distanceToLight);
-        float diffuse = max(dot(normal, -displacement / distanceToLight), 0.0);
-        result += uMapLightColor[i].rgb * falloff * (0.12 + 0.88 * diffuse);
+        vec4 positionRadius;
+        vec3 lightColor;
+        if (uStaticMapMode) {
+            uvec4 viewEntry = texelFetch(uStaticMapViewData, i);
+            vec4 attributes = texelFetch(uStaticMapLightData, int(viewEntry.w));
+            positionRadius = vec4(uintBitsToFloat(viewEntry.xyz), attributes.w);
+            lightColor = attributes.rgb;
+        } else {
+            positionRadius = texelFetch(uMapLightData, i * 2);
+            lightColor = texelFetch(uMapLightData, i * 2 + 1).rgb;
+        }
+        vec3 displacement = position - positionRadius.xyz;
+        float distanceSquared = dot(displacement, displacement);
+        if (distanceSquared <= 0.00000001) continue;
+        float radius = positionRadius.w;
+        float radiusSquared = radius * radius;
+        float falloff;
+        vec3 ray;
+        if (isinf(distanceSquared) || isinf(radiusSquared)) {
+            float scale = max(max(abs(displacement.x), abs(displacement.y)),
+                              abs(displacement.z));
+            if (isinf(scale)) continue;
+            vec3 scaledDisplacement = displacement / scale;
+            float scaledDistanceSquared = dot(scaledDisplacement, scaledDisplacement);
+            float distanceOverRadius = scale / radius;
+            float relativeDistanceSquared =
+                distanceOverRadius * distanceOverRadius * scaledDistanceSquared;
+            falloff = relativeDistanceSquared <= 1.0 ? 1.0 : 1.0 / relativeDistanceSquared;
+            ray = scaledDisplacement * inversesqrt(scaledDistanceSquared);
+        } else {
+            float relativeDistanceSquared = distanceSquared / radiusSquared;
+            falloff = relativeDistanceSquared <= 1.0 ? 1.0 : 1.0 / relativeDistanceSquared;
+            ray = displacement * inversesqrt(distanceSquared);
+        }
+        float diffuse = max(dot(normal, -ray), 0.0);
+        result += lightColor * falloff * (0.12 + 0.88 * diffuse);
     }
     return result * uMapLightStrength;
 }
@@ -1259,7 +1580,20 @@ GLuint compileShader(GLenum type, const char* source) {
 GLuint createProgram(const char* vertexSource, const char* fragmentSource,
                      bool usesWeatherFog = false, bool usesVehicleSpotlights = false,
                      bool usesMapLights = false) {
-    const GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
+    std::string vertex(vertexSource);
+    if (vertexSource == modelVertexShader) {
+        const auto versionEnd = vertex.find('\n', vertex.find("#version"));
+        if (versionEnd == std::string::npos) {
+            throw std::runtime_error("Model vertex shader is missing a version directive");
+        }
+        vertex.insert(versionEnd + 1, mapLightShaderFunctions);
+        if (usesVehicleSpotlights) {
+            std::string spotlightFunctions = vehicleSpotlightContributionShaderFunctions;
+            spotlightFunctions += vehicleSpotlightVertexShaderFunctions;
+            vertex.insert(versionEnd + 1, spotlightFunctions);
+        }
+    }
+    const GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertex.c_str());
     std::string fragment(fragmentSource);
     if (usesWeatherFog) {
         const auto versionEnd = fragment.find('\n', fragment.find("#version"));
@@ -1271,7 +1605,9 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
         const auto versionEnd = fragment.find('\n', fragment.find("#version"));
         if (versionEnd == std::string::npos)
             throw std::runtime_error("Spotlight shader is missing a version directive");
-        fragment.insert(versionEnd + 1, vehicleSpotlightShaderFunctions);
+        std::string spotlightFunctions = vehicleSpotlightContributionShaderFunctions;
+        spotlightFunctions += vehicleSpotlightFragmentShaderFunctions;
+        fragment.insert(versionEnd + 1, spotlightFunctions);
     }
     if (usesMapLights) {
         const auto versionEnd = fragment.find('\n', fragment.find("#version"));
@@ -1312,22 +1648,26 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
 
 void findSpotlightUniforms(GLuint program, Uniforms& uniforms) {
     uniforms.spotlightCount = pglGetUniformLocation(program, "uSpotlightCount");
+    uniforms.spotlightTexture = pglGetUniformLocation(program, "uSpotlightData");
+    uniforms.spotlightTileMaskTexture = pglGetUniformLocation(program, "uSpotlightTileMask");
+    uniforms.spotlightTileMaskEnabled = pglGetUniformLocation(program, "uSpotlightTileMaskEnabled");
+    uniforms.spotlightTileColumns = pglGetUniformLocation(program, "uSpotlightTileColumns");
+    uniforms.spotlightTileRows = pglGetUniformLocation(program, "uSpotlightTileRows");
+    uniforms.spotlightTileWordsPerTile =
+        pglGetUniformLocation(program, "uSpotlightTileWordsPerTile");
+    uniforms.spotlightTileSize = pglGetUniformLocation(program, "uSpotlightTileSize");
+    uniforms.spotlightViewportOrigin = pglGetUniformLocation(program, "uSpotlightViewportOrigin");
+    uniforms.vertexLightEvaluation = pglGetUniformLocation(program, "uVertexMapLightEvaluation");
 }
 
 void findMapLightUniforms(GLuint program, Uniforms& uniforms) {
     uniforms.mapLightCount = pglGetUniformLocation(program, "uMapLightCount");
     uniforms.mapLightStrength = pglGetUniformLocation(program, "uMapLightStrength");
-}
-
-void bindLightUniformBlocks(GLuint program) {
-    const GLuint spotlightBlock = pglGetUniformBlockIndex(program, "VehicleSpotlightData");
-    if (spotlightBlock != (std::numeric_limits<GLuint>::max)()) {
-        pglUniformBlockBinding(program, spotlightBlock, vehicleSpotlightBinding);
-    }
-    const GLuint mapLightBlock = pglGetUniformBlockIndex(program, "MapLightData");
-    if (mapLightBlock != (std::numeric_limits<GLuint>::max)()) {
-        pglUniformBlockBinding(program, mapLightBlock, mapLightBinding);
-    }
+    uniforms.mapLightTexture = pglGetUniformLocation(program, "uMapLightData");
+    uniforms.staticMapLightTexture = pglGetUniformLocation(program, "uStaticMapLightData");
+    uniforms.staticMapViewTexture = pglGetUniformLocation(program, "uStaticMapViewData");
+    uniforms.staticMapMode = pglGetUniformLocation(program, "uStaticMapMode");
+    uniforms.vertexLightEvaluation = pglGetUniformLocation(program, "uVertexMapLightEvaluation");
 }
 
 Uniforms modelUniformsFor(GLuint program, bool environment) {
@@ -1763,7 +2103,38 @@ void setFrameTriangleCountReflectionPass(bool reflectionPass) {
     reflectionTrianglePass = reflectionPass;
 }
 
+std::size_t mapLightSelectionLimit() {
+    return mapLightLimit();
+}
+
 bool initializeCoreRenderer() {
+    const GLubyte* vendor = glGetString(GL_VENDOR);
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    const GLubyte* version = glGetString(GL_VERSION);
+    if (vendor != nullptr && renderer != nullptr && version != nullptr) {
+        gameLog.Log("OpenGL vendor=" + std::string(reinterpret_cast<const char*>(vendor)) +
+                    " renderer=" + std::string(reinterpret_cast<const char*>(renderer)) +
+                    " version=" + std::string(reinterpret_cast<const char*>(version)));
+    } else {
+        gameLog.Warning("Unable to query OpenGL vendor, renderer, or version");
+    }
+    GLint majorVersion = 0;
+    GLint minorVersion = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &majorVersion);
+    glGetIntegerv(GL_MINOR_VERSION, &minorVersion);
+    const bool debugOutputSupported = majorVersion > 4 ||
+                                      (majorVersion == 4 && minorVersion >= 3) ||
+                                      hasOpenGLExtension("GL_KHR_debug");
+    if (debugOutputSupported && pglDebugMessageCallback != nullptr) {
+        glDebugErrorGeneration.store(0, std::memory_order_relaxed);
+        glEnable(GL_DEBUG_OUTPUT);
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        pglDebugMessageCallback(reportOpenGlDebugMessage, nullptr);
+        gameLog.Log("Synchronous OpenGL debug error reporting enabled");
+    } else {
+        gameLog.Warning("OpenGL debug error reporting is unavailable; upload errors cannot be "
+                        "detected");
+    }
     modelProgram = createProgram(modelVertexShader, modelFragmentShader, true, true, true);
     materialProgram = createProgram(modelVertexShader, materialFragmentShader, true, true, true);
     environmentProgram = createProgram(modelVertexShader, environmentFragmentShader, true);
@@ -1782,8 +2153,6 @@ bool initializeCoreRenderer() {
     materialUniforms = materialUniformsFor(materialProgram);
     environmentUniforms = modelUniformsFor(environmentProgram, true);
     primitiveUniforms = modelUniformsFor(primitiveProgram, false);
-    bindLightUniformBlocks(modelProgram);
-    bindLightUniformBlocks(materialProgram);
     textureQuadRect = pglGetUniformLocation(textureQuadProgram, "uRect");
     textureQuadTexture = pglGetUniformLocation(textureQuadProgram, "uTexture");
     textureQuadFlipTextureY = pglGetUniformLocation(textureQuadProgram, "uFlipTextureY");
@@ -1815,19 +2184,62 @@ bool initializeCoreRenderer() {
     pglGenVertexArrays(1, &precipitationVertexArray);
     pglGenBuffers(1, &primitiveBuffer);
     pglGenBuffers(1, &vehicleSpotlightBuffer);
+    glGenTextures(1, &vehicleSpotlightTexture);
+    pglGenBuffers(1, &vehicleSpotlightTileMaskBuffer);
+    glGenTextures(1, &vehicleSpotlightTileMaskTexture);
     pglGenBuffers(1, &mapLightBuffer);
+    glGenTextures(1, &mapLightTexture);
+    pglGenBuffers(1, &staticMapViewBuffer);
+    glGenTextures(1, &staticMapViewTexture);
+    GLint maxLightBufferTexels = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &maxLightBufferTexels);
+    const std::size_t lightBufferTexels =
+        maxLightBufferTexels > 0 ? static_cast<std::size_t>(maxLightBufferTexels) : 0;
+    gameLog.Log("OpenGL light texture-buffer capacity: " + std::to_string(lightBufferTexels) +
+                " texels");
+    mapLightCapacity = detail::mapLightTextureCapacity(lightBufferTexels, 2);
+    staticMapLightCapacity = detail::mapLightTextureCapacity(lightBufferTexels, 1);
+    vehicleSpotlightCapacity =
+        maxLightBufferTexels > 0 ? static_cast<std::size_t>(maxLightBufferTexels) / 3 : 0;
+    vehicleSpotlightTileMaskCapacity =
+        maxLightBufferTexels > 0 ? static_cast<std::size_t>(maxLightBufferTexels) : 0;
+    if (mapLightCapacity == 0 || vehicleSpotlightCapacity == 0) {
+        gameLog.Error("OpenGL does not report usable light texture-buffer capacity");
+    }
     pglGenVertexArrays(1, &textureQuadVertexArray);
     pglGenBuffers(1, &textureQuadBuffer);
     if (modelVertexArray != 0 && primitiveVertexArray != 0 && precipitationVertexArray != 0 &&
-        primitiveBuffer != 0 && vehicleSpotlightBuffer != 0 && mapLightBuffer != 0 &&
-        textureQuadVertexArray != 0 && textureQuadBuffer != 0) {
-        pglBindBuffer(GL_UNIFORM_BUFFER, vehicleSpotlightBuffer);
-        pglBufferData(GL_UNIFORM_BUFFER, sizeof(GpuVehicleSpotlightData), nullptr, GL_DYNAMIC_DRAW);
-        pglBindBufferBase(GL_UNIFORM_BUFFER, vehicleSpotlightBinding, vehicleSpotlightBuffer);
-        pglBindBuffer(GL_UNIFORM_BUFFER, mapLightBuffer);
-        pglBufferData(GL_UNIFORM_BUFFER, sizeof(GpuMapLightData), nullptr, GL_DYNAMIC_DRAW);
-        pglBindBufferBase(GL_UNIFORM_BUFFER, mapLightBinding, mapLightBuffer);
-        pglBindBuffer(GL_UNIFORM_BUFFER, 0);
+        primitiveBuffer != 0 && vehicleSpotlightBuffer != 0 && vehicleSpotlightTexture != 0 &&
+        vehicleSpotlightTileMaskBuffer != 0 && vehicleSpotlightTileMaskTexture != 0 &&
+        vehicleSpotlightCapacity > 0 && vehicleSpotlightTileMaskCapacity > 0 &&
+        mapLightBuffer != 0 && mapLightTexture != 0 && staticMapViewBuffer != 0 &&
+        staticMapViewTexture != 0 && mapLightCapacity > 0 && textureQuadVertexArray != 0 &&
+        textureQuadBuffer != 0) {
+        pglBindBuffer(GL_TEXTURE_BUFFER, vehicleSpotlightBuffer);
+        pglBufferData(GL_TEXTURE_BUFFER, 3 * sizeof(std::array<float, 4>), nullptr,
+                      GL_DYNAMIC_DRAW);
+        selectTextureUnit(vehicleSpotlightTextureUnit);
+        glBindTexture(GL_TEXTURE_BUFFER, vehicleSpotlightTexture);
+        pglTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, vehicleSpotlightBuffer);
+        pglBindBuffer(GL_TEXTURE_BUFFER, vehicleSpotlightTileMaskBuffer);
+        pglBufferData(GL_TEXTURE_BUFFER, sizeof(std::uint32_t), nullptr, GL_DYNAMIC_DRAW);
+        selectTextureUnit(vehicleSpotlightTileMaskTextureUnit);
+        glBindTexture(GL_TEXTURE_BUFFER, vehicleSpotlightTileMaskTexture);
+        pglTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, vehicleSpotlightTileMaskBuffer);
+        pglBindBuffer(GL_TEXTURE_BUFFER, mapLightBuffer);
+        pglBufferData(GL_TEXTURE_BUFFER, 2 * sizeof(std::array<float, 4>), nullptr,
+                      GL_DYNAMIC_DRAW);
+        selectTextureUnit(mapLightTextureUnit);
+        glBindTexture(GL_TEXTURE_BUFFER, mapLightTexture);
+        pglTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, mapLightBuffer);
+        pglBindBuffer(GL_TEXTURE_BUFFER, staticMapViewBuffer);
+        pglBufferData(GL_TEXTURE_BUFFER, sizeof(std::array<std::uint32_t, 4>), nullptr,
+                      GL_DYNAMIC_DRAW);
+        selectTextureUnit(staticMapViewTextureUnit);
+        glBindTexture(GL_TEXTURE_BUFFER, staticMapViewTexture);
+        pglTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, staticMapViewBuffer);
+        pglBindBuffer(GL_TEXTURE_BUFFER, 0);
+        selectTextureUnit(GL_TEXTURE0);
         pglBindVertexArray(modelVertexArray);
         pglEnableVertexAttribArray(0);
         pglEnableVertexAttribArray(1);
@@ -1840,8 +2252,15 @@ bool initializeCoreRenderer() {
         pglEnableVertexAttribArray(1);
         pglBindVertexArray(0);
         useProgram(modelProgram);
+        pglUniform1i(modelUniforms.mapLightTexture, 10);
+        pglUniform1i(modelUniforms.spotlightTexture, 11);
+        pglUniform1i(modelUniforms.spotlightTileMaskTexture, 14);
+        pglUniform1i(modelUniforms.staticMapLightTexture, 12);
+        pglUniform1i(modelUniforms.staticMapViewTexture, 13);
         pglUniform1f(modelUniforms.ambientLight, 0.58f);
         pglUniform1f(modelUniforms.diffuseLight, 0.42f);
+        pglUniform1i(modelUniforms.vertexLightEvaluation,
+                     mapLightVertexEvaluationEnabled() ? 1 : 0);
         pglUniform1i(modelUniforms.texture, 0);
         // sampler2D and sampler2DArray cannot alias the same unit in GLSL 3.3;
         // OpenGL rejects every draw even when only one shader branch is active.
@@ -1855,8 +2274,16 @@ bool initializeCoreRenderer() {
         pglUniform1i(modelUniforms.freeTexture, 4);
         pglUniform1i(modelUniforms.textTexture, 5);
         useProgram(materialProgram);
+        pglUniform1i(materialUniforms.mapLightTexture, 10);
+        pglUniform1i(materialUniforms.spotlightTexture, 11);
+        pglUniform1i(materialUniforms.spotlightTileMaskTexture, 14);
+        pglUniform1i(materialUniforms.staticMapLightTexture, 12);
+        pglUniform1i(materialUniforms.staticMapViewTexture, 13);
         pglUniform1f(materialUniforms.ambientLight, 0.58f);
         pglUniform1f(materialUniforms.diffuseLight, 0.42f);
+        pglUniform1i(materialUniforms.vertexLightEvaluation,
+                     mapLightVertexEvaluationEnabled() ? 1 : 0);
+        pglUniform1i(pglGetUniformLocation(materialProgram, "uMaterialBatch"), 1);
         for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
             pglUniform1i(materialUniforms.materialTextures[index], static_cast<GLint>(index));
         }
@@ -1899,6 +2326,11 @@ bool initializeCoreRenderer() {
 
 void shutdownCoreRenderer() {
     shutdownGpuTiming();
+    uploadedVehicleLights.clear();
+    uploadedVehicleSpotlightTileMask.clear();
+    uploadedMapLights.clear();
+    uploadedStaticMapView.clear();
+    lightUploadStats = {};
     shutdownComputeCulling();
     fogUniforms = {};
     currentProgram = 0;
@@ -1915,6 +2347,11 @@ void shutdownCoreRenderer() {
                          staticPrimitiveBuffers.data());
     }
     staticPrimitiveBuffers.clear();
+    for (const auto& [buffer, texture] : staticMapLightBuffers) {
+        pglDeleteBuffers(1, &buffer);
+        glDeleteTextures(1, &texture);
+    }
+    staticMapLightBuffers.clear();
     if (primitiveBuffer != 0) {
         pglDeleteBuffers(1, &primitiveBuffer);
         primitiveBuffer = 0;
@@ -1923,10 +2360,38 @@ void shutdownCoreRenderer() {
         pglDeleteBuffers(1, &vehicleSpotlightBuffer);
         vehicleSpotlightBuffer = 0;
     }
+    if (vehicleSpotlightTexture != 0) {
+        glDeleteTextures(1, &vehicleSpotlightTexture);
+        vehicleSpotlightTexture = 0;
+    }
+    if (vehicleSpotlightTileMaskBuffer != 0) {
+        pglDeleteBuffers(1, &vehicleSpotlightTileMaskBuffer);
+        vehicleSpotlightTileMaskBuffer = 0;
+    }
+    if (vehicleSpotlightTileMaskTexture != 0) {
+        glDeleteTextures(1, &vehicleSpotlightTileMaskTexture);
+        vehicleSpotlightTileMaskTexture = 0;
+    }
+    vehicleSpotlightCapacity = 0;
+    vehicleSpotlightTileMaskCapacity = 0;
     if (mapLightBuffer != 0) {
         pglDeleteBuffers(1, &mapLightBuffer);
         mapLightBuffer = 0;
     }
+    if (mapLightTexture != 0) {
+        glDeleteTextures(1, &mapLightTexture);
+        mapLightTexture = 0;
+    }
+    if (staticMapViewBuffer != 0) {
+        pglDeleteBuffers(1, &staticMapViewBuffer);
+        staticMapViewBuffer = 0;
+    }
+    if (staticMapViewTexture != 0) {
+        glDeleteTextures(1, &staticMapViewTexture);
+        staticMapViewTexture = 0;
+    }
+    mapLightCapacity = 0;
+    staticMapLightCapacity = 0;
     if (textureQuadBuffer != 0) {
         pglDeleteBuffers(1, &textureQuadBuffer);
         textureQuadBuffer = 0;
@@ -2011,11 +2476,55 @@ void setLightingViewMatrix(const Matrix4& view, std::optional<std::array<double,
     useProgram(previousProgram);
 }
 
+LightingBufferUploadStats lightingBufferUploadStats() {
+    return lightUploadStats;
+}
+
+void resetLightingBufferUploadStats() {
+    lightUploadStats = {};
+}
+
+void recordMapLightViewPreparation(bool reused) {
+    if (reused) {
+        ++lightUploadStats.mapViewReuses;
+    } else {
+        ++lightUploadStats.mapViewPreparations;
+    }
+}
+
+namespace {
+void uploadDynamicLightBuffer(GLuint buffer, std::size_t bytes, const void* data,
+                              const char* description) {
+    TraceScope trace("lighting", "uploadDynamicLightBuffer");
+    if (bytes > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
+        throw std::length_error(std::string(description) + " upload is too large");
+    }
+    const std::uint64_t errorCheckpoint = glDebugErrorCheckpoint();
+    pglBindBuffer(GL_TEXTURE_BUFFER, buffer);
+    {
+        TraceScope bufferTrace("lighting", "uploadDynamicLightBuffer.bufferData");
+        pglBufferData(GL_TEXTURE_BUFFER, static_cast<std::ptrdiff_t>(bytes), data, GL_DYNAMIC_DRAW);
+    }
+    pglBindBuffer(GL_TEXTURE_BUFFER, 0);
+    validateOpenGlUpload(description, errorCheckpoint);
+}
+} // namespace
+
 void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
-    if (lights.size() > MAX_VEHICLE_SPOTLIGHTS || vehicleSpotlightBuffer == 0) {
+    TraceScope trace("lighting", "setVehicleSpotlights");
+    if (vehicleSpotlightBuffer == 0 || vehicleSpotlightTexture == 0 ||
+        vehicleSpotlightTileMaskBuffer == 0 || vehicleSpotlightTileMaskTexture == 0) {
         throw std::invalid_argument("Invalid vehicle spotlight collection");
     }
-    GpuVehicleSpotlightData gpuLights;
+    const std::size_t activeLightCount = std::min(lights.size(), vehicleSpotlightLimit());
+    if (activeLightCount > vehicleSpotlightCapacity ||
+        activeLightCount > static_cast<std::size_t>(std::numeric_limits<GLint>::max() / 3) ||
+        activeLightCount > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) /
+                               (3 * sizeof(std::array<float, 4>))) {
+        throw std::length_error("Vehicle spotlight count " + std::to_string(activeLightCount) +
+                                " exceeds the OpenGL texture-buffer capacity " +
+                                std::to_string(vehicleSpotlightCapacity));
+    }
     for (const VehicleSpotlight& light : lights) {
         const auto finite = [](double value) {
             return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
@@ -2023,7 +2532,7 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
         if (!std::all_of(light.position.begin(), light.position.end(), finite) ||
             !std::all_of(light.direction.begin(), light.direction.end(), finite) ||
             !std::all_of(light.color.begin(), light.color.end(), finite) || !finite(light.range) ||
-            light.range <= 0.0 ||
+            light.range < std::numeric_limits<float>::min() ||
             std::hypot(light.direction[0], light.direction[1], light.direction[2]) < 1e-12 ||
             !finite(light.innerAngleDegrees) || !finite(light.outerAngleDegrees) ||
             light.innerAngleDegrees < 0.0 || light.innerAngleDegrees > light.outerAngleDegrees ||
@@ -2033,34 +2542,82 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
             throw std::invalid_argument("Invalid vehicle spotlight");
         }
     }
-    for (std::size_t index = 0; index < lights.size(); ++index) {
+    detail::VehicleSpotlightTileMask tileMask;
+    if (activeLightCount > 0 && vehicleSpotlightTileCullingEnabled()) {
+        std::array<GLint, 4> glViewport = {};
+        glGetIntegerv(GL_VIEWPORT, glViewport.data());
+        const std::array<int, 4> viewport = {glViewport[0], glViewport[1], glViewport[2],
+                                             glViewport[3]};
+        tileMask = detail::buildVehicleSpotlightTileMask(
+            std::span<const VehicleSpotlight>(lights.data(), activeLightCount), projectionMatrix(),
+            viewport, vehicleSpotlightTileMaskCapacity, 0.75);
+    }
+    ++lightUploadStats.vehicleSets;
+    lightUploadStats.vehicleLightsTotal += activeLightCount;
+    lightUploadStats.vehicleLightsMax =
+        std::max(lightUploadStats.vehicleLightsMax, activeLightCount);
+    std::vector<std::array<float, 4>> gpuLights(activeLightCount * 3);
+    for (std::size_t index = 0; index < activeLightCount; ++index) {
         const VehicleSpotlight& light = lights[index];
         const double length =
             std::hypot(light.direction[0], light.direction[1], light.direction[2]);
-        gpuLights.positionRange[index] = {
+        gpuLights[index * 3] = {
             static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
             static_cast<float>(light.position[2]), static_cast<float>(light.range)};
         constexpr double halfDegreesToRadians = 3.14159265358979323846 / 360.0;
-        gpuLights.directionInner[index] = {
+        gpuLights[index * 3 + 1] = {
             static_cast<float>(light.direction[0] / length),
             static_cast<float>(light.direction[1] / length),
             static_cast<float>(light.direction[2] / length),
             static_cast<float>(std::cos(light.innerAngleDegrees * halfDegreesToRadians))};
-        gpuLights.colorOuter[index] = {
+        gpuLights[index * 3 + 2] = {
             static_cast<float>(light.color[0]), static_cast<float>(light.color[1]),
             static_cast<float>(light.color[2]),
             static_cast<float>(std::cos(light.outerAngleDegrees * halfDegreesToRadians))};
     }
-    pglBindBuffer(GL_UNIFORM_BUFFER, vehicleSpotlightBuffer);
-    pglBufferData(GL_UNIFORM_BUFFER, sizeof(gpuLights), &gpuLights, GL_DYNAMIC_DRAW);
-    pglBindBufferBase(GL_UNIFORM_BUFFER, vehicleSpotlightBinding, vehicleSpotlightBuffer);
-    pglBindBuffer(GL_UNIFORM_BUFFER, 0);
+    const std::size_t bytes = gpuLights.size() * sizeof(gpuLights[0]);
+    if (activeLightCount > 0 &&
+        (uploadedVehicleLights.size() != gpuLights.size() ||
+         std::memcmp(uploadedVehicleLights.data(), gpuLights.data(), bytes) != 0)) {
+        uploadedVehicleLights.clear();
+        uploadDynamicLightBuffer(vehicleSpotlightBuffer, bytes, gpuLights.data(),
+                                 "vehicle spotlight");
+        uploadedVehicleLights = std::move(gpuLights);
+        ++lightUploadStats.vehicleUploads;
+        lightUploadStats.vehicleBytes += bytes;
+    }
+    if (tileMask.enabled) {
+        ++lightUploadStats.vehicleSpotlightTileSets;
+        lightUploadStats.vehicleSpotlightTileCountTotal +=
+            static_cast<std::uint64_t>(tileMask.columns) * tileMask.rows;
+        lightUploadStats.vehicleSpotlightTileAssignmentsTotal += tileMask.assignedReferences;
+        lightUploadStats.vehicleSpotlightTileAssignmentsMax = std::max(
+            lightUploadStats.vehicleSpotlightTileAssignmentsMax, tileMask.maximumLightsPerTile);
+        if (uploadedVehicleSpotlightTileMask != tileMask.words) {
+            const std::size_t maskBytes = tileMask.words.size() * sizeof(tileMask.words[0]);
+            uploadedVehicleSpotlightTileMask.clear();
+            uploadDynamicLightBuffer(vehicleSpotlightTileMaskBuffer, maskBytes,
+                                     tileMask.words.data(), "vehicle spotlight tile mask");
+            uploadedVehicleSpotlightTileMask = tileMask.words;
+            ++lightUploadStats.vehicleSpotlightTileUploads;
+            lightUploadStats.vehicleSpotlightTileBytes += maskBytes;
+        }
+    } else if (activeLightCount > 0) {
+        ++lightUploadStats.vehicleSpotlightTileFallbackSets;
+    }
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
         useProgram(entry.first);
         const Uniforms& uniforms = *entry.second;
-        pglUniform1i(uniforms.spotlightCount, static_cast<GLint>(lights.size()));
+        pglUniform1i(uniforms.spotlightCount, static_cast<GLint>(activeLightCount));
+        pglUniform1i(uniforms.spotlightTileMaskEnabled, tileMask.enabled ? 1 : 0);
+        pglUniform1i(uniforms.spotlightTileColumns, std::max(tileMask.columns, 1));
+        pglUniform1i(uniforms.spotlightTileRows, std::max(tileMask.rows, 1));
+        pglUniform1i(uniforms.spotlightTileWordsPerTile, std::max(tileMask.wordsPerTile, 1));
+        pglUniform1i(uniforms.spotlightTileSize, detail::VEHICLE_SPOTLIGHT_TILE_SIZE);
+        pglUniform2f(uniforms.spotlightViewportOrigin, static_cast<float>(tileMask.viewportX),
+                     static_cast<float>(tileMask.viewportY));
     }
     useProgram(previousProgram);
 }
@@ -2112,39 +2669,52 @@ void setWeatherFogView(const Matrix4& view, double groundHeightMeters) {
 }
 
 void setMapLights(const std::vector<MapPointLight>& lights, double strength) {
+    TraceScope trace("lighting", "setMapLights");
     const auto finite = [](double value) {
         return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
     };
-    if (lights.size() > MAX_MAP_LIGHTS || !finite(strength) || strength < 0.0 || strength > 1.0 ||
-        mapLightBuffer == 0) {
+    if (!finite(strength) || strength < 0.0 || strength > 1.0 || mapLightBuffer == 0 ||
+        mapLightTexture == 0) {
         throw std::invalid_argument("Invalid map-light collection");
     }
     for (const MapPointLight& light : lights) {
-        if (!std::all_of(light.position.begin(), light.position.end(), finite) ||
-            !std::all_of(light.color.begin(), light.color.end(),
-                         [](double value) {
-                             return std::isfinite(value) && value >= 0.0 && value <= 1.0;
-                         }) ||
-            !finite(light.radius) || light.radius <= 0.0) {
+        if (!validMapLight(light)) {
             throw std::invalid_argument("Invalid map light");
         }
     }
-    const std::size_t activeLightCount = strength > 0.0 ? lights.size() : 0;
+    const std::size_t activeLightCount =
+        strength > 0.0 ? std::min(lights.size(), mapLightLimit()) : 0;
+    if (activeLightCount > mapLightCapacity ||
+        activeLightCount > static_cast<std::size_t>(std::numeric_limits<GLint>::max() / 2) ||
+        activeLightCount > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) /
+                               (2 * sizeof(std::array<float, 4>))) {
+        throw std::length_error("Map light count " + std::to_string(activeLightCount) +
+                                " exceeds the OpenGL texture-buffer capacity " +
+                                std::to_string(mapLightCapacity));
+    }
+    ++lightUploadStats.mapSets;
+    lightUploadStats.mapLightsTotal += activeLightCount;
+    lightUploadStats.mapLightsMax = std::max(lightUploadStats.mapLightsMax, activeLightCount);
     if (activeLightCount > 0) {
-        GpuMapLightData gpuLights;
+        std::vector<std::array<float, 4>> gpuLights(activeLightCount * 2);
         for (std::size_t index = 0; index < activeLightCount; ++index) {
             const MapPointLight& light = lights[index];
-            gpuLights.positionRadius[index] = {
+            gpuLights[index * 2] = {
                 static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
                 static_cast<float>(light.position[2]), static_cast<float>(light.radius)};
-            gpuLights.color[index] = {static_cast<float>(light.color[0]),
-                                      static_cast<float>(light.color[1]),
-                                      static_cast<float>(light.color[2]), 0.0F};
+            gpuLights[index * 2 + 1] = {static_cast<float>(light.color[0]),
+                                        static_cast<float>(light.color[1]),
+                                        static_cast<float>(light.color[2]), 0.0F};
         }
-        pglBindBuffer(GL_UNIFORM_BUFFER, mapLightBuffer);
-        pglBufferData(GL_UNIFORM_BUFFER, sizeof(gpuLights), &gpuLights, GL_DYNAMIC_DRAW);
-        pglBindBufferBase(GL_UNIFORM_BUFFER, mapLightBinding, mapLightBuffer);
-        pglBindBuffer(GL_UNIFORM_BUFFER, 0);
+        const std::size_t bytes = gpuLights.size() * sizeof(gpuLights[0]);
+        if (uploadedMapLights.size() != gpuLights.size() ||
+            std::memcmp(uploadedMapLights.data(), gpuLights.data(), bytes) != 0) {
+            uploadedMapLights.clear();
+            uploadDynamicLightBuffer(mapLightBuffer, bytes, gpuLights.data(), "map light");
+            uploadedMapLights = std::move(gpuLights);
+            ++lightUploadStats.mapUploads;
+            lightUploadStats.mapBytes += bytes;
+        }
     }
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
@@ -2153,8 +2723,185 @@ void setMapLights(const std::vector<MapPointLight>& lights, double strength) {
         const Uniforms& uniforms = *entry.second;
         pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(activeLightCount));
         pglUniform1f(uniforms.mapLightStrength, static_cast<float>(strength));
+        pglUniform1i(uniforms.staticMapMode, 0);
     }
     useProgram(previousProgram);
+}
+
+void setStaticMapLights(StaticMapLightBuffer& cache, const std::vector<MapPointLight>& sources,
+                        const std::vector<std::size_t>& sourceIndices,
+                        const std::vector<StaticMapLightView>& viewLights, double strength,
+                        std::uint64_t revision) {
+    TraceScope trace("lighting", "setStaticMapLights");
+    if (!std::isfinite(strength) || strength < 0.0 || strength > 1.0 || staticMapViewBuffer == 0 ||
+        staticMapViewTexture == 0) {
+        throw std::invalid_argument("Invalid static map-light collection");
+    }
+    const std::size_t count = strength > 0.0 ? std::min(viewLights.size(), mapLightLimit()) : 0;
+    if (count == 0) {
+        setMapLights({}, strength);
+        return;
+    }
+    const std::size_t maxIntLights = static_cast<std::size_t>(std::numeric_limits<GLint>::max());
+    const std::size_t maxBytesLights =
+        static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) /
+        sizeof(std::array<float, 4>);
+    if (count > staticMapLightCapacity || count > maxIntLights ||
+        count > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) /
+                    sizeof(std::array<std::uint32_t, 4>)) {
+        throw std::length_error("Static map-light collection exceeds texture-buffer capacity " +
+                                std::to_string(staticMapLightCapacity));
+    }
+    const std::size_t sourceCapacity =
+        std::min({staticMapLightCapacity, maxIntLights, maxBytesLights});
+    if (auto compact = detail::compactStaticMapLightSelection(sources, sourceIndices, viewLights,
+                                                              count, sourceCapacity)) {
+        static bool fallbackLogged = false;
+        if (!fallbackLogged) {
+            gameLog.Warning("Static map-light source set exceeds buffer capacity; using a compact "
+                            "static buffer for the selected lights");
+            fallbackLogged = true;
+        }
+        setStaticMapLights(cache, sources, compact->sourceIndices, compact->viewLights, strength,
+                           revision);
+        return;
+    }
+    const auto finite = [](double value) {
+        return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
+    };
+    for (const std::size_t sourceIndex : sourceIndices) {
+        if (sourceIndex >= sources.size()) {
+            throw std::invalid_argument("Invalid static map-light source");
+        }
+    }
+    if (cache.rendererGeneration != rendererGeneration) {
+        cache = {};
+        cache.rendererGeneration = rendererGeneration;
+    }
+    if (sources.size() <= sourceCapacity &&
+        (!cache.sourceValidationCached || cache.validatedSourceCount != sources.size() ||
+         cache.validatedRevision != revision)) {
+        cache.allSourcesValid = std::all_of(sources.begin(), sources.end(), validMapLight);
+        cache.validatedSourceCount = sources.size();
+        cache.validatedRevision = revision;
+        cache.sourceValidationCached = true;
+    }
+    const bool residentSources = sources.size() <= sourceCapacity && cache.allSourcesValid;
+    std::vector<std::array<std::uint32_t, 4>> gpuView(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& light = viewLights[index];
+        if (light.sourceIndex >= sourceIndices.size() ||
+            !std::all_of(light.position.begin(), light.position.end(), finite)) {
+            throw std::invalid_argument("Invalid static map-light view");
+        }
+        gpuView[index] = {std::bit_cast<std::uint32_t>(static_cast<float>(light.position[0])),
+                          std::bit_cast<std::uint32_t>(static_cast<float>(light.position[1])),
+                          std::bit_cast<std::uint32_t>(static_cast<float>(light.position[2])),
+                          static_cast<std::uint32_t>(residentSources
+                                                         ? sourceIndices[light.sourceIndex]
+                                                         : light.sourceIndex)};
+    }
+    const std::size_t storedSourceCount = residentSources ? sources.size() : sourceIndices.size();
+    if (cache.buffer == 0 || !cache.sourceUploaded || cache.contentRevision != revision ||
+        cache.residentSources != residentSources || cache.sourceCount != storedSourceCount ||
+        (!residentSources && cache.sourceIndices != sourceIndices)) {
+        TraceScope sourceTrace("lighting", "setStaticMapLights.uploadSources");
+        std::vector<std::array<float, 4>> gpuSources(storedSourceCount);
+        for (std::size_t index = 0; index < storedSourceCount; ++index) {
+            const auto& light = sources[residentSources ? index : sourceIndices[index]];
+            if (!validMapLight(light)) {
+                throw std::invalid_argument("Invalid static map-light source");
+            }
+            gpuSources[index] = {
+                static_cast<float>(light.color[0]), static_cast<float>(light.color[1]),
+                static_cast<float>(light.color[2]), static_cast<float>(light.radius)};
+        }
+        if (cache.buffer == 0) {
+            staticMapLightBuffers.reserve(staticMapLightBuffers.size() + 1);
+            pglGenBuffers(1, &cache.buffer);
+            glGenTextures(1, &cache.texture);
+            if (cache.buffer == 0 || cache.texture == 0) {
+                if (cache.buffer != 0) {
+                    pglDeleteBuffers(1, &cache.buffer);
+                }
+                if (cache.texture != 0) {
+                    glDeleteTextures(1, &cache.texture);
+                }
+                cache = {};
+                throw std::runtime_error("Unable to allocate static map-light buffer");
+            }
+            staticMapLightBuffers.emplace_back(cache.buffer, cache.texture);
+        }
+        const std::size_t bytes = gpuSources.size() * sizeof(gpuSources[0]);
+        cache.sourceUploaded = false;
+        const std::uint64_t errorCheckpoint = glDebugErrorCheckpoint();
+        pglBindBuffer(GL_TEXTURE_BUFFER, cache.buffer);
+        pglBufferData(GL_TEXTURE_BUFFER, static_cast<std::ptrdiff_t>(bytes), gpuSources.data(),
+                      GL_STATIC_DRAW);
+        pglBindBuffer(GL_TEXTURE_BUFFER, 0);
+        validateOpenGlUpload("static map-light source", errorCheckpoint);
+        const GLenum previousUnit = currentTextureUnit;
+        selectTextureUnit(staticMapLightTextureUnit);
+        glBindTexture(GL_TEXTURE_BUFFER, cache.texture);
+        pglTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, cache.buffer);
+        selectTextureUnit(previousUnit);
+        validateOpenGlUpload("static map-light texture binding", errorCheckpoint);
+        cache.sourceIndices = residentSources ? std::vector<std::size_t>{} : sourceIndices;
+        cache.sourceCount = storedSourceCount;
+        cache.residentSources = residentSources;
+        cache.contentRevision = revision;
+        cache.sourceUploaded = true;
+        ++lightUploadStats.staticMapUploads;
+        lightUploadStats.staticMapBytes += bytes;
+    }
+    const std::size_t viewBytes = gpuView.size() * sizeof(gpuView[0]);
+    if (uploadedStaticMapView.size() != gpuView.size() ||
+        std::memcmp(uploadedStaticMapView.data(), gpuView.data(), viewBytes) != 0) {
+        TraceScope viewTrace("lighting", "setStaticMapLights.uploadView");
+        uploadedStaticMapView.clear();
+        const std::uint64_t errorCheckpoint = glDebugErrorCheckpoint();
+        pglBindBuffer(GL_TEXTURE_BUFFER, staticMapViewBuffer);
+        {
+            TraceScope bufferTrace("lighting", "setStaticMapLights.uploadView.bufferData");
+            pglBufferData(GL_TEXTURE_BUFFER, static_cast<std::ptrdiff_t>(viewBytes), gpuView.data(),
+                          GL_DYNAMIC_DRAW);
+        }
+        pglBindBuffer(GL_TEXTURE_BUFFER, 0);
+        validateOpenGlUpload("static map-light view", errorCheckpoint);
+        uploadedStaticMapView = std::move(gpuView);
+        ++lightUploadStats.mapUploads;
+        lightUploadStats.mapBytes += viewBytes;
+    }
+    const GLenum previousUnit = currentTextureUnit;
+    selectTextureUnit(staticMapLightTextureUnit);
+    glBindTexture(GL_TEXTURE_BUFFER, cache.texture);
+    selectTextureUnit(previousUnit);
+    ++lightUploadStats.mapSets;
+    lightUploadStats.mapLightsTotal += count;
+    lightUploadStats.mapLightsMax = std::max(lightUploadStats.mapLightsMax, count);
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry :
+         {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
+        useProgram(entry.first);
+        const Uniforms& uniforms = *entry.second;
+        pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(count));
+        pglUniform1f(uniforms.mapLightStrength, static_cast<float>(strength));
+        pglUniform1i(uniforms.staticMapMode, 1);
+    }
+    useProgram(previousProgram);
+}
+
+void releaseStaticMapLights(StaticMapLightBuffer& cache) {
+    if (cache.buffer != 0 && cache.rendererGeneration == rendererGeneration) {
+        const auto found = std::find(staticMapLightBuffers.begin(), staticMapLightBuffers.end(),
+                                     std::pair{cache.buffer, cache.texture});
+        if (found != staticMapLightBuffers.end()) {
+            pglDeleteBuffers(1, &cache.buffer);
+            glDeleteTextures(1, &cache.texture);
+            staticMapLightBuffers.erase(found);
+        }
+    }
+    cache = {};
 }
 
 std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness) {
@@ -2168,7 +2915,8 @@ std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness) {
 void setWeatherLighting(std::optional<double> brightness, bool reflectionPass) {
     const auto color = weatherBackgroundColor(brightness);
     const float value = static_cast<float>(brightness.value_or(1.0));
-    const float ambientLight = std::max(0.58F * value, reflectionPass ? 0.25F : 0.0F);
+    const float ambientLight =
+        std::max(0.58F * value, reflectionPass ? reflectionAmbientFloor() : 0.0F);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms},
@@ -2708,15 +3456,18 @@ bool drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
     currentArrayBuffer = cache.buffer;
     if (needsUpload) {
+        const std::uint64_t errorCheckpoint = glDebugErrorCheckpoint();
         {
             TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
             pglBufferData(GL_ARRAY_BUFFER,
                           static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
                           vertices.data(), GL_STATIC_DRAW);
         }
-        if (glGetError() != GL_NO_ERROR) {
-            gameLog.Warning("OpenGL error during or before static primitive upload; "
-                            "skipping this primitive and retrying the upload later");
+        try {
+            validateOpenGlUpload("static primitive", errorCheckpoint);
+        } catch (const std::runtime_error&) {
+            gameLog.Warning("OpenGL error during static primitive upload; skipping this primitive "
+                            "and retrying the upload later");
             return false;
         }
         cache.vertexCount = vertices.size();

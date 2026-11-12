@@ -1,9 +1,12 @@
 #include "render/CoreRenderer.h"
+#include "core/Environment.h"
 #include "core/Variables.h"
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
 #include "render/RendererReflection.h"
+#include "render/StaticMapLightFallback.h"
 #include "render/map/MapRendererInternal.h"
+#include "app/traffic/ReflectionTrafficViews.h"
 #include "app/vehicle/VehicleDrawSorting.h"
 #include "app/vehicle/VehicleSpotlight.h"
 #include "physics/BusSimulation.h"
@@ -13,23 +16,68 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <numbers>
 #include <stdexcept>
+#include <string_view>
 
 using namespace openbus::rendering;
 
-int main() {
+namespace {
+
+bool setReflectionInterval(const char* value) {
+#ifdef _WIN32
+    return _putenv_s("OPENBUS_REFLECTION_INTERVAL", value) == 0;
+#else
+    return setenv("OPENBUS_REFLECTION_INTERVAL", value, 1) == 0;
+#endif
+}
+
+void failBufferUpload(GLenum, std::ptrdiff_t, const void*, GLenum) {
+    glEnable(static_cast<GLenum>(0xffffffffU));
+    static_cast<void>(glGetError());
+}
+
+decltype(pglBufferData) successfulBufferData = nullptr;
+
+void failAfterBufferUpload(GLenum target, std::ptrdiff_t size, const void* data, GLenum usage) {
+    successfulBufferData(target, size, data, usage);
+    glEnable(static_cast<GLenum>(0xffffffffU));
+    static_cast<void>(glGetError());
+}
+
+void APIENTRY failTextureBufferBinding(GLenum, GLenum, GLuint) {
+    glEnable(static_cast<GLenum>(0xffffffffU));
+    static_cast<void>(glGetError());
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const bool spotlightTileProbe =
+        argc == 2 && std::string_view(argv[1]) == "--spotlight-tile-image";
     using openbus::app::vehicle::makeSpotlight;
+    using openbus::app::vehicle::spotlightSelectionChanged;
+    using openbus::app::vehicle::spotlightSelectionStatus;
     using openbus::app::vehicle::SpotlightStatus;
     ModelSpotlight high;
     high.parameters = {1, 2, 3, 0, 1, -0.3, 255, 128, 0, 500, 30, 70};
     ModelSpotlight low = high;
     low.parameters[9] = 100;
     const std::vector<ModelSpotlight> definitions = {high, low};
+    if (spotlightSelectionStatus(definitions.size(), -0.6) != SpotlightStatus::Off ||
+        spotlightSelectionStatus(definitions.size(), 0.6) != SpotlightStatus::Active ||
+        spotlightSelectionStatus(definitions.size(), 2) != SpotlightStatus::Invalid ||
+        spotlightSelectionStatus(definitions.size(), std::numeric_limits<double>::quiet_NaN()) !=
+            SpotlightStatus::Invalid) {
+        std::cerr << "vehicle spotlight early selection failed\n";
+        return 1;
+    }
     const Matrix4 vehicleView = multiplyMatrix4(translationMatrix({10, 20, 30}),
                                                  rotationMatrix(90, 0, 0, 1));
     VehicleSpotlight transformed;
@@ -51,8 +99,28 @@ int main() {
     }
     if (makeSpotlight(definitions, 0.6, vehicleView, transformed) != SpotlightStatus::Active ||
         transformed.range != 100 ||
-        makeSpotlight(definitions, -0.6, vehicleView, transformed) != SpotlightStatus::Off) {
+        makeSpotlight(definitions, -0.6, vehicleView, transformed) != SpotlightStatus::Off ||
+        !spotlightSelectionChanged(0.49999, 0.50001) ||
+        spotlightSelectionChanged(0.1, 0.2) ||
+        !spotlightSelectionChanged(std::numeric_limits<double>::quiet_NaN(), 0.0)) {
         std::cerr << "vehicle spotlight selector was not rounded\n";
+        return 1;
+    }
+    ModelSpotlight bounded = high;
+    bounded.parameters = {0, 0, 0, 0, 1, 0, 255, 128, 0, 0.1, 30, 70};
+    const auto unitFrustum = buildViewFrustum(identityMatrix());
+    const auto shiftedFrustum = buildViewFrustum(translationMatrix({-5, 0, 0}));
+    if (openbus::app::vehicle::spotlightOutsideView(
+            {bounded}, 0, translationMatrix({1.3, 0, 0}), unitFrustum) ||
+        !openbus::app::vehicle::spotlightOutsideView(
+            {bounded}, 0, translationMatrix({1.5, 0, 0}), unitFrustum) ||
+        openbus::app::vehicle::spotlightOutsideView(
+            {bounded}, 0, translationMatrix({5, 0, 0}), shiftedFrustum) ||
+        !openbus::app::vehicle::spotlightOutsideView(
+            {bounded}, 0, translationMatrix({0, 0, 0}), shiftedFrustum) ||
+        openbus::app::vehicle::spotlightOutsideView(
+            {bounded}, 1, translationMatrix({10, 0, 0}), unitFrustum)) {
+        std::cerr << "AI spotlight conservative view suspension failed\n";
         return 1;
     }
     ModelSpotlight invalidSpotlight = high;
@@ -63,6 +131,168 @@ int main() {
         makeSpotlight(definitions, std::numeric_limits<double>::quiet_NaN(), vehicleView,
                       transformed) != SpotlightStatus::Invalid) {
         std::cerr << "invalid vehicle spotlight was accepted\n";
+        return 1;
+    }
+    VehicleSpotlight playerLight;
+    playerLight.position = {100, 0, 0};
+    VehicleSpotlight nearLight;
+    nearLight.position = {1, 0, 0};
+    VehicleSpotlight otherNearLight;
+    otherNearLight.position = {-1, 0, 0};
+    std::vector<openbus::app::vehicle::SpotlightCandidate> candidates = {
+        {nearLight, false}, {playerLight, true}, {otherNearLight, false}};
+    const auto selected = openbus::app::vehicle::selectSpotlights(candidates, 2);
+    if (selected.size() != 2 || selected[0].position != playerLight.position ||
+        selected[1].position != nearLight.position ||
+        !openbus::app::vehicle::selectSpotlights(candidates, 0).empty()) {
+        std::cerr << "vehicle spotlight priority or stable distance ordering failed\n";
+        return 1;
+    }
+    candidates = {{otherNearLight, false}, {nearLight, false}};
+    const auto aiOnly = openbus::app::vehicle::selectSpotlights(candidates, 2);
+    if (aiOnly.size() != 2 || aiOnly[0].position != otherNearLight.position ||
+        aiOnly[1].position != nearLight.position) {
+        std::cerr << "AI-only spotlight ordering changed\n";
+        return 1;
+    }
+    map_detail::StaticLightTileIndex lightIndex;
+    for (std::size_t i = 0; i < 250; ++i) {
+        lightIndex.add(i % 4, i);
+    }
+    const std::unordered_set<std::uint64_t> tiles = {1, 3};
+    const auto& activeLights = lightIndex.activeIndices(tiles);
+    if (activeLights.size() != 125 || lightIndex.allIndices().size() != 250 ||
+        lightIndex.allIndices().front() != 0 || lightIndex.allIndices().back() != 249) {
+        std::cerr << "static light tile index omitted active lights\n";
+        return 1;
+    }
+    for (std::size_t i = 0; i < activeLights.size(); ++i) {
+        if (activeLights[i] != i * 2 + 1) {
+            std::cerr << "static light tile index changed source order\n";
+            return 1;
+        }
+    }
+    lightIndex.add(3, 250);
+    if (lightIndex.activeIndices(tiles).size() != 126 ||
+        lightIndex.activeIndices(tiles).back() != 250 ||
+        lightIndex.allIndices().size() != 251 || lightIndex.allIndices().back() != 250 ||
+        lightIndex.activeIndices({}).size() != 0 ||
+        lightIndex.activeIndices({0}).size() != 63 ||
+        lightIndex.activeIndices(tiles).size() != 126) {
+        std::cerr << "static light tile index did not refresh on streaming changes\n";
+        return 1;
+    }
+    map_detail::StaticLightTileIndex influenceIndex;
+    influenceIndex.add(map_detail::tileKey(0, 0), 0);
+    influenceIndex.addInfluence(0, {299, 150, 0}, 5, 300);
+    influenceIndex.add(map_detail::tileKey(-1, -1), 1);
+    influenceIndex.addInfluence(1, {-1, -1, 0}, 2, 300);
+    const std::unordered_set<std::uint64_t> adjacent = {map_detail::tileKey(1, 0)};
+    if (influenceIndex.activeIndices(adjacent) != std::vector<std::size_t>{0} ||
+        influenceIndex.activeIndices({map_detail::tileKey(0, 0)}) !=
+            std::vector<std::size_t>({0, 1}) ||
+        influenceIndex.activeIndices({map_detail::tileKey(2, 0)}).size() != 0 ||
+        influenceIndex.allIndices() != std::vector<std::size_t>({0, 1}) ||
+        influenceIndex.activeIndices({}).size() != 0) {
+        std::cerr << "static light influence tile selection or deduplication failed\n";
+        return 1;
+    }
+    influenceIndex.add(map_detail::tileKey(0, 0), 2);
+    influenceIndex.addInfluence(2, {0, 0, 0}, 1.0e20, 300);
+    if (influenceIndex.activeIndices({map_detail::tileKey(2, 0)}) !=
+            std::vector<std::size_t>{2} ||
+        !influenceIndex.activeIndices({}).empty()) {
+        std::cerr << "large static light influence fallback failed\n";
+        return 1;
+    }
+    bool rejectedInvalidInfluence = false;
+    try {
+        influenceIndex.addInfluence(3, {0, 0, 0}, 0, 300);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidInfluence = true;
+    }
+    if (!rejectedInvalidInfluence) {
+        std::cerr << "invalid static light influence was not rejected\n";
+        return 1;
+    }
+    map_detail::StaticLightViewCache viewCache;
+    std::vector<MapPointLight> viewSources = {
+        {{0, 0, 0}, {1, 0, 0}, 1}, {{10, 0, 0}, {0, 1, 0}, 1},
+        {{20, 0, 0}, {0, 0, 1}, 1}};
+    const std::vector<std::size_t> viewIndices = {2, 0, 1};
+    const Matrix4 viewIdentity = identityMatrix();
+    if (!viewCache.prepare(viewSources, viewIndices, viewIdentity, {0, 0, 0}, 3) ||
+        viewCache.lights().size() != 3 || viewCache.lights()[0].position[0] != 20 ||
+        viewCache.lights()[1].position[0] != 0 ||
+        viewCache.prepare(viewSources, viewIndices, viewIdentity, {0, 0, 0}, 3) ||
+        !viewCache.prepare(viewSources, viewIndices, translationMatrix({1, 0, 0}), {0, 0, 0}, 3) ||
+        viewCache.lights()[0].position[0] != 21 ||
+        !viewCache.prepare(viewSources, viewIndices, viewIdentity, {0, 0, 0}, 1) ||
+        viewCache.lights().size() != 1 || viewCache.lights()[0].sourceIndex != 1 ||
+        !viewCache.prepare(viewSources, viewIndices, viewIdentity, {20, 0, 0}, 1) ||
+        viewCache.lights()[0].sourceIndex != 0) {
+        std::cerr << "static light view cache reuse, transforms, or selection failed\n";
+        return 1;
+    }
+    viewSources[2].position[0] = 21;
+    if (!viewCache.prepare(viewSources, viewIndices, viewIdentity, {20, 0, 0}, 1, 1) ||
+        viewCache.lights()[0].position[0] != 21 ||
+        !viewCache.prepare(viewSources, {0}, viewIdentity, {0, 0, 0}, 1, 1) ||
+        viewCache.lights()[0].position[0] != 0 ||
+        !viewCache.prepare(viewSources, viewIndices, viewIdentity, {0, 0, 0}, 0, 1) ||
+        !viewCache.lights().empty()) {
+        std::cerr << "static light view cache invalidation failed\n";
+        return 1;
+    }
+    const std::vector<MapPointLight> fallbackSources = {
+        {{0, 0, 0}, {1, 0, 0}, 1}, {{1, 0, 0}, {0, 1, 0}, 2},
+        {{2, 0, 0}, {0, 0, 1}, 3}, {{3, 0, 0}, {1, 1, 0}, 4}};
+    const std::vector<std::size_t> fallbackIndices = {2, 0, 3, 1};
+    const std::vector<StaticMapLightView> fallbackViews = {
+        {{10, 0, -1}, 3}, {{20, 0, -2}, 0}, {{30, 0, -3}, 99}};
+    const auto fallback = detail::compactStaticMapLightSelection(
+        fallbackSources, fallbackIndices, fallbackViews, 2, 3);
+    if (!fallback || fallback->sourceIndices != std::vector<std::size_t>{1, 2} ||
+        fallback->viewLights.size() != 2 ||
+        fallback->viewLights[0].position != fallbackViews[0].position ||
+        fallback->viewLights[0].sourceIndex != 0 ||
+        fallback->viewLights[1].position != fallbackViews[1].position ||
+        fallback->viewLights[1].sourceIndex != 1 ||
+        detail::compactStaticMapLightSelection(fallbackSources, fallbackIndices, fallbackViews, 2, 4)) {
+        std::cerr << "oversized static sources did not preserve the selected view lights\n";
+        return 1;
+    }
+    bool rejectedFallbackIndex = false;
+    try {
+        static_cast<void>(detail::compactStaticMapLightSelection(
+            fallbackSources, fallbackIndices, fallbackViews, 3, 3));
+    } catch (const std::invalid_argument&) {
+        rejectedFallbackIndex = true;
+    }
+    if (!rejectedFallbackIndex) {
+        std::cerr << "oversized static sources accepted an invalid selected view\n";
+        return 1;
+    }
+    const std::vector<StaticMapLightView> duplicateViews = {fallbackViews[0], fallbackViews[0]};
+    const auto duplicateFallback = detail::compactStaticMapLightSelection(
+        fallbackSources, fallbackIndices, duplicateViews, 2, 3);
+    if (!duplicateFallback ||
+        duplicateFallback->sourceIndices != std::vector<std::size_t>{1, 1} ||
+        duplicateFallback->viewLights.size() != 2 ||
+        duplicateFallback->viewLights[0].sourceIndex != 0 ||
+        duplicateFallback->viewLights[1].sourceIndex != 1) {
+        std::cerr << "oversized static sources did not preserve duplicate selections\n";
+        return 1;
+    }
+    bool rejectedFallbackSource = false;
+    try {
+        static_cast<void>(detail::compactStaticMapLightSelection(
+            fallbackSources, {fallbackSources.size(), 0}, {{{0, 0, 0}, 0}}, 1, 1));
+    } catch (const std::invalid_argument&) {
+        rejectedFallbackSource = true;
+    }
+    if (!rejectedFallbackSource) {
+        std::cerr << "oversized static sources accepted an invalid source mapping\n";
         return 1;
     }
     MapPoleState pole;
@@ -88,7 +318,8 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(32, 32, "Material probe", nullptr, nullptr);
+    const int windowSize = spotlightTileProbe ? 160 : 32;
+    GLFWwindow* window = glfwCreateWindow(windowSize, windowSize, "Material probe", nullptr, nullptr);
     if (window == nullptr) {
         glfwTerminate();
         return 77;
@@ -98,6 +329,25 @@ int main() {
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
+    }
+    if (argc == 2 && (std::string_view(argv[1]) == "--spotlight-limit-zero" ||
+                      std::string_view(argv[1]) == "--spotlight-limit-one")) {
+        const std::size_t expected = std::string_view(argv[1]) == "--spotlight-limit-one" ? 1 : 0;
+        VehicleSpotlight light{{0, 0, -2}, {0, 0, 1}, {1, 0.5, 0.25}, 10, 30, 70};
+        resetLightingBufferUploadStats();
+        setVehicleSpotlights({light, light});
+        const auto stats = lightingBufferUploadStats();
+        const bool ok = stats.vehicleLightsMax == expected &&
+                        stats.vehicleLightsTotal == expected &&
+                        stats.vehicleUploads == expected &&
+                        stats.vehicleBytes == expected * 48 && glGetError() == GL_NO_ERROR;
+        if (!ok) {
+            std::cerr << "explicit vehicle spotlight limit was not applied\n";
+        }
+        shutdownCoreRenderer();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return ok ? 0 : 1;
     }
     static_cast<void>(hasOpenGLExtension("GL_EXT_texture_compression_s3tc"));
     if (glGetError() != GL_NO_ERROR) {
@@ -152,6 +402,148 @@ int main() {
     const GLuint blue = texture({65, 85, 112, 255});
     const GLuint white = texture({255, 255, 255, 255});
     const GLuint mask = texture({0, 0, 0, 128});
+    if (spotlightTileProbe) {
+        constexpr int viewportX = 11;
+        constexpr int viewportY = 13;
+        constexpr int viewportSize = 128;
+        glViewport(viewportX, viewportY, viewportSize, viewportSize);
+        setPerspective(viewportSize, viewportSize, 90);
+        setWeatherLighting(0.0);
+        setWeatherFog(std::nullopt);
+        setMapLights({}, 0.0);
+        const VehicleSpotlight behind{{0, 0, 5}, {0, 0, 1}, {0, 0, 0}, 0.1, 10, 20};
+        const VehicleSpotlight visible{{-0.25, 0, -1.08}, {0, 0, 1},
+                                       {1, 0.75, 0.5}, 0.1, 30, 70};
+        const VehicleSpotlight nearCrossing{{-0.25, 0, 0.1}, {0, 0, -1},
+                                            {1, 0.75, 0.5}, 2, 20, 30};
+        const VehicleSpotlight broad{{0, 0, -2}, {0, 0, 1}, {0, 0, 0}, 10, 30, 70};
+        ModelMaterial tileMaterial;
+        tileMaterial.textured = true;
+        tileMaterial.texture = white;
+        const std::vector<std::array<float, 4>> colors = {{1, 1, 1, 1}};
+        const auto image = [&](bool multiMaterial) {
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT);
+            if (multiMaterial) {
+                drawMaterialBatch(buffer, 3, colors, {white}, {false}, 0, 1.0);
+            } else {
+                drawModelBatch(buffer, 3, tileMaterial, {1, 1, 1}, 1.0, 2);
+            }
+            std::vector<std::uint8_t> pixels(viewportSize * viewportSize * 4);
+            glReadPixels(viewportX, viewportY, viewportSize, viewportSize, GL_RGBA,
+                         GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        };
+        bool ok = true;
+        std::vector<VehicleSpotlight> failureLights(31, behind);
+        failureLights.push_back(visible);
+        setVehicleSpotlights(failureLights);
+        const auto initialMaskImage = image(false);
+        resetLightingBufferUploadStats();
+        glViewport(viewportX, viewportY, viewportSize / 2, viewportSize / 2);
+        const auto normalTileBufferData = pglBufferData;
+        successfulBufferData = normalTileBufferData;
+        pglBufferData = failAfterBufferUpload;
+        bool rejectedFailedMask = false;
+        try {
+            setVehicleSpotlights(failureLights);
+        } catch (const std::runtime_error&) {
+            rejectedFailedMask = true;
+        }
+        pglBufferData = normalTileBufferData;
+        glViewport(viewportX, viewportY, viewportSize, viewportSize);
+        setVehicleSpotlights(failureLights);
+        if (!rejectedFailedMask ||
+            lightingBufferUploadStats().vehicleSpotlightTileUploads != 1 ||
+            image(false) != initialMaskImage) {
+            std::cerr << "spotlight tile-mask upload did not recover after an error\n";
+            ok = false;
+        }
+        for (const std::size_t lightIndex : {std::size_t{31}, std::size_t{32}}) {
+            for (const auto& testLight : {visible, nearCrossing}) {
+                for (const bool multipleLights : {false, true}) {
+                    std::vector<VehicleSpotlight> sparse(lightIndex, behind);
+                    if (multipleLights)
+                        sparse[0] = testLight;
+                    sparse.push_back(testLight);
+                    std::vector<VehicleSpotlight> dense = sparse;
+                    dense.insert(dense.end(), 128, broad);
+                    for (const bool multiMaterial : {false, true}) {
+                        setVehicleSpotlights({});
+                        const auto unlit = image(multiMaterial);
+                        resetLightingBufferUploadStats();
+                        setVehicleSpotlights(sparse);
+                        const auto tiled = image(multiMaterial);
+                        const auto sparseStats = lightingBufferUploadStats();
+                        resetLightingBufferUploadStats();
+                        setVehicleSpotlights(dense);
+                        const auto global = image(multiMaterial);
+                        const auto denseStats = lightingBufferUploadStats();
+                        bool litBelowBoundary = false;
+                        bool litAboveBoundary = false;
+                        for (int y = 0; y < viewportSize; ++y) {
+                            for (int x = 0; x < viewportSize; ++x) {
+                                const std::size_t offset = (y * viewportSize + x) * 4;
+                                const bool lit = tiled[offset] != unlit[offset] ||
+                                                 tiled[offset + 1] != unlit[offset + 1] ||
+                                                 tiled[offset + 2] != unlit[offset + 2];
+                                if (lit && y < viewportSize / 2)
+                                    litBelowBoundary = true;
+                                if (lit && y >= viewportSize / 2)
+                                    litAboveBoundary = true;
+                            }
+                        }
+                        if (sparseStats.vehicleSpotlightTileSets != 1 ||
+                            sparseStats.vehicleSpotlightTileAssignmentsTotal == 0 ||
+                            sparseStats.vehicleSpotlightTileAssignmentsTotal >=
+                                (multipleLights ? 32 : 16) ||
+                            denseStats.vehicleSpotlightTileFallbackSets != 1 || !litBelowBoundary ||
+                            !litAboveBoundary ||
+                            !std::equal(tiled.begin(), tiled.end(), global.begin(),
+                                        [](std::uint8_t a, std::uint8_t b) {
+                                            return std::abs(static_cast<int>(a) -
+                                                            static_cast<int>(b)) <= 1;
+                                        })) {
+                            std::cerr
+                                << "spotlight tile image differs from global path for "
+                                << (multiMaterial ? "material" : "model") << " shader: tiled sets "
+                                << sparseStats.vehicleSpotlightTileSets << ", assignments "
+                                << sparseStats.vehicleSpotlightTileAssignmentsTotal
+                                << ", fallback sets " << denseStats.vehicleSpotlightTileFallbackSets
+                                << ", lit on both sides " << (litBelowBoundary && litAboveBoundary)
+                                << ", images match " << (tiled == global) << '\n';
+                            ok = false;
+                        }
+                    }
+                }
+            }
+        }
+        if (glGetError() != GL_NO_ERROR) {
+            std::cerr << "spotlight tile image probe produced an OpenGL error\n";
+            ok = false;
+        }
+        pglDeleteBuffers(1, &buffer);
+        glDeleteTextures(1, &blue);
+        glDeleteTextures(1, &white);
+        glDeleteTextures(1, &mask);
+        shutdownCoreRenderer();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return ok ? 0 : 1;
+    }
+    const auto alphaTestPixel = [&](const ModelMaterial& material, int alphaMode, double alpha,
+                                    double visibilityFade) {
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        configureModelAlphaState(alphaMode, false);
+        drawModelBatch(buffer, 3, material, {1, 1, 1}, alpha, alphaMode, false, std::nullopt,
+                       visibilityFade);
+        std::array<std::uint8_t, 4> result = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDepthMask(GL_TRUE);
+        return result;
+    };
     const auto draw = [&](const ModelMaterial& material, std::array<double, 3> color,
                           double alpha) {
         glClearColor(0, 0, 0, 0);
@@ -163,6 +555,30 @@ int main() {
     };
     const auto close = [](int actual, int expected) { return std::abs(actual - expected) <= 2; };
     bool passed = true;
+    ModelMaterial alphaTestMaterial;
+    alphaTestMaterial.emissionColor = {1, 1, 1};
+    ModelMaterial transmappedAlphaTest = alphaTestMaterial;
+    transmappedAlphaTest.transmap = mask;
+    transmappedAlphaTest.useTransmap = true;
+    ModelMaterial bumpmappedAlphaTest = alphaTestMaterial;
+    bumpmappedAlphaTest.bumpmap = white;
+    bumpmappedAlphaTest.useBumpmap = true;
+    const auto belowHalfAlpha = alphaTestPixel(alphaTestMaterial, 1, 0.49, 1.0);
+    const auto aboveHalfAlpha = alphaTestPixel(alphaTestMaterial, 1, 0.51, 1.0);
+    const auto belowOpaqueAlpha = alphaTestPixel(alphaTestMaterial, 3, 0.98, 1.0);
+    const auto opaqueAlpha = alphaTestPixel(alphaTestMaterial, 3, 1.0, 1.0);
+    const auto transmapCutout = alphaTestPixel(transmappedAlphaTest, 1, 1.0, 1.0);
+    const auto transmapOpaqueCutout = alphaTestPixel(transmappedAlphaTest, 3, 1.0, 1.0);
+    const auto fadedAtThreshold = alphaTestPixel(alphaTestMaterial, 1, 1.0, 0.5);
+    const auto fadedBelowThreshold = alphaTestPixel(alphaTestMaterial, 1, 1.0, 0.49);
+    const auto bumpmappedCutout = alphaTestPixel(bumpmappedAlphaTest, 1, 0.49, 1.0);
+    if (belowHalfAlpha[3] != 0 || aboveHalfAlpha[3] == 0 || belowOpaqueAlpha[3] != 0 ||
+        opaqueAlpha[3] == 0 || transmapCutout[3] == 0 || transmapOpaqueCutout[3] != 0 ||
+        fadedAtThreshold[3] == 0 || fadedBelowThreshold[3] != 0 ||
+        bumpmappedCutout[3] != 0) {
+        std::cerr << "early alpha rejection changed cutout, transmap, fade, or bumpmap behavior\n";
+        passed = false;
+    }
     StaticPrimitiveBuffer staticOverlay;
     constexpr std::array<float, 39> skinVertices = {
         -0.5F, -0.5F, -2.0F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
@@ -673,6 +1089,21 @@ int main() {
     setWeatherFog(std::nullopt);
     const VehicleSpotlight testSpotlight{{0, 0, -2}, {0, 0, 1}, {1, 0.5, 0.25},
                                          10, 30, 70};
+    VehicleSpotlight underflowSpotlight = testSpotlight;
+    underflowSpotlight.range = std::numeric_limits<float>::min() / 2.0;
+    bool rejectedUnderflowSpotlight = false;
+    try {
+        setVehicleSpotlights({underflowSpotlight});
+    } catch (const std::invalid_argument&) {
+        rejectedUnderflowSpotlight = true;
+    }
+    if (!rejectedUnderflowSpotlight) {
+        std::cerr << "vehicle spotlight accepted a range that can underflow on the GPU\n";
+        passed = false;
+    }
+    VehicleSpotlight minimumSpotlight = testSpotlight;
+    minimumSpotlight.range = std::numeric_limits<float>::min();
+    setVehicleSpotlights({minimumSpotlight});
     const auto spotlightPixel = [&](bool multiMaterial) {
         glClear(GL_COLOR_BUFFER_BIT);
         if (multiMaterial) {
@@ -684,18 +1115,65 @@ int main() {
         glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
         return result;
     };
+    setVehicleSpotlights({testSpotlight});
+    const auto cachedVehicleLit = spotlightPixel(false);
+    resetLightingBufferUploadStats();
+    setVehicleSpotlights({testSpotlight});
+    setVehicleSpotlights({});
+    const auto cachedVehicleOff = spotlightPixel(false);
+    setVehicleSpotlights({testSpotlight});
+    const auto cachedVehicleAgain = spotlightPixel(false);
+    auto uploadStats = lightingBufferUploadStats();
+    if (uploadStats.vehicleUploads != 0 || uploadStats.vehicleBytes != 0 ||
+        cachedVehicleAgain != cachedVehicleLit || cachedVehicleOff == cachedVehicleLit) {
+        std::cerr << "unchanged vehicle light buffer was not reused correctly\n";
+        passed = false;
+    }
+    VehicleSpotlight changedVehicleLight = testSpotlight;
+    changedVehicleLight.direction = {0, 0, -1};
+    setVehicleSpotlights({changedVehicleLight});
+    const auto changedVehiclePixel = spotlightPixel(false);
+    setVehicleSpotlights({testSpotlight});
+    uploadStats = lightingBufferUploadStats();
+    if (uploadStats.vehicleUploads != 2 ||
+        uploadStats.vehicleBytes != 2 * 48 ||
+        changedVehiclePixel != cachedVehicleOff || spotlightPixel(false) != cachedVehicleLit) {
+        std::cerr << "changed vehicle light buffer was not uploaded correctly\n";
+        passed = false;
+    }
+    resetLightingBufferUploadStats();
+    const auto normalVehicleBufferData = pglBufferData;
+    successfulBufferData = normalVehicleBufferData;
+    pglBufferData = failAfterBufferUpload;
+    bool rejectedFailedVehicleUpload = false;
+    try {
+        setVehicleSpotlights({changedVehicleLight});
+    } catch (const std::runtime_error&) {
+        rejectedFailedVehicleUpload = true;
+    }
+    pglBufferData = normalVehicleBufferData;
+    setVehicleSpotlights({testSpotlight});
+    if (!rejectedFailedVehicleUpload || lightingBufferUploadStats().vehicleUploads != 1 ||
+        spotlightPixel(false) != cachedVehicleLit) {
+        std::cerr << "vehicle light upload did not recover after an error\n";
+        passed = false;
+    }
     for (const bool multiMaterial : {false, true}) {
         setVehicleSpotlights({});
         const auto unlit = spotlightPixel(multiMaterial);
         setVehicleSpotlights({testSpotlight});
         const auto illuminated = spotlightPixel(multiMaterial);
-        std::vector<VehicleSpotlight> fullSpotlightBudget(MAX_VEHICLE_SPOTLIGHTS, testSpotlight);
+        std::vector<VehicleSpotlight> fullSpotlightBudget(250, testSpotlight);
         for (auto& light : fullSpotlightBudget) {
             light.color = {0, 0, 0};
         }
         fullSpotlightBudget.back() = testSpotlight;
         setVehicleSpotlights(fullSpotlightBudget);
         const auto lastSpotlightSlot = spotlightPixel(multiMaterial);
+        if (lightingBufferUploadStats().vehicleLightsMax < 250) {
+            std::cerr << "vehicle spotlight count did not include the 250th light\n";
+            passed = false;
+        }
         VehicleSpotlight coneEdge = testSpotlight;
         coneEdge.direction = {0.5, 0, 0.866025403784};
         setVehicleSpotlights({coneEdge});
@@ -708,10 +1186,21 @@ int main() {
         away.direction = {0, 0, -1};
         setVehicleSpotlights({away});
         const auto outsideCone = spotlightPixel(multiMaterial);
+        VehicleSpotlight hardCone = testSpotlight;
+        hardCone.innerAngleDegrees = hardCone.outerAngleDegrees;
+        setVehicleSpotlights({hardCone});
+        const auto insideHardCone = spotlightPixel(multiMaterial);
+        hardCone.direction = {0, 0, -1};
+        setVehicleSpotlights({hardCone});
+        const auto outsideHardCone = spotlightPixel(multiMaterial);
         VehicleSpotlight shortRange = testSpotlight;
         shortRange.range = 0.1;
         setVehicleSpotlights({shortRange});
         const auto outsideRange = spotlightPixel(multiMaterial);
+        VehicleSpotlight hugeRange = testSpotlight;
+        hugeRange.range = 1.0e30;
+        setVehicleSpotlights({hugeRange});
+        const auto hugeRangePixel = spotlightPixel(multiMaterial);
         const double distance = std::sqrt(1.0 + 2.0 / (32.0 * 32.0));
         const double relativeDistance = distance / testSpotlight.range;
         const int expectedRedIncrease = static_cast<int>(std::lround(
@@ -725,7 +1214,10 @@ int main() {
             std::abs(static_cast<int>(lastSpotlightSlot[2]) - illuminated[2]) > 1 ||
             softenedCone[0] <= unlit[0] + 2 || softenedCone[0] >= illuminated[0] - 5 ||
             attenuated[0] <= unlit[0] + 2 || attenuated[0] >= illuminated[0] - 5 ||
-            outsideCone != unlit || outsideRange != unlit || illuminated[3] != unlit[3]) {
+            insideHardCone != illuminated || outsideHardCone != unlit ||
+            outsideCone != unlit || outsideRange != unlit ||
+            hugeRangePixel[0] <= unlit[0] + 30 || hugeRangePixel[3] != unlit[3] ||
+            illuminated[3] != unlit[3]) {
             std::cerr << "vehicle spotlight illumination, cone, range, or alpha failed for "
                       << (multiMaterial ? "material" : "model") << " shader\n";
             passed = false;
@@ -734,20 +1226,379 @@ int main() {
     setVehicleSpotlights({});
     const MapPointLight testMapLight{{0, 0, -2}, {1, 0.5, 0.25}, 2.0};
     const MapPointLight attenuatedMapLight{{0, 0, -2}, {1, 0.5, 0.25}, 0.25};
+    MapPointLight underflowMapLight = testMapLight;
+    underflowMapLight.radius = std::numeric_limits<float>::min() / 2.0;
+    bool rejectedUnderflowMapLight = false;
+    try {
+        setMapLights({underflowMapLight}, 1.0);
+    } catch (const std::invalid_argument&) {
+        rejectedUnderflowMapLight = true;
+    }
+    StaticMapLightBuffer underflowCache;
+    bool rejectedUnderflowStaticLight = false;
+    try {
+        setStaticMapLights(underflowCache, {underflowMapLight}, {0},
+                           {{{0, 0, -2}, 0}}, 1.0);
+    } catch (const std::invalid_argument&) {
+        rejectedUnderflowStaticLight = true;
+    }
+    releaseStaticMapLights(underflowCache);
+    if (!rejectedUnderflowMapLight || !rejectedUnderflowStaticLight) {
+        std::cerr << "map light accepted a radius that can underflow on the GPU\n";
+        passed = false;
+    }
+    MapPointLight minimumMapLight = testMapLight;
+    minimumMapLight.radius = std::numeric_limits<float>::min();
+    setMapLights({minimumMapLight}, 1.0);
+    setStaticMapLights(underflowCache, {minimumMapLight}, {0},
+                       {{{0, 0, -2}, 0}}, 1.0);
+    releaseStaticMapLights(underflowCache);
+    const auto textMaterialPixel = [&] {
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawMaterialBatch(buffer, 3, materialColors, {white}, {false}, 0, 0.5, white, true);
+        std::array<std::uint8_t, 4> pixel = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+        return pixel;
+    };
+    setMapLights({}, 0.0);
+    const auto unlitTextMaterial = textMaterialPixel();
+    setMapLights({testMapLight}, 1.0);
+    const auto litTextMaterial = textMaterialPixel();
+    if (litTextMaterial[0] <= unlitTextMaterial[0] + 10) {
+        std::cerr << "scenery light did not illuminate material text\n";
+        passed = false;
+    }
+    setMapLights({testMapLight}, 1.0);
+    const auto cachedMapLit = spotlightPixel(false);
+    resetLightingBufferUploadStats();
+    setMapLights({testMapLight}, 1.0);
+    setMapLights({testMapLight}, 0.0);
+    const auto cachedMapOff = spotlightPixel(false);
+    setMapLights({testMapLight}, 1.0);
+    const auto cachedMapAgain = spotlightPixel(false);
+    uploadStats = lightingBufferUploadStats();
+    if (uploadStats.mapUploads != 0 || uploadStats.mapBytes != 0 ||
+        cachedMapAgain != cachedMapLit || cachedMapOff == cachedMapLit) {
+        std::cerr << "unchanged map light buffer was not reused correctly\n";
+        passed = false;
+    }
+    MapPointLight changedMapView = testMapLight;
+    changedMapView.position = {2, 0, -2};
+    setMapLights({changedMapView}, 1.0);
+    const auto changedMapPixel = spotlightPixel(false);
+    setMapLights({testMapLight}, 1.0);
+    uploadStats = lightingBufferUploadStats();
+    if (uploadStats.mapUploads != 2 || uploadStats.mapBytes != 2 * 32 ||
+        changedMapPixel == cachedMapLit || spotlightPixel(false) != cachedMapLit) {
+        std::cerr << "changed map light buffer was not uploaded correctly\n";
+        passed = false;
+    }
+    resetLightingBufferUploadStats();
+    const auto normalMapBufferData = pglBufferData;
+    successfulBufferData = normalMapBufferData;
+    pglBufferData = failAfterBufferUpload;
+    bool rejectedFailedMapUpload = false;
+    try {
+        setMapLights({changedMapView}, 1.0);
+    } catch (const std::runtime_error&) {
+        rejectedFailedMapUpload = true;
+    }
+    pglBufferData = normalMapBufferData;
+    setMapLights({testMapLight}, 1.0);
+    if (!rejectedFailedMapUpload || lightingBufferUploadStats().mapUploads != 1 ||
+        spotlightPixel(false) != cachedMapLit) {
+        std::cerr << "map light upload did not recover after an error\n";
+        passed = false;
+    }
+    StaticMapLightBuffer staticCache;
+    std::vector<MapPointLight> staticSources = {testMapLight, attenuatedMapLight};
+    std::vector<std::size_t> staticIndices = {0, 1};
+    std::vector<StaticMapLightView> staticViews = {{{0, 0, -2}, 0}};
+    resetLightingBufferUploadStats();
+    StaticMapLightBuffer failedUploadCache;
+    const auto normalBufferData = pglBufferData;
+    pglBufferData = failBufferUpload;
+    bool rejectedFailedUpload = false;
+    try {
+        setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    } catch (const std::runtime_error&) {
+        rejectedFailedUpload = true;
+    }
+    pglBufferData = normalBufferData;
+    if (!rejectedFailedUpload || failedUploadCache.sourceCount != 0 ||
+        lightingBufferUploadStats().staticMapUploads != 0) {
+        std::cerr << "failed static light upload was treated as successful\n";
+        passed = false;
+    }
+    const auto normalTexBuffer = pglTexBuffer;
+    pglTexBuffer = failTextureBufferBinding;
+    bool rejectedFailedBinding = false;
+    try {
+        setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    } catch (const std::runtime_error&) {
+        rejectedFailedBinding = true;
+    }
+    pglTexBuffer = normalTexBuffer;
+    if (!rejectedFailedBinding || failedUploadCache.sourceCount != 0 ||
+        lightingBufferUploadStats().staticMapUploads != 0) {
+        std::cerr << "failed static light texture binding was treated as successful\n";
+        passed = false;
+    }
+    setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    if (failedUploadCache.sourceCount != 2 || spotlightPixel(false) != cachedMapLit ||
+        lightingBufferUploadStats().staticMapUploads != 1) {
+        std::cerr << "static light upload did not recover after an error\n";
+        passed = false;
+    }
+    pglBufferData = failBufferUpload;
+    bool rejectedFailedReplacement = false;
+    try {
+        setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0, 1);
+    } catch (const std::runtime_error&) {
+        rejectedFailedReplacement = true;
+    }
+    pglBufferData = normalBufferData;
+    setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    if (!rejectedFailedReplacement || lightingBufferUploadStats().staticMapUploads != 2 ||
+        spotlightPixel(false) != cachedMapLit) {
+        std::cerr << "static source cache was not invalidated after a failed replacement\n";
+        passed = false;
+    }
+    pglTexBuffer = failTextureBufferBinding;
+    bool rejectedFailedReplacementBinding = false;
+    try {
+        setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0, 1);
+    } catch (const std::runtime_error&) {
+        rejectedFailedReplacementBinding = true;
+    }
+    pglTexBuffer = normalTexBuffer;
+    setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    if (!rejectedFailedReplacementBinding || lightingBufferUploadStats().staticMapUploads != 3 ||
+        spotlightPixel(false) != cachedMapLit) {
+        std::cerr << "static source cache was not invalidated after a failed binding\n";
+        passed = false;
+    }
+    staticViews[0].position = changedMapView.position;
+    successfulBufferData = normalBufferData;
+    pglBufferData = failAfterBufferUpload;
+    bool rejectedFailedReplacementView = false;
+    try {
+        setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    } catch (const std::runtime_error&) {
+        rejectedFailedReplacementView = true;
+    }
+    pglBufferData = normalBufferData;
+    staticViews[0].position = testMapLight.position;
+    const auto uploadsBeforeViewRetry = lightingBufferUploadStats().mapUploads;
+    setStaticMapLights(failedUploadCache, staticSources, staticIndices, staticViews, 1.0);
+    if (!rejectedFailedReplacementView ||
+        lightingBufferUploadStats().mapUploads != uploadsBeforeViewRetry + 1 ||
+        spotlightPixel(false) != cachedMapLit) {
+        std::cerr << "static view cache was not invalidated after a failed replacement\n";
+        passed = false;
+    }
+    releaseStaticMapLights(failedUploadCache);
+    resetLightingBufferUploadStats();
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    if (spotlightPixel(false) != cachedMapLit ||
+        lightingBufferUploadStats().staticMapUploads != 1 ||
+        lightingBufferUploadStats().staticMapBytes != 32 ||
+        lightingBufferUploadStats().mapBytes != 0) {
+        std::cerr << "static map-light registration or shading failed\n";
+        passed = false;
+    }
+    staticViews[0].position = changedMapView.position;
+    pglBufferData = failBufferUpload;
+    bool rejectedFailedView = false;
+    try {
+        setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    } catch (const std::runtime_error&) {
+        rejectedFailedView = true;
+    }
+    pglBufferData = normalBufferData;
+    if (!rejectedFailedView || lightingBufferUploadStats().mapBytes != 0) {
+        std::cerr << "failed static light view upload was treated as successful\n";
+        passed = false;
+    }
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    if (spotlightPixel(false) != changedMapPixel ||
+        lightingBufferUploadStats().staticMapUploads != 1 ||
+        lightingBufferUploadStats().mapBytes != 16) {
+        std::cerr << "static map-light source was reuploaded or view position was stale\n";
+        passed = false;
+    }
+    staticIndices = {1};
+    staticViews[0] = {{0, 0, -2}, 0};
+    setMapLights({attenuatedMapLight}, 1.0);
+    const auto expectedStaticTile = spotlightPixel(false);
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    if (spotlightPixel(false) != expectedStaticTile ||
+        lightingBufferUploadStats().staticMapUploads != 1) {
+        std::cerr << "static map-light tile change failed\n";
+        passed = false;
+    }
+    setMapLights({attenuatedMapLight}, 1.0);
+    const auto expectedMaterialTile = spotlightPixel(true);
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    if (spotlightPixel(true) != expectedMaterialTile ||
+        lightingBufferUploadStats().staticMapUploads != 1) {
+        std::cerr << "static map-light tile change failed for material shader\n";
+        passed = false;
+    }
+    staticIndices = {1, 0};
+    staticViews[0].sourceIndex = 1;
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    if (spotlightPixel(false) != cachedMapLit ||
+        lightingBufferUploadStats().staticMapUploads != 1) {
+        std::cerr << "static map-light reordered source selection failed\n";
+        passed = false;
+    }
+    staticSources.push_back(testMapLight);
+    staticIndices = {2};
+    staticViews[0].sourceIndex = 0;
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0);
+    if (spotlightPixel(false) != cachedMapLit ||
+        lightingBufferUploadStats().staticMapUploads != 2) {
+        std::cerr << "static map-light source growth failed\n";
+        passed = false;
+    }
+    staticIndices = {1};
+    staticSources[1].color = {0, 0.5, 0.25};
+    setMapLights({staticSources[1]}, 1.0);
+    const auto expectedStaticRevision = spotlightPixel(false);
+    setStaticMapLights(staticCache, staticSources, staticIndices, staticViews, 1.0, 1);
+    if (spotlightPixel(false) != expectedStaticRevision ||
+        lightingBufferUploadStats().staticMapUploads != 3) {
+        std::cerr << "static map-light revision change failed\n";
+        passed = false;
+    }
+    bool rejectedInvalidSource = false;
+    try {
+        setStaticMapLights(staticCache, staticSources, {staticSources.size()}, staticViews, 1.0, 2);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidSource = true;
+    }
+    if (!rejectedInvalidSource || spotlightPixel(false) != expectedStaticRevision) {
+        std::cerr << "invalid static map-light source changed renderer state\n";
+        passed = false;
+    }
+    StaticMapLightBuffer invalidInactiveCache;
+    std::vector<MapPointLight> partlyInvalidSources = {testMapLight, testMapLight};
+    partlyInvalidSources[1].radius = 0;
+    setStaticMapLights(invalidInactiveCache, partlyInvalidSources, {0},
+                       {{{0, 0, -2}, 0}}, 1.0);
+    if (spotlightPixel(false) != cachedMapLit || invalidInactiveCache.residentSources) {
+        std::cerr << "invalid inactive static source changed active lighting\n";
+        passed = false;
+    }
+    rejectedInvalidSource = false;
+    try {
+        setStaticMapLights(invalidInactiveCache, partlyInvalidSources, {1},
+                           {{{0, 0, -2}, 0}}, 1.0);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidSource = true;
+    }
+    if (!rejectedInvalidSource || spotlightPixel(false) != cachedMapLit) {
+        std::cerr << "invalid active static source was not rejected safely\n";
+        passed = false;
+    }
+    releaseStaticMapLights(invalidInactiveCache);
+    if (detail::mapLightTextureCapacity(5, 1) != 5 ||
+        detail::mapLightTextureCapacity(5, 2) != 2 ||
+        detail::mapLightTextureCapacity(0, 1) != 0) {
+        std::cerr << "map-light capacities must account for each buffer's texels per light\n";
+        passed = false;
+    }
+    const auto compactFallback = detail::compactStaticMapLightSelection(
+        staticSources, {1, 0}, staticViews, 1, 1);
+    if (!compactFallback || compactFallback->sourceIndices != std::vector<std::size_t>{1} ||
+        compactFallback->viewLights.size() != 1 || compactFallback->viewLights[0].sourceIndex != 0) {
+        std::cerr << "static map-light capacity fallback was not selected\n";
+        passed = false;
+    } else {
+        setStaticMapLights(staticCache, staticSources, compactFallback->sourceIndices,
+                           compactFallback->viewLights, 1.0);
+        if (spotlightPixel(false) != expectedStaticRevision) {
+            std::cerr << "static map-light capacity fallback changed the rendered light\n";
+            passed = false;
+        }
+    }
+    releaseStaticMapLights(staticCache);
+    {
+        map_detail::StaticLightTileIndex crossingIndex;
+        std::vector<MapPointLight> crossingSources = {{{299, 150, 0}, {1, 0.5, 0.25}, 5}};
+        crossingIndex.add(map_detail::tileKey(0, 0), 0);
+        crossingIndex.addInfluence(0, crossingSources[0].position, crossingSources[0].radius, 300);
+        StaticMapLightBuffer crossingCache;
+        for (const bool multiMaterial : {false, true}) {
+            setMapLights({}, 0.0);
+            const auto unlit = spotlightPixel(multiMaterial);
+            const auto& crossingSourcesSelected =
+                crossingIndex.activeIndices({map_detail::tileKey(1, 0)});
+            setStaticMapLights(crossingCache, crossingSources, crossingSourcesSelected,
+                               {{{-2, 0, -2}, 0}}, 1.0);
+            const auto litAcrossTile = spotlightPixel(multiMaterial);
+            const auto& outsideSourcesSelected =
+                crossingIndex.activeIndices({map_detail::tileKey(2, 0)});
+            setStaticMapLights(crossingCache, crossingSources, outsideSourcesSelected, {}, 1.0);
+            if (litAcrossTile == unlit || spotlightPixel(multiMaterial) != unlit) {
+                std::cerr << "static map-light tile crossing failed for "
+                          << (multiMaterial ? "material" : "model") << " shader\n";
+                passed = false;
+            }
+        }
+        crossingSources[0].radius = 0.5;
+        const auto& allCrossingSources = crossingIndex.allIndices();
+        const std::vector<StaticMapLightView> tailView = {{{0, 0, -2}, 0}};
+        for (const bool multiMaterial : {false, true}) {
+            setMapLights({}, 0.0);
+            const auto unlit = spotlightPixel(multiMaterial);
+            MapPointLight directTail = crossingSources[0];
+            directTail.position = {0, 0, -2};
+            setMapLights({directTail}, 1.0);
+            const auto expectedTail = spotlightPixel(multiMaterial);
+            setStaticMapLights(crossingCache, crossingSources, allCrossingSources, tailView, 1.0,
+                               1);
+            if (expectedTail == unlit || spotlightPixel(multiMaterial) != expectedTail) {
+                std::cerr << "loaded static light tail was omitted for "
+                          << (multiMaterial ? "material" : "model") << " shader\n";
+                passed = false;
+            }
+        }
+        releaseStaticMapLights(crossingCache);
+    }
     for (const bool multiMaterial : {false, true}) {
         setMapLights({}, 0.0);
         const auto unlit = spotlightPixel(multiMaterial);
         setMapLights({testMapLight}, 1.0);
         const auto illuminated = spotlightPixel(multiMaterial);
-        std::vector<MapPointLight> fullMapLightBudget(MAX_MAP_LIGHTS, testMapLight);
+        std::vector<MapPointLight> fullMapLightBudget(250, testMapLight);
         for (auto& light : fullMapLightBudget) {
             light.color = {0, 0, 0};
         }
         fullMapLightBudget.back() = testMapLight;
         setMapLights(fullMapLightBudget, 1.0);
         const auto lastMapLightSlot = spotlightPixel(multiMaterial);
+        staticIndices.resize(fullMapLightBudget.size());
+        staticViews.resize(fullMapLightBudget.size());
+        for (std::size_t index = 0; index < fullMapLightBudget.size(); ++index) {
+            staticIndices[index] = index;
+            staticViews[index] = {fullMapLightBudget[index].position, index};
+        }
+        setStaticMapLights(staticCache, fullMapLightBudget, staticIndices, staticViews, 1.0, 2);
+        if (spotlightPixel(multiMaterial) != lastMapLightSlot) {
+            std::cerr << "static map-light buffer lost a light beyond slot 128\n";
+            passed = false;
+        }
+        if (lightingBufferUploadStats().mapLightsMax < 250) {
+            std::cerr << "map light count did not include the 250th light\n";
+            passed = false;
+        }
         setMapLights({attenuatedMapLight}, 1.0);
         const auto attenuated = spotlightPixel(multiMaterial);
+        const MapPointLight hugeRadiusMapLight{{0, 0, -2.0e20}, {1, 0.5, 0.25}, 1.0e20};
+        setMapLights({hugeRadiusMapLight}, 1.0);
+        const auto hugeRadius = spotlightPixel(multiMaterial);
         setMapLights({testMapLight}, 0.0);
         const auto daylight = spotlightPixel(multiMaterial);
         if (illuminated[0] <= unlit[0] + 30 || illuminated[1] <= unlit[1] + 10 ||
@@ -756,13 +1607,106 @@ int main() {
             std::abs(static_cast<int>(lastMapLightSlot[1]) - illuminated[1]) > 1 ||
             std::abs(static_cast<int>(lastMapLightSlot[2]) - illuminated[2]) > 1 ||
             attenuated[0] <= unlit[0] || attenuated[0] >= illuminated[0] ||
+            hugeRadius[0] <= unlit[0] || hugeRadius[0] >= illuminated[0] ||
             daylight != unlit || illuminated[3] != unlit[3]) {
             std::cerr << "map point-light color, radius attenuation, or strength failed for "
                       << (multiMaterial ? "material" : "model") << " shader\n";
             passed = false;
         }
     }
+    releaseStaticMapLights(staticCache);
     setMapLights({}, 0.0);
+    StaticMapLightBuffer equivalenceCache;
+    std::vector<MapPointLight> equivalenceSources;
+    std::vector<std::size_t> equivalenceIndices;
+    for (std::size_t index = 0; index < 250; ++index) {
+        equivalenceSources.push_back(
+            {{static_cast<double>(index % 17) * 0.5 - 4.0,
+              static_cast<double>((index / 17) % 15) * 0.5 - 3.5,
+              -1.5 - static_cast<double>(index % 5) * 0.5},
+             {0.001 * (1 + index % 3), 0.001 * (1 + index % 5),
+              0.001 * (1 + index % 7)},
+             0.5 + 0.25 * (index % 4)});
+        equivalenceIndices.push_back((index * 37) % 250);
+    }
+    for (const Matrix4& view : {identityMatrix(), translationMatrix({0.1, 0.2, -0.5})}) {
+        setModelViewMatrix(view);
+        std::vector<MapPointLight> directLights;
+        std::vector<StaticMapLightView> persistentViews;
+        for (std::size_t index = 0; index < equivalenceIndices.size(); ++index) {
+            MapPointLight light = equivalenceSources[equivalenceIndices[index]];
+            const auto position =
+                transformPoint(view, {light.position[0], light.position[1], light.position[2], 1});
+            light.position = {position[0], position[1], position[2]};
+            directLights.push_back(light);
+            persistentViews.push_back({light.position, index});
+        }
+        for (const bool multiMaterial : {false, true}) {
+            std::array<std::uint8_t, 32 * 32 * 4> baseline = {};
+            std::array<std::uint8_t, 32 * 32 * 4> direct = {};
+            std::array<std::uint8_t, 32 * 32 * 4> persistent = {};
+            setMapLights({}, 0.0);
+            spotlightPixel(multiMaterial);
+            glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, baseline.data());
+            setMapLights(directLights, 1.0);
+            spotlightPixel(multiMaterial);
+            glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, direct.data());
+            setStaticMapLights(equivalenceCache, equivalenceSources, equivalenceIndices,
+                               persistentViews, 1.0);
+            spotlightPixel(multiMaterial);
+            glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, persistent.data());
+            if (direct != persistent || direct == baseline) {
+                std::cerr << "persistent and direct 250-light images differ or are unlit\n";
+                passed = false;
+            }
+        }
+    }
+    releaseStaticMapLights(equivalenceCache);
+    setMapLights({}, 0.0);
+    StaticMapLightBuffer mixedStaticCache;
+    MapPointLight mixedSource = testMapLight;
+    mixedSource.color = {0, 0, 0.4};
+    for (const Matrix4& view : {identityMatrix(), translationMatrix({0, 0, -0.5})}) {
+        setModelViewMatrix(view);
+        VehicleSpotlight player = testSpotlight;
+        VehicleSpotlight ai = testSpotlight;
+        player.position[2] += view[14];
+        ai.position[2] += view[14];
+        player.color = {0.4, 0, 0};
+        ai.color = {0, 0.4, 0};
+        MapPointLight scenery = testMapLight;
+        scenery.position[2] += view[14];
+        scenery.color = {0, 0, 0.4};
+        std::vector<openbus::app::vehicle::SpotlightCandidate> mixedCandidates = {
+            {ai, false}, {player, true}};
+        const auto mixedSpotlights =
+            openbus::app::vehicle::selectSpotlights(mixedCandidates, mixedCandidates.size());
+        for (const bool multiMaterial : {false, true}) {
+            setVehicleSpotlights({});
+            setMapLights({}, 0.0);
+            const auto baseline = spotlightPixel(multiMaterial);
+            setVehicleSpotlights(mixedSpotlights);
+            setStaticMapLights(mixedStaticCache, {mixedSource}, {0},
+                               {{scenery.position, 0}}, 1.0);
+            const auto combined = spotlightPixel(multiMaterial);
+            setVehicleSpotlights({player});
+            const auto withoutAi = spotlightPixel(multiMaterial);
+            setVehicleSpotlights({ai});
+            const auto withoutPlayer = spotlightPixel(multiMaterial);
+            setMapLights({}, 0.0);
+            const auto withoutScenery = spotlightPixel(multiMaterial);
+            if (combined[0] <= baseline[0] || combined[1] <= baseline[1] ||
+                combined[2] <= baseline[2] || withoutAi[1] >= combined[1] ||
+                withoutPlayer[0] >= combined[0] || withoutScenery[2] >= combined[2]) {
+                std::cerr << "combined player, AI and scenery lighting failed across views\n";
+                passed = false;
+            }
+            releaseStaticMapLights(mixedStaticCache);
+        }
+    }
+    setVehicleSpotlights({});
+    setMapLights({}, 0.0);
+    setModelViewMatrix(identityMatrix());
     setWeatherLighting(std::nullopt);
     const auto fogSample = [&](bool multiMaterial, double distance) {
         setModelViewMatrix(translationMatrix({0, 0, 1.0 - distance}));
@@ -921,14 +1865,35 @@ int main() {
         const auto reflectionNight = fogSample(multiMaterial, 1.0);
         setWeatherLighting(0.0, false);
         const auto restoredMainNight = fogSample(multiMaterial, 1.0);
+        const char* reflectionFloorSetting =
+            openbus::getEnvironment("OPENBUS_REFLECTION_AMBIENT_FLOOR");
+        float reflectionFloor = 0.25F;
+        if (reflectionFloorSetting != nullptr) {
+            const std::string_view value(reflectionFloorSetting);
+            float parsedFloor = 0.0F;
+            const auto [end, error] =
+                std::from_chars(value.data(), value.data() + value.size(), parsedFloor);
+            if (error == std::errc{} && end == value.data() + value.size() &&
+                std::isfinite(parsedFloor) && parsedFloor >= 0.0F && parsedFloor <= 1.0F) {
+                reflectionFloor = parsedFloor;
+            }
+        }
+        bool reflectionAmbientRaised = false;
         for (std::size_t channel = 0; channel < 3; ++channel) {
             if (!close(twilight[channel], static_cast<int>(std::lround(day[channel] * 0.5))) ||
-                night[channel] > 2 || reflectionNight[channel] <= night[channel] + 8 ||
+                night[channel] > 2 ||
+                (reflectionFloor == 0.0F && reflectionNight[channel] != night[channel]) ||
+                (reflectionFloor > 0.0F && reflectionNight[channel] < night[channel]) ||
                 restoredMainNight[channel] != night[channel]) {
                 std::cerr << "weather brightness did not scale GPU surface lighting\n";
                 passed = false;
                 break;
             }
+            reflectionAmbientRaised |= reflectionNight[channel] > night[channel];
+        }
+        if (reflectionFloor > 0.0F && !reflectionAmbientRaised) {
+            std::cerr << "reflection ambient floor did not brighten the night surface\n";
+            passed = false;
         }
         if (night[3] != day[3] || twilight[3] != day[3] || reflectionNight[3] != day[3] ||
             restoredMainNight[3] != day[3]) {
@@ -1652,7 +2617,7 @@ int main() {
         reflections.render(
             simulation, cameras, {0, 0, 32, 32},
             [](std::size_t) { return ReflectionRequirement{true, 64}; },
-            [&](const BusSimulation&, std::size_t, int width, int height) {
+            [&](const BusSimulation&, std::size_t, std::size_t, int width, int height) {
                 renderedTransparency = true;
                 observedReflectionPass = reflectionPassActive();
                 pglBindBuffer(GL_ARRAY_BUFFER, buffer);
@@ -1700,7 +2665,9 @@ int main() {
                     [targetSize](std::size_t) {
                         return ReflectionRequirement{true, targetSize};
                     },
-                    [&](const BusSimulation&, std::size_t, int, int) { rendered = true; },
+                    [&](const BusSimulation&, std::size_t, std::size_t, int, int) {
+                        rendered = true;
+                    },
                     [](int, int) {});
                 if (!rendered || drawSurface() != beforeResize) {
                     std::cerr << "reflection resize changed " << (hud ? "HUD" : "scene")
@@ -1744,6 +2711,100 @@ int main() {
         }
         pglDeleteBuffers(1, &streamedBuffer);
     }
+    if (!setReflectionInterval("2")) {
+        std::cerr << "could not configure the reflection interval regression\n";
+        passed = false;
+    } else {
+        VehicleCamera camera;
+        camera.kind = VehicleCameraKind::Reflexion;
+        const std::vector<VehicleCamera> cameras = {camera};
+        ReflectionRenderer intervalReflections;
+        intervalReflections.initialize(cameras);
+        BusConfiguration configuration{};
+        configuration.mass = 12000;
+        configuration.length = configuration.collisionLength = 10;
+        configuration.width = configuration.collisionWidth = 2.5;
+        configuration.bodyHalfLength = 5;
+        configuration.bodyHalfWidth = 1.25;
+        configuration.bodyHalfHeight = 1.5;
+        configuration.collisionHeight = 3;
+        configuration.wheelRadius = 0.5;
+        configuration.wheelHalfWidth = 0.15;
+        configuration.centerOfGravityHeight = 1;
+        configuration.axles = {{3, 2, 2, 1.5, 1, 240000, 90000, 20000, true, false},
+                               {-3, 2, 2, 1.5, 1, 240000, 90000, 20000, false, true}};
+        World world;
+        BusSimulation simulation(world, configuration, VehiclePlacement{{0, 0, 0}, 0});
+        std::array<bool, 3> renderedFrames = {};
+        for (std::size_t frame = 0; frame < renderedFrames.size(); ++frame) {
+            intervalReflections.render(
+                simulation, cameras, {0, 0, 32, 32},
+                [](std::size_t) { return ReflectionRequirement{true, 64}; },
+                [&renderedFrames, frame](const BusSimulation&, std::size_t, std::size_t, int,
+                                         int) {
+                    renderedFrames[frame] = true;
+                },
+                [](int, int) {});
+        }
+        if (!renderedFrames[0] || renderedFrames[1] || !renderedFrames[2]) {
+            std::cerr << "reflection interval did not render immediately and then every two frames\n";
+            passed = false;
+        }
+        intervalReflections.destroy();
+        if (!setReflectionInterval("4")) {
+            std::cerr << "could not configure the staggered reflection regression\n";
+            passed = false;
+        }
+        VehicleCamera driver;
+        driver.kind = VehicleCameraKind::Driver;
+        const std::vector<VehicleCamera> staggeredCameras = {driver, camera, camera};
+        ReflectionRenderer staggeredReflections;
+        staggeredReflections.initialize(staggeredCameras);
+        openbus::app::ReflectionTrafficViews trafficViews;
+        for (std::size_t frame = 0; frame < 5; ++frame) {
+            std::size_t draws = 0;
+            staggeredReflections.render(
+                simulation, staggeredCameras, {0, 0, 32, 32},
+                [&](std::size_t reflectionIndex) {
+                    const bool needed = reflectionIndex == 0 ? frame != 2 : frame > 0;
+                    trafficViews.setNeeded(reflectionIndex, needed);
+                    return ReflectionRequirement{needed, 64};
+                },
+                [&](const BusSimulation&, std::size_t cameraIndex, std::size_t reflectionIndex,
+                    int, int) {
+                    if (cameraIndex != reflectionIndex + 1) {
+                        std::cerr << "reflection camera and target indices were confused\n";
+                        passed = false;
+                    }
+                    ++draws;
+                    trafficViews.setView(reflectionIndex,
+                                         {{10.0 * (reflectionIndex + 1), 0, 0}, {}});
+                },
+                [](int, int) {});
+            const auto snapshot = trafficViews.snapshot();
+            if ((frame == 0 && (snapshot.size() != 1 || snapshot[0].position[0] != 10)) ||
+                (frame == 1 && (snapshot.size() != 2 || snapshot[0].position[0] != 10 ||
+                                snapshot[1].position[0] != 20)) ||
+                (frame == 2 && (snapshot.size() != 1 || snapshot[0].position[0] != 20)) ||
+                (frame == 3 && (draws != 0 || snapshot.size() != 2 ||
+                                snapshot[0].position[0] != 10 || snapshot[1].position[0] != 20)) ||
+                (frame == 4 && (draws != 1 || snapshot.size() != 2))) {
+                std::cerr << "staggered reflection views were lost, retained while hidden, or "
+                             "not restored on reappearance\n";
+                passed = false;
+            }
+        }
+        trafficViews.clear();
+        if (!trafficViews.snapshot().empty()) {
+            std::cerr << "reflection traffic views survived a camera reset\n";
+            passed = false;
+        }
+        staggeredReflections.destroy();
+    }
+    if (!setReflectionInterval("1")) {
+        std::cerr << "could not restore the reflection interval after its regression\n";
+        passed = false;
+    }
     if (glGetError() != GL_NO_ERROR) {
         std::cerr << "OpenGL material probe failed\n";
         passed = false;
@@ -1759,7 +2820,26 @@ int main() {
     glDeleteTextures(7, textures);
     pglDeleteBuffers(1, &indexBuffer);
     pglDeleteBuffers(1, &buffer);
+    setVehicleSpotlights({testSpotlight});
+    setMapLights({testMapLight}, 1.0);
+    setStaticMapLights(staticCache, {testMapLight}, {0}, {{{0, 0, -2}, 0}}, 1.0);
     shutdownCoreRenderer();
+    if (!initializeCoreRenderer()) {
+        std::cerr << "renderer reinitialization failed\n";
+        passed = false;
+    } else {
+        setVehicleSpotlights({testSpotlight});
+        setMapLights({testMapLight}, 1.0);
+        setStaticMapLights(staticCache, {testMapLight}, {0}, {{{0, 0, -2}, 0}}, 1.0);
+        const auto recreatedStats = lightingBufferUploadStats();
+        if (recreatedStats.vehicleUploads != 1 || recreatedStats.mapUploads != 2 ||
+            recreatedStats.staticMapUploads != 1 || glGetError() != GL_NO_ERROR) {
+            std::cerr << "light buffers were not restored after renderer reinitialization\n";
+            passed = false;
+        }
+        releaseStaticMapLights(staticCache);
+        shutdownCoreRenderer();
+    }
     glfwDestroyWindow(window);
     glfwTerminate();
     return passed ? 0 : 1;

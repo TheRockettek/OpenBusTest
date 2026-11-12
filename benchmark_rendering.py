@@ -86,6 +86,16 @@ def parse_gpu_timing_sample_stride(value: str) -> int:
     return stride
 
 
+def parse_trace_min_duration_us(value: str) -> int:
+    try:
+        duration = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("trace minimum duration must be an integer") from error
+    if not 1 <= duration <= 1_000_000:
+        raise argparse.ArgumentTypeError("trace minimum duration must be between 1 and 1000000")
+    return duration
+
+
 def summarize_trace(
     trace_path: Path,
     requested_resolution: str,
@@ -514,6 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
             "E400MMC_ADL_10.9m_Voith_LowHeight.cfg"
         ),
     )
+    parser.add_argument("--ai-bus-config", default=None)
+    parser.add_argument("--ai-model-config", default=None)
+    parser.add_argument("--ai-count", type=int, default=None)
     parser.add_argument("--output-directory", default="render-benchmark-results")
     parser.add_argument(
         "--reflection-size",
@@ -542,6 +555,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="disable experimental vehicle material batching",
     )
     parser.add_argument(
+        "--force-vehicle-spotlights",
+        action="store_true",
+        help="force spotlight definition 0 on loaded player and AI vehicles during the benchmark",
+    )
+    parser.add_argument(
+        "--trace-min-duration-us",
+        type=parse_trace_min_duration_us,
+        default=1,
+        help="omit trace scopes shorter than this duration to reduce trace size",
+    )
+    parser.add_argument(
         "--build-directory",
         default=None,
         help="CMake build directory containing OpenBus.exe (defaults to build-benchmark-ninja)",
@@ -564,6 +588,29 @@ def run_benchmark(args: argparse.Namespace) -> int:
         raise ValueError("--reflection-interval must be at least 1")
     if not math.isfinite(args.texture_scale) or not 0.25 <= args.texture_scale <= 1.0:
         raise ValueError("--texture-scale must be between 0.25 and 1.0")
+    if bool(args.ai_bus_config) != bool(args.ai_model_config):
+        raise ValueError("--ai-bus-config and --ai-model-config must be provided together")
+    if args.ai_count is not None and not args.ai_bus_config:
+        raise ValueError("--ai-count requires --ai-bus-config and --ai-model-config")
+    if args.ai_count is not None and not 1 <= args.ai_count <= 200:
+        raise ValueError("--ai-count must be between 1 and 200")
+    configured_ai_count = (
+        args.ai_count if args.ai_count is not None else (1 if args.ai_bus_config else 0)
+    )
+    benchmark_settings = {
+        "ForceVehicleSpotlights": args.force_vehicle_spotlights,
+        "TraceMinDurationUs": args.trace_min_duration_us,
+        "ConfiguredAiVehicleCount": configured_ai_count,
+        "AiBusConfig": args.ai_bus_config or "",
+        "AiModelConfig": args.ai_model_config or "",
+        "AiSpotlightNearMeters": os.environ.get("OPENBUS_AI_SPOTLIGHT_NEAR_METERS", "60"),
+        "AiSpotlightMediumMeters": os.environ.get("OPENBUS_AI_SPOTLIGHT_MEDIUM_METERS", "180"),
+        "AiSpotlightNearFrames": os.environ.get("OPENBUS_AI_SPOTLIGHT_NEAR_FRAMES", "2"),
+        "AiSpotlightMediumFrames": os.environ.get("OPENBUS_AI_SPOTLIGHT_MEDIUM_FRAMES", "6"),
+        "AiSpotlightFarFrames": os.environ.get("OPENBUS_AI_SPOTLIGHT_FAR_FRAMES", "20"),
+        "AiSpotlightApproachMps": os.environ.get("OPENBUS_AI_SPOTLIGHT_APPROACH_MPS", "5"),
+        "AiSpotlightHighSpeedMps": os.environ.get("OPENBUS_AI_SPOTLIGHT_HIGH_SPEED_MPS", "18"),
+    }
 
     build_dir = BUILD_DIR if args.build_directory is None else Path(args.build_directory)
     if not build_dir.is_absolute():
@@ -633,8 +680,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "OPENBUS_TRACE": "1",
                 "OPENBUS_TRACE_FILE": str(trace_path),
                 "OPENBUS_TRACE_MAX_EVENTS": str(TRACE_MAX_EVENTS),
-                "OPENBUS_TRACE_MIN_US": "1",
+                "OPENBUS_TRACE_MIN_US": str(args.trace_min_duration_us),
                 "OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES": "1",
+                "OPENBUS_BENCHMARK_FORCE_VEHICLE_SPOTLIGHTS": (
+                    "1" if args.force_vehicle_spotlights else "0"
+                ),
                 "OPENBUS_VSYNC": "off",
                 "OPENBUS_GL_FINISH_BEFORE_SWAP": "1" if args.finish_before_swap else "0",
                 "OPENBUS_SCRIPT_HZ": "60",
@@ -656,6 +706,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         environment.pop("OPENBUS_REFLECTION_MAX_FPS", None)
         environment.pop("OPENBUS_AI_BUS_CONFIG", None)
         environment.pop("OPENBUS_AI_MODEL_CONFIG", None)
+        environment.pop("OPENBUS_AI_COUNT", None)
+        if args.ai_bus_config:
+            environment["OPENBUS_AI_BUS_CONFIG"] = args.ai_bus_config
+            environment["OPENBUS_AI_MODEL_CONFIG"] = args.ai_model_config
+            environment["OPENBUS_AI_COUNT"] = str(configured_ai_count)
 
         with log_path.open("w", encoding="utf-8") as log_file:
             process = subprocess.run(
@@ -733,6 +788,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FinishBeforeSwap": args.finish_before_swap,
                     "TextureScale": args.texture_scale,
                     "MaterialBatching": args.material_batching,
+                    **benchmark_settings,
                     **gpu_configuration,
                     "RunOrder": run_order,
                     "Run": run_number,
@@ -769,6 +825,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FinishBeforeSwap": args.finish_before_swap,
                     "TextureScale": args.texture_scale,
                     "MaterialBatching": args.material_batching,
+                    **benchmark_settings,
                     **gpu_configuration,
                     "RunOrder": run_order,
                     "Run": run_number,
@@ -843,6 +900,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             row["FinishBeforeSwap"] = args.finish_before_swap
             row["TextureScale"] = args.texture_scale
             row["MaterialBatching"] = args.material_batching
+            row.update(benchmark_settings)
             row.update(gpu_configuration)
         for gpu_summary in gpu_summaries:
             gpu_timing_rows.append(
@@ -855,6 +913,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FinishBeforeSwap": args.finish_before_swap,
                     "TextureScale": args.texture_scale,
                     "MaterialBatching": args.material_batching,
+                    **benchmark_settings,
                     **gpu_configuration,
                     "RunOrder": run_order,
                     "Run": run_number,
@@ -876,6 +935,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FinishBeforeSwap": args.finish_before_swap,
                 "TextureScale": args.texture_scale,
                 "MaterialBatching": args.material_batching,
+                **benchmark_settings,
                 **gpu_configuration,
                 "RunOrder": run_order,
                 "Run": run_number,
@@ -899,6 +959,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FinishBeforeSwap": args.finish_before_swap,
                 "TextureScale": args.texture_scale,
                 "MaterialBatching": args.material_batching,
+                **benchmark_settings,
                 **gpu_configuration,
                 "RunOrder": run_order,
                 "Run": run_number,
@@ -933,6 +994,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FinishBeforeSwap",
         "TextureScale",
         "MaterialBatching",
+        "ForceVehicleSpotlights",
+        "TraceMinDurationUs",
+        "ConfiguredAiVehicleCount",
+        "AiBusConfig",
+        "AiModelConfig",
+        "AiSpotlightNearMeters",
+        "AiSpotlightMediumMeters",
+        "AiSpotlightNearFrames",
+        "AiSpotlightMediumFrames",
+        "AiSpotlightFarFrames",
+        "AiSpotlightApproachMps",
+        "AiSpotlightHighSpeedMps",
         "GpuTimingStatus",
         "GpuTimingSampleEveryNFrames",
         "Run",
@@ -958,6 +1031,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FinishBeforeSwap",
         "TextureScale",
         "MaterialBatching",
+        "ForceVehicleSpotlights",
+        "TraceMinDurationUs",
+        "ConfiguredAiVehicleCount",
+        "AiBusConfig",
+        "AiModelConfig",
+        "AiSpotlightNearMeters",
+        "AiSpotlightMediumMeters",
+        "AiSpotlightNearFrames",
+        "AiSpotlightMediumFrames",
+        "AiSpotlightFarFrames",
+        "AiSpotlightApproachMps",
+        "AiSpotlightHighSpeedMps",
         "GpuTimingStatus",
         "GpuTimingSampleEveryNFrames",
         "RunOrder",
@@ -993,6 +1078,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FinishBeforeSwap",
         "TextureScale",
         "MaterialBatching",
+        "ForceVehicleSpotlights",
+        "TraceMinDurationUs",
+        "ConfiguredAiVehicleCount",
+        "AiBusConfig",
+        "AiModelConfig",
+        "AiSpotlightNearMeters",
+        "AiSpotlightMediumMeters",
+        "AiSpotlightNearFrames",
+        "AiSpotlightMediumFrames",
+        "AiSpotlightFarFrames",
+        "AiSpotlightApproachMps",
+        "AiSpotlightHighSpeedMps",
         "GpuTimingStatus",
         "GpuTimingSampleEveryNFrames",
         "Run",
@@ -1017,6 +1114,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FinishBeforeSwap",
         "TextureScale",
         "MaterialBatching",
+        "ForceVehicleSpotlights",
+        "TraceMinDurationUs",
+        "ConfiguredAiVehicleCount",
+        "AiBusConfig",
+        "AiModelConfig",
+        "AiSpotlightNearMeters",
+        "AiSpotlightMediumMeters",
+        "AiSpotlightNearFrames",
+        "AiSpotlightMediumFrames",
+        "AiSpotlightFarFrames",
+        "AiSpotlightApproachMps",
+        "AiSpotlightHighSpeedMps",
         "GpuTimingStatus",
         "GpuTimingSampleEveryNFrames",
         "RunOrder",
@@ -1038,6 +1147,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FinishBeforeSwap",
         "TextureScale",
         "MaterialBatching",
+        "ForceVehicleSpotlights",
+        "TraceMinDurationUs",
+        "ConfiguredAiVehicleCount",
+        "AiBusConfig",
+        "AiModelConfig",
+        "AiSpotlightNearMeters",
+        "AiSpotlightMediumMeters",
+        "AiSpotlightNearFrames",
+        "AiSpotlightMediumFrames",
+        "AiSpotlightFarFrames",
+        "AiSpotlightApproachMps",
+        "AiSpotlightHighSpeedMps",
         "GpuTimingStatus",
         "GpuTimingSampleEveryNFrames",
         "RunOrder",

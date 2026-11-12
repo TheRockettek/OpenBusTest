@@ -10,6 +10,7 @@
 GenBuffersProc pglGenBuffers = nullptr;
 BindBufferProc pglBindBuffer = nullptr;
 BufferDataProc pglBufferData = nullptr;
+TexBufferProc pglTexBuffer = nullptr;
 DeleteBuffersProc pglDeleteBuffers = nullptr;
 CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
 CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
@@ -59,6 +60,7 @@ GetQueryObjectuivProc pglGetQueryObjectuiv = nullptr;
 GetQueryObjectui64vProc pglGetQueryObjectui64v = nullptr;
 BeginConditionalRenderProc pglBeginConditionalRender = nullptr;
 EndConditionalRenderProc pglEndConditionalRender = nullptr;
+DebugMessageCallbackProc pglDebugMessageCallback = nullptr;
 DispatchComputeProc pglDispatchCompute = nullptr;
 MemoryBarrierProc pglMemoryBarrier = nullptr;
 BindBufferBaseProc pglBindBufferBase = nullptr;
@@ -85,6 +87,7 @@ bool loadOpenGLFunctions() {
     pglGenBuffers = reinterpret_cast<GenBuffersProc>(glfwGetProcAddress("glGenBuffers"));
     pglBindBuffer = reinterpret_cast<BindBufferProc>(glfwGetProcAddress("glBindBuffer"));
     pglBufferData = reinterpret_cast<BufferDataProc>(glfwGetProcAddress("glBufferData"));
+    pglTexBuffer = reinterpret_cast<TexBufferProc>(glfwGetProcAddress("glTexBuffer"));
     pglDeleteBuffers = reinterpret_cast<DeleteBuffersProc>(glfwGetProcAddress("glDeleteBuffers"));
     pglCompressedTexImage2D =
         reinterpret_cast<CompressedTexImage2DProc>(glfwGetProcAddress("glCompressedTexImage2D"));
@@ -158,8 +161,14 @@ bool loadOpenGLFunctions() {
         glfwGetProcAddress("glBeginConditionalRender"));
     pglEndConditionalRender =
         reinterpret_cast<EndConditionalRenderProc>(glfwGetProcAddress("glEndConditionalRender"));
+    pglDebugMessageCallback =
+        reinterpret_cast<DebugMessageCallbackProc>(glfwGetProcAddress("glDebugMessageCallback"));
+    if (pglDebugMessageCallback == nullptr) {
+        pglDebugMessageCallback = reinterpret_cast<DebugMessageCallbackProc>(
+            glfwGetProcAddress("glDebugMessageCallbackKHR"));
+    }
     const bool available =
-        pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
+        pglGenBuffers && pglBindBuffer && pglBufferData && pglTexBuffer && pglDeleteBuffers &&
         pglCompressedTexImage2D && pglGetStringi && pglActiveTexture && pglBlendFuncSeparate &&
         pglBlendEquationSeparate && pglGenVertexArrays && pglBindVertexArray &&
         pglDeleteVertexArrays && pglEnableVertexAttribArray && pglDisableVertexAttribArray &&

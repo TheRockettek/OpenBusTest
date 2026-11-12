@@ -12,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +24,76 @@ constexpr std::uint8_t TriangleList = 0x49;
 constexpr std::uint8_t MaterialList = 0x26;
 constexpr std::uint8_t BoneList = 0x54;
 constexpr std::uint8_t Transform = 0x79;
+
+bool isValidUtf8(std::string_view value) {
+    for (std::size_t index = 0; index < value.size();) {
+        const auto first = static_cast<std::uint8_t>(value[index]);
+        if (first <= 0x7Fu) {
+            ++index;
+            continue;
+        }
+        const std::size_t length = first >= 0xC2u && first <= 0xDFu   ? 2
+                                   : first >= 0xE0u && first <= 0xEFu ? 3
+                                   : first >= 0xF0u && first <= 0xF4u ? 4
+                                                                      : 0;
+        if (length == 0 || index + length > value.size()) {
+            return false;
+        }
+        std::uint32_t codePoint = first & ((1u << (7u - static_cast<unsigned int>(length))) - 1u);
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const auto next = static_cast<std::uint8_t>(value[index + offset]);
+            if ((next & 0xC0u) != 0x80u) {
+                return false;
+            }
+            codePoint = (codePoint << 6u) | (next & 0x3Fu);
+        }
+        if ((length == 2 && codePoint < 0x80u) || (length == 3 && codePoint < 0x800u) ||
+            (length == 4 && codePoint < 0x10000u) ||
+            (codePoint >= 0xD800u && codePoint <= 0xDFFFu) || codePoint > 0x10FFFFu) {
+            return false;
+        }
+        index += length;
+    }
+    return true;
+}
+
+void appendUtf8(std::string& output, std::uint32_t codePoint) {
+    if (codePoint <= 0x7Fu) {
+        output.push_back(static_cast<char>(codePoint));
+    } else if (codePoint <= 0x7FFu) {
+        output.push_back(static_cast<char>(0xC0u | (codePoint >> 6u)));
+        output.push_back(static_cast<char>(0x80u | (codePoint & 0x3Fu)));
+    } else if (codePoint <= 0xFFFFu) {
+        output.push_back(static_cast<char>(0xE0u | (codePoint >> 12u)));
+        output.push_back(static_cast<char>(0x80u | ((codePoint >> 6u) & 0x3Fu)));
+        output.push_back(static_cast<char>(0x80u | (codePoint & 0x3Fu)));
+    } else {
+        output.push_back(static_cast<char>(0xF0u | (codePoint >> 18u)));
+        output.push_back(static_cast<char>(0x80u | ((codePoint >> 12u) & 0x3Fu)));
+        output.push_back(static_cast<char>(0x80u | ((codePoint >> 6u) & 0x3Fu)));
+        output.push_back(static_cast<char>(0x80u | (codePoint & 0x3Fu)));
+    }
+}
+
+std::string normalizeO3DTextureName(std::string value) {
+    if (isValidUtf8(value)) {
+        return value;
+    }
+
+    static constexpr std::array<std::uint16_t, 32> Windows1252Extension = {
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
+        0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022,
+        0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178};
+    std::string converted;
+    converted.reserve(value.size() * 2);
+    for (const unsigned char byte : value) {
+        const std::uint32_t codePoint = byte >= 0x80u && byte <= 0x9Fu
+                                            ? Windows1252Extension[byte - 0x80u]
+                                            : static_cast<std::uint32_t>(byte);
+        appendUtf8(converted, codePoint);
+    }
+    return converted;
+}
 
 class Reader {
   public:
@@ -335,7 +406,7 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
                     material.specular = {reader.f32(), reader.f32(), reader.f32()};
                     material.emission = {reader.f32(), reader.f32(), reader.f32()};
                     material.specularPower = reader.f32();
-                    material.textureName = reader.string();
+                    material.textureName = normalizeO3DTextureName(reader.string());
                     result->materials.emplace("matl_" + std::to_string(index), std::move(material));
                 }
                 break;

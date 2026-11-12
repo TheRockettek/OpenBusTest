@@ -484,32 +484,40 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
         return true;
     TraceScope trace("render", visibility ? "ComputeCulling::dispatchAndReadback"
                                           : "ComputeCulling::dispatchIndirect");
-    for (const auto& item : items) {
-        if ((item.metadata[0] & CullLod) != 0 &&
-            (item.metadata[2] > lodBoundaries.size() ||
-             item.metadata[3] > lodBoundaries.size() - item.metadata[2])) {
-            static bool loggedInvalidLod = false;
-            if (!loggedInvalidLod) {
-                gameLog.Warning("Invalid compute culling LOD range; using CPU for this view");
-                loggedInvalidLod = true;
+    {
+        TraceScope validation("render", visibility ? "ComputeCulling::dispatchAndReadback.validate"
+                                                   : "ComputeCulling::dispatchIndirect.validate");
+        for (const auto& item : items) {
+            if ((item.metadata[0] & CullLod) != 0 &&
+                (item.metadata[2] > lodBoundaries.size() ||
+                 item.metadata[3] > lodBoundaries.size() - item.metadata[2])) {
+                static bool loggedInvalidLod = false;
+                if (!loggedInvalidLod) {
+                    gameLog.Warning("Invalid compute culling LOD range; using CPU for this view");
+                    loggedInvalidLod = true;
+                }
+                return false;
             }
-            return false;
-        }
-        if (!visibility &&
-            item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())) {
-            static bool loggedInvalidCount = false;
-            if (!loggedInvalidCount) {
-                gameLog.Warning("Indirect draw count exceeds GLsizei; using CPU for this view");
-                loggedInvalidCount = true;
+            if (!visibility &&
+                item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())) {
+                static bool loggedInvalidCount = false;
+                if (!loggedInvalidCount) {
+                    gameLog.Warning("Indirect draw count exceeds GLsizei; using CPU for this view");
+                    loggedInvalidCount = true;
+                }
+                return false;
             }
-            return false;
         }
     }
     // Errors from earlier texture uploads/draws must not be attributed to this
     // dispatch and permanently disable an otherwise functioning compute path.
     bool earlierError = false;
-    while (glGetError() != GL_NO_ERROR)
-        earlierError = true;
+    {
+        TraceScope errors("render", visibility ? "ComputeCulling::dispatchAndReadback.clearErrors"
+                                               : "ComputeCulling::dispatchIndirect.clearErrors");
+        while (glGetError() != GL_NO_ERROR)
+            earlierError = true;
+    }
     static bool loggedEarlierError = false;
     if (earlierError && !loggedEarlierError) {
         gameLog.Warning(
@@ -518,18 +526,22 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     }
     GLint previousProgram = 0, previousBuffer = 0;
     std::array<GLint, 3> previousBindings = {};
-    glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &previousProgram);
-    if (storageBindingTracked && storageBindingsCaptured) {
-        previousBuffer = savedStorageBinding;
-        previousBindings = savedIndexedStorageBindings;
-    } else {
-        glGetIntegerv(storageBinding, &previousBuffer);
-        for (GLuint i = 0; i < 3; ++i)
-            pglGetIntegeri(storageBinding, i, &previousBindings[i]);
-        if (storageBindingTracked) {
-            savedStorageBinding = previousBuffer;
-            savedIndexedStorageBindings = previousBindings;
-            storageBindingsCaptured = true;
+    {
+        TraceScope save("render", visibility ? "ComputeCulling::dispatchAndReadback.saveState"
+                                             : "ComputeCulling::dispatchIndirect.saveState");
+        glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &previousProgram);
+        if (storageBindingTracked && storageBindingsCaptured) {
+            previousBuffer = savedStorageBinding;
+            previousBindings = savedIndexedStorageBindings;
+        } else {
+            glGetIntegerv(storageBinding, &previousBuffer);
+            for (GLuint i = 0; i < 3; ++i)
+                pglGetIntegeri(storageBinding, i, &previousBindings[i]);
+            if (storageBindingTracked) {
+                savedStorageBinding = previousBuffer;
+                savedIndexedStorageBindings = previousBindings;
+                storageBindingsCaptured = true;
+            }
         }
     }
     const char* uploadName = visibility ? "ComputeCulling::dispatchAndReadback.uploadBuffers"
@@ -591,15 +603,24 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
                             static_cast<std::ptrdiff_t>(visibility->size() * sizeof(std::uint32_t)),
                             visibility->data());
     }
-    const bool success = glGetError() == GL_NO_ERROR;
+    bool success = false;
+    {
+        TraceScope errors("render", visibility ? "ComputeCulling::dispatchAndReadback.checkError"
+                                               : "ComputeCulling::dispatchIndirect.checkError");
+        success = glGetError() == GL_NO_ERROR;
+    }
     if (success && uploadLod) {
         uploadedLodBoundaries.assign(lodBoundaries.begin(), lodBoundaries.end());
         lodBufferInitialized = true;
     }
-    pglUseProgram(static_cast<GLuint>(previousProgram));
-    for (GLuint i = 0; i < 3; ++i)
-        pglBindBufferBase(storageBuffer, i, static_cast<GLuint>(previousBindings[i]));
-    pglBindBuffer(storageBuffer, static_cast<GLuint>(previousBuffer));
+    {
+        TraceScope restore("render", visibility ? "ComputeCulling::dispatchAndReadback.restoreState"
+                                                : "ComputeCulling::dispatchIndirect.restoreState");
+        pglUseProgram(static_cast<GLuint>(previousProgram));
+        for (GLuint i = 0; i < 3; ++i)
+            pglBindBufferBase(storageBuffer, i, static_cast<GLuint>(previousBindings[i]));
+        pglBindBuffer(storageBuffer, static_cast<GLuint>(previousBuffer));
+    }
     if (!success) {
         if (visibility)
             visibility->clear();

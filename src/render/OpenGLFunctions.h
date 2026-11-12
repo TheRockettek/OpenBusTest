@@ -21,6 +21,12 @@
 #ifndef GL_DYNAMIC_DRAW
 #define GL_DYNAMIC_DRAW 0x88E8
 #endif
+#ifndef GL_DEBUG_OUTPUT
+#define GL_DEBUG_OUTPUT 0x92E0
+#endif
+#ifndef GL_DEBUG_TYPE_ERROR
+#define GL_DEBUG_TYPE_ERROR 0x824C
+#endif
 
 #ifndef GL_VERTEX_SHADER
 #define GL_VERTEX_SHADER 0x8B31
@@ -33,6 +39,7 @@
 using GenBuffersProc = void (*)(GLsizei, GLuint*);
 using BindBufferProc = void (*)(GLenum, GLuint);
 using BufferDataProc = void (*)(GLenum, std::ptrdiff_t, const void*, GLenum);
+using TexBufferProc = void(APIENTRY*)(GLenum, GLenum, GLuint);
 using DeleteBuffersProc = void (*)(GLsizei, const GLuint*);
 using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei,
                                           const void*);
@@ -84,10 +91,14 @@ using GetQueryObjectuivProc = void(APIENTRY*)(GLuint, GLenum, GLuint*);
 using GetQueryObjectui64vProc = void(APIENTRY*)(GLuint, GLenum, std::uint64_t*);
 using BeginConditionalRenderProc = void(APIENTRY*)(GLuint, GLenum);
 using EndConditionalRenderProc = void(APIENTRY*)();
+using DebugMessageCallbackProc = void(APIENTRY*)(void(APIENTRY*)(GLenum, GLenum, GLuint, GLenum,
+                                                                 GLsizei, const char*, const void*),
+                                                 const void*);
 
 extern GenBuffersProc pglGenBuffers;
 extern BindBufferProc pglBindBuffer;
 extern BufferDataProc pglBufferData;
+extern TexBufferProc pglTexBuffer;
 extern DeleteBuffersProc pglDeleteBuffers;
 extern CompressedTexImage2DProc pglCompressedTexImage2D;
 extern CompressedTexImage3DProc pglCompressedTexImage3D;
@@ -137,6 +148,7 @@ extern GetQueryObjectuivProc pglGetQueryObjectuiv;
 extern GetQueryObjectui64vProc pglGetQueryObjectui64v;
 extern BeginConditionalRenderProc pglBeginConditionalRender;
 extern EndConditionalRenderProc pglEndConditionalRender;
+extern DebugMessageCallbackProc pglDebugMessageCallback;
 
 bool loadOpenGLFunctions();
 [[nodiscard]] bool hasOpenGLExtension(std::string_view extension);

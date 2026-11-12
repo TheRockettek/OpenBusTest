@@ -1368,6 +1368,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         if (roadData == preparedTileRoads.end()) {
             throw std::logic_error("Active map tile road data was not prepared");
         }
+        refreshUnresolvedSceneryLights(tileReference->x, tileReference->y, tileData->second);
         buildTileContent(*tileReference, tileData->second, roadData->second);
         loadedContentTileKeys.insert(key);
         pendingTileContentData.erase(tileData);
@@ -2220,6 +2221,7 @@ void MapSceneLoader::indexMapContent() {
             }
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
+            indexed.labels = object.labels;
             indexed.rules = object.rules;
             indexed.tileX = tileReference.x;
             indexed.tileY = tileReference.y;
@@ -2249,6 +2251,7 @@ void MapSceneLoader::indexMapContent() {
             indexed.parentId = object.attachedToObjectId;
             indexed.attachmentIndex = object.attachPointIndexValue;
             indexed.rotationDegrees = object.rotationDegrees;
+            indexed.labels = object.labels;
             indexed.rules = object.rules;
             indexed.tileX = tileReference.x;
             indexed.tileY = tileReference.y;
@@ -2276,7 +2279,8 @@ void MapSceneLoader::indexMapContent() {
                     loadSceneryObjectMetadata(attachment.assetPath);
                 trafficPaths->second = metadata != nullptr && !metadata->trafficPaths.empty();
             }
-            if (trafficPaths->second) {
+            const SceneryObjectConfig* metadata = loadSceneryObjectMetadata(attachment.assetPath);
+            if (trafficPaths->second || (metadata != nullptr && !metadata->mapLights.empty())) {
                 requiredSplineAttachmentIds.insert(attachment.id);
             }
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
@@ -2312,6 +2316,7 @@ void MapSceneLoader::indexMapContent() {
     TraceScope attachmentTrace("map", "MapSceneLoader.indexMapContent.sceneryTrafficPaths");
     indexSceneryTrafficPathsMapWide();
     attachmentTrace.finish();
+    indexSceneryLightsMapWide();
     gameLog.Log("Map tile index parsed; connecting road and traffic route networks.");
     TraceScope finalizeTrace("map", "MapSceneLoader.indexMapContent.finalizeNetworks");
     roadConnections.finalize();
@@ -2553,11 +2558,12 @@ void MapSceneLoader::releaseUnusedSeasonalSceneryTextures() {
 std::optional<double> MapSceneLoader::sampleTerrainHeight(int tileX, int tileY, double localX,
                                                           double localY) const {
     const auto found = terrainByCoordinate.find(tileKey(tileX, tileY));
-    if (found == terrainByCoordinate.end()) {
+    const auto* grid =
+        found != terrainByCoordinate.end() ? &found->second : sceneryLightTerrain(tileX, tileY);
+    if (grid == nullptr) {
         return std::nullopt;
     }
-    return openbus::map::sampleMapTerrainHeight(found->second, localX, localY,
-                                                map.coordinates.tileSize);
+    return openbus::map::sampleMapTerrainHeight(*grid, localX, localY, map.coordinates.tileSize);
 }
 
 std::optional<std::array<double, 3>> MapSceneLoader::sampleTerrainNormal(double worldX,
@@ -2565,13 +2571,41 @@ std::optional<std::array<double, 3>> MapSceneLoader::sampleTerrainNormal(double 
     const int tileX = static_cast<int>(std::floor(worldX / map.coordinates.tileSize));
     const int tileY = static_cast<int>(std::floor(worldY / map.coordinates.tileSize));
     const auto found = terrainByCoordinate.find(tileKey(tileX, tileY));
-    if (found == terrainByCoordinate.end()) {
+    const auto* grid =
+        found != terrainByCoordinate.end() ? &found->second : sceneryLightTerrain(tileX, tileY);
+    if (grid == nullptr) {
         return std::nullopt;
     }
     const double localX = worldX - static_cast<double>(tileX) * map.coordinates.tileSize;
     const double localY = worldY - static_cast<double>(tileY) * map.coordinates.tileSize;
-    return openbus::map::sampleMapTerrainNormal(found->second, localX, localY,
-                                                map.coordinates.tileSize);
+    return openbus::map::sampleMapTerrainNormal(*grid, localX, localY, map.coordinates.tileSize);
+}
+
+const openbus::map::TerrainGrid* MapSceneLoader::sceneryLightTerrain(int tileX, int tileY) const {
+    if (!indexingSceneryLights_) {
+        return nullptr;
+    }
+    const auto key = tileKey(tileX, tileY);
+    const auto existing = sceneryLightTerrain_.find(key);
+    if (existing != sceneryLightTerrain_.end()) {
+        return &existing->second;
+    }
+    const auto reference = sceneryLightTerrainReferences_.find(key);
+    if (reference == sceneryLightTerrainReferences_.end() || !reference->second->hasTerrainFile ||
+        unavailableSceneryLightTerrain_.contains(key)) {
+        return nullptr;
+    }
+    try {
+        auto [it, inserted] = sceneryLightTerrain_.emplace(
+            key, openbus::map::loadTerrainGrid(reference->second->terrainPath));
+        (void)inserted;
+        return &it->second;
+    } catch (const std::exception& error) {
+        unavailableSceneryLightTerrain_.insert(key);
+        gameLog.Warning("Could not load terrain for map-wide scenery lights: " +
+                        std::string(error.what()));
+        return nullptr;
+    }
 }
 
 } // namespace openbus::rendering

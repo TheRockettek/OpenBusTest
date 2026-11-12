@@ -4,7 +4,9 @@
 #include "app/MapTrafficWorker.h"
 #include "app/vehicle/VehicleControlCables.h"
 #include "app/vehicle/PassengerRequestVariables.h"
+#include "core/Environment.h"
 #include "core/PassengerVariables.h"
+#include "core/PerfTrace.h"
 #include "render/map/MapRenderer.h"
 
 #include <algorithm>
@@ -2127,6 +2129,32 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
         }
         playerVehicle_->soundBank.updateAmbient(soundEngine_, playerVehicle_->variables,
                                                 soundViewpoint_);
+    }
+
+    static const bool forceBenchmarkVehicleSpotlights =
+        openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK")) &&
+        openbus::rendering::parseEnabledFlag(
+            openbus::getEnvironment("OPENBUS_BENCHMARK_FORCE_VEHICLE_SPOTLIGHTS"));
+    if (forceBenchmarkVehicleSpotlights) {
+        if (playerVehicle_ == nullptr || playerVehicle_->spotlights.empty()) {
+            throw std::runtime_error(
+                "Vehicle spotlight benchmark requires spotlight definitions on the player bus");
+        }
+        std::size_t selectedVehicles = 0;
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            if (vehicle->spotlights.empty() || vehicle->mapTrafficRouteFinished ||
+                (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive)) {
+                continue;
+            }
+            vehicle->variables.set("spot_select", 0.0F);
+            ++selectedVehicles;
+        }
+        static bool overrideLogged = false;
+        if (!overrideLogged) {
+            gameLog.Log("Benchmark forcing spotlight definition 0 for " +
+                        std::to_string(selectedVehicles) + " loaded vehicles");
+            overrideLogged = true;
+        }
     }
 }
 

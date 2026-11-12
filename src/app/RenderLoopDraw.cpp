@@ -72,6 +72,64 @@ std::optional<ImVec2> projectTrafficDebugLabel(const openbus::rendering::Matrix4
                   static_cast<float>((-normalizedY * 0.5 + 0.5) * displaySize.y));
 }
 
+struct VehicleSpotlightRoot {
+    Matrix4 modelToWorld = openbus::rendering::identityMatrix();
+    std::array<double, 3> position = {};
+    double yawRadians = 0.0;
+    double pitchDegrees = 0.0;
+    double rollDegrees = 0.0;
+};
+
+VehicleSpotlightRoot vehicleSpotlightRoot(Vehicle& vehicle,
+                                          openbus::rendering::MapRenderer* mapRenderer) {
+    if (vehicle.odeSimulation != nullptr) {
+        const BodyPose pose = vehicle.odeSimulation->chassisPose();
+        return {openbus::rendering::multiplyMatrix4(
+                    openbus::rendering::poseMatrix(pose),
+                    openbus::rendering::translationMatrix({0.0, 0.0, vehicle.modelOffsetZ})),
+                pose.position, std::atan2(pose.rotation[3], pose.rotation[0]), 0.0, 0.0};
+    }
+
+    VehiclePlacement placement = vehicle.trafficRenderPlacement.value_or(vehicle.placement);
+    if (mapRenderer != nullptr && !vehicle.followsMapTrafficRoute) {
+        placement.position[2] =
+            mapRenderer->terrainHeightAt(placement.position[0], placement.position[1])
+                .value_or(placement.position[2]);
+    }
+    const VehiclePlacement modelRoot =
+        openbus::rendering::makeModelRootPlacement(placement, vehicle.modelOffsetZ);
+    Matrix4 modelToWorld = openbus::rendering::translationMatrix(modelRoot.position);
+    modelToWorld = openbus::rendering::multiplyMatrix4(
+        modelToWorld, openbus::rendering::rotationMatrix(placement.yawDegrees, 0.0, 0.0, 1.0));
+    modelToWorld = openbus::rendering::multiplyMatrix4(
+        modelToWorld, openbus::rendering::rotationMatrix(-placement.pitchDegrees, 0.0, 1.0, 0.0));
+    modelToWorld = openbus::rendering::multiplyMatrix4(
+        modelToWorld, openbus::rendering::rotationMatrix(placement.rollDegrees, 1.0, 0.0, 0.0));
+    modelToWorld = openbus::rendering::multiplyMatrix4(
+        modelToWorld, openbus::rendering::translationMatrix({0.0, 0.0, vehicle.modelOffsetZ}));
+    return {modelToWorld, placement.position, placement.yawDegrees * std::numbers::pi / 180.0,
+            placement.pitchDegrees, placement.rollDegrees};
+}
+
+openbus::rendering::VehicleSpotlight moveCachedSpotlight(const Vehicle::AiSpotlightCache& cache,
+                                                         const VehicleSpotlightRoot& currentRoot) {
+    auto light = cache.worldLight;
+    const double yawDelta =
+        std::remainder(currentRoot.yawRadians - cache.rootYawRadians, 2.0 * std::numbers::pi);
+    const double cosine = std::cos(yawDelta);
+    const double sine = std::sin(yawDelta);
+    const double offsetX = light.position[0] - cache.rootPosition[0];
+    const double offsetY = light.position[1] - cache.rootPosition[1];
+    light.position[0] = currentRoot.position[0] + cosine * offsetX - sine * offsetY;
+    light.position[1] = currentRoot.position[1] + sine * offsetX + cosine * offsetY;
+    light.position[2] += currentRoot.position[2] - cache.rootPosition[2];
+    const double directionX = light.direction[0];
+    const double directionY = light.direction[1];
+    light.direction[0] = cosine * directionX - sine * directionY;
+    light.direction[1] = sine * directionX + cosine * directionY;
+    return light;
+}
+
 void appendPoleCollisionOutline(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
                                 const MapPoleState& pole) {
     const std::array<double, 3> axis = {pole.topPosition[0] - pole.basePosition[0],
@@ -800,7 +858,6 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation, const Wo
     const double previousLookYaw = viewLookYaw_;
     const double previousLookPitch = viewLookPitch_;
     bool reflectionTrianglesReset = false;
-    bool reflectionTrafficViewsReset = false;
     renderingReflection_ = true;
     openbus::rendering::setFrameTriangleCountReflectionPass(true);
     reflectionRenderer_->render(
@@ -816,11 +873,12 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation, const Wo
                         std::max(result.size, vehicle->requiredReflectionSize(reflectionIndex));
                 }
             }
+            trafficReflectionViewsByIndex_.setNeeded(reflectionIndex, result.needed);
             return result;
         },
-        [this, &world, &reflectionTrianglesReset,
-         &reflectionTrafficViewsReset](const BusSimulation& reflectionSimulation,
-                                       std::size_t cameraIndex, int width, int height) {
+        [this, &world, &reflectionTrianglesReset](
+            const BusSimulation& reflectionSimulation, std::size_t cameraIndex,
+            std::size_t reflectionIndex, int width, int height) {
             if (!reflectionTrianglesReset) {
                 openbus::rendering::resetFrameReflectionTriangleCount();
                 reflectionTrianglesReset = true;
@@ -834,16 +892,13 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation, const Wo
             setPerspective(static_cast<double>(width), static_cast<double>(height),
                            currentFieldOfView());
             draw(reflectionSimulation, world);
-            if (!reflectionTrafficViewsReset) {
-                trafficReflectionCameraViews_.clear();
-                reflectionTrafficViewsReset = true;
-            }
             const auto& view = modelViewMatrix();
             const std::array<double, 3> cameraPosition = {
                 -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]),
                 -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]),
                 -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])};
-            trafficReflectionCameraViews_.push_back(
+            trafficReflectionViewsByIndex_.setView(
+                reflectionIndex,
                 {cameraPosition, multiplyMatrix4(openbus::rendering::projectionMatrix(), view)});
         },
         [this, previousCameraView, previousFovOffset, previousLookYaw,
@@ -857,6 +912,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation, const Wo
             setPerspective(static_cast<double>(width), static_cast<double>(height),
                            currentFieldOfView());
         });
+    trafficReflectionCameraViews_ = trafficReflectionViewsByIndex_.snapshot();
     openbus::rendering::setFrameTriangleCountReflectionPass(false);
     renderingReflection_ = false;
 }
@@ -888,6 +944,7 @@ RenderLoop::passengerQueuePose(int stopId, const openbus::app::WaitingPassenger&
 
 void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     if (!renderingReflection_) {
+        ++lightingFrameIndex_;
         openbus::rendering::beginGpuTimingFrame();
     }
     TraceScope trace("frame", "RenderLoop::draw");
@@ -1332,52 +1389,221 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         weatherVariables.effectiveWeatherVisibilityMeters(),
         weatherVariables.environmentBrightness(), playerGroundHeight, simulation.simulationTime());
     openbus::rendering::setLightingViewMatrix(modelViewMatrix(), weatherVariables.sunDirection());
-    std::vector<openbus::rendering::VehicleSpotlight> viewSpotlights;
+    TraceScope spotlightTrace("lighting", "RenderLoop::prepareVehicleSpotlights");
+    const auto spotlightViewFrustum =
+        openbus::rendering::buildViewFrustum(openbus::rendering::projectionMatrix());
+    const auto spotlightWorldFrustum =
+        openbus::rendering::buildViewFrustum(openbus::rendering::multiplyMatrix4(
+            openbus::rendering::projectionMatrix(), modelViewMatrix()));
+    std::vector<openbus::app::vehicle::SpotlightCandidate> spotlightCandidates;
+    spotlightCandidates.reserve(vehicles_.size());
+    const double spotlightTime = glfwGetTime();
     for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
         if (!vehicle->loaded || vehicle->spotlights.empty() || vehicle->mapTrafficRouteFinished ||
             (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive)) {
+            if (vehicle.get() != playerVehicle_) {
+                vehicle->aiSpotlightCache.active = false;
+                vehicle->aiSpotlightCache.initialized = false;
+            }
             continue;
         }
-        pushMatrix();
+        const double selection = vehicle->variables.get("spot_select");
         if (vehicle.get() == playerVehicle_) {
-            applyPose(chassis);
-        } else if (vehicle->odeSimulation != nullptr) {
-            applyPose(vehicle->odeSimulation->chassisPose());
-        } else {
-            VehiclePlacement placed = vehicle->trafficRenderPlacement.value_or(vehicle->placement);
-            if (mapRenderer_ != nullptr && !vehicle->followsMapTrafficRoute) {
-                placed.position[2] =
-                    mapRenderer_->terrainHeightAt(placed.position[0], placed.position[1])
-                        .value_or(placed.position[2]);
+            TraceScope vehicleLightTrace("lighting", "RenderLoop::preparePlayerSpotlight");
+            const auto playerStatus = openbus::app::vehicle::spotlightSelectionStatus(
+                vehicle->spotlights.size(), selection);
+            if (playerStatus == openbus::app::vehicle::SpotlightStatus::Off) {
+                continue;
             }
-            applyVehiclePlacement(makeModelRootPlacement(placed, vehicle->modelOffsetZ));
+            if (playerStatus == openbus::app::vehicle::SpotlightStatus::Invalid) {
+                if (!vehicle->invalidSpotlightLogged) {
+                    gameLog.Warning("Ignoring invalid vehicle spotlight selection or parameters");
+                    vehicle->invalidSpotlightLogged = true;
+                }
+                continue;
+            }
+            pushMatrix();
+            applyPose(chassis);
+            translate(0.0, 0.0, vehicle->modelOffsetZ);
+            openbus::rendering::VehicleSpotlight spotlight;
+            const auto status = openbus::app::vehicle::makeSpotlight(vehicle->spotlights, selection,
+                                                                     modelViewMatrix(), spotlight);
+            popMatrix();
+            if (status == openbus::app::vehicle::SpotlightStatus::Invalid) {
+                if (!vehicle->invalidSpotlightLogged) {
+                    gameLog.Warning("Ignoring invalid vehicle spotlight selection or parameters");
+                    vehicle->invalidSpotlightLogged = true;
+                }
+                continue;
+            }
+            if (status == openbus::app::vehicle::SpotlightStatus::Active &&
+                !openbus::rendering::sphereOutsideFrustum(
+                    spotlightViewFrustum,
+                    {spotlight.position[0], spotlight.position[1], spotlight.position[2], 1.0},
+                    spotlight.range * 4.0)) {
+                spotlightCandidates.push_back({spotlight, true});
+            }
+            continue;
         }
-        translate(0.0, 0.0, vehicle->modelOffsetZ);
-        openbus::rendering::VehicleSpotlight spotlight;
-        const auto status = openbus::app::vehicle::makeSpotlight(
-            vehicle->spotlights, vehicle->variables.get("spot_select"), modelViewMatrix(),
-            spotlight);
-        popMatrix();
-        if (status == openbus::app::vehicle::SpotlightStatus::Invalid) {
-            if (!vehicle->invalidSpotlightLogged) {
+
+        TraceScope vehicleLightTrace("lighting", "RenderLoop::prepareAiSpotlight");
+        auto& cache = vehicle->aiSpotlightCache;
+        const auto status =
+            openbus::app::vehicle::spotlightSelectionStatus(vehicle->spotlights.size(), selection);
+        const bool selectionChanged =
+            cache.initialized &&
+            openbus::app::vehicle::spotlightSelectionChanged(cache.selection, selection);
+        if (status != openbus::app::vehicle::SpotlightStatus::Active) {
+            if (status == openbus::app::vehicle::SpotlightStatus::Invalid &&
+                !vehicle->invalidSpotlightLogged) {
                 gameLog.Warning("Ignoring invalid vehicle spotlight selection or parameters");
                 vehicle->invalidSpotlightLogged = true;
             }
+            cache.initialized = true;
+            cache.selectionActive = false;
+            cache.active = false;
+            cache.selection = selection;
+            cache.brake = vehicle->variables.get("brake");
+            cache.steering = vehicle->variables.get("steering");
             continue;
         }
-        if (status == openbus::app::vehicle::SpotlightStatus::Active) {
-            viewSpotlights.push_back(spotlight);
+
+        const VehicleSpotlightRoot root = vehicleSpotlightRoot(*vehicle, mapRenderer_.get());
+        if (openbus::app::vehicle::spotlightOutsideView(vehicle->spotlights, selection,
+                                                        root.modelToWorld, spotlightWorldFrustum)) {
+            continue;
+        }
+        const bool returnedToView = openbus::app::vehicle::aiSpotlightReturnedToView(
+            cache.initialized, lightingFrameIndex_, cache.lastRelevantFrame);
+        cache.lastRelevantFrame = lightingFrameIndex_;
+        const double brake = vehicle->variables.get("brake");
+        const double steering = vehicle->variables.get("steering");
+        const bool maneuvering =
+            vehicle->odeSimulation != nullptr ||
+            (cache.initialized &&
+             (std::abs(brake - cache.brake) >= 0.1 || std::abs(steering - cache.steering) >= 0.1 ||
+              std::abs(root.pitchDegrees - cache.rootPitchDegrees) >= 0.25 ||
+              std::abs(root.rollDegrees - cache.rootRollDegrees) >= 0.25));
+        const double dx = root.position[0] - chassis.position[0];
+        const double dy = root.position[1] - chassis.position[1];
+        const double dz = root.position[2] - chassis.position[2];
+        const double distance = std::hypot(dx, dy, dz);
+        double speed = 0.0;
+        double approachSpeed = 0.0;
+        if (cache.initialized && cache.updatedAtSeconds > 0.0) {
+            const double elapsed = spotlightTime - cache.updatedAtSeconds;
+            if (elapsed > 1.0e-6) {
+                const double velocityX = (root.position[0] - cache.rootPosition[0]) / elapsed;
+                const double velocityY = (root.position[1] - cache.rootPosition[1]) / elapsed;
+                const double velocityZ = (root.position[2] - cache.rootPosition[2]) / elapsed;
+                speed = std::hypot(velocityX, velocityY, velocityZ);
+                if (distance > 1.0e-6) {
+                    approachSpeed = -(velocityX * dx + velocityY * dy + velocityZ * dz) / distance;
+                }
+            }
+        }
+        const auto scheduleInput = openbus::app::vehicle::AiSpotlightScheduleInput{
+            distance, speed, approachSpeed,
+            !cache.initialized || !cache.selectionActive || selectionChanged || returnedToView,
+            maneuvering};
+        const int interval = openbus::app::vehicle::aiSpotlightUpdateIntervalFrames(
+            scheduleInput, aiSpotlightScheduleConfig_);
+        const bool alreadyUpdatedThisFrame =
+            cache.initialized && cache.lastUpdateFrame == lightingFrameIndex_;
+        const bool due = !cache.initialized ||
+                         (!cache.selectionActive || selectionChanged || returnedToView ||
+                          (!alreadyUpdatedThisFrame &&
+                           (maneuvering || lightingFrameIndex_ >= cache.nextUpdateFrame ||
+                            cache.nextUpdateFrame >
+                                lightingFrameIndex_ + static_cast<std::uint64_t>(interval))));
+        if (due) {
+            const std::uint64_t elapsedFrames =
+                cache.initialized && lightingFrameIndex_ > cache.lastUpdateFrame
+                    ? lightingFrameIndex_ - cache.lastUpdateFrame
+                    : 0;
+            if (cache.initialized && cache.active && elapsedFrames > 0) {
+                aiSpotlightIntervalFramesSinceLog_ += elapsedFrames;
+                ++aiSpotlightIntervalSamplesSinceLog_;
+                aiSpotlightMinimumIntervalFramesSinceLog_ =
+                    std::min(aiSpotlightMinimumIntervalFramesSinceLog_, elapsedFrames);
+                aiSpotlightMaximumIntervalFramesSinceLog_ =
+                    std::max(aiSpotlightMaximumIntervalFramesSinceLog_, elapsedFrames);
+            }
+            const auto updatedStatus = openbus::app::vehicle::makeSpotlight(
+                vehicle->spotlights, selection, root.modelToWorld, cache.worldLight);
+            cache.initialized = true;
+            cache.selectionActive = true;
+            cache.active = updatedStatus == openbus::app::vehicle::SpotlightStatus::Active;
+            cache.selection = selection;
+            cache.brake = brake;
+            cache.steering = steering;
+            cache.rootPosition = root.position;
+            cache.rootYawRadians = root.yawRadians;
+            cache.rootPitchDegrees = root.pitchDegrees;
+            cache.rootRollDegrees = root.rollDegrees;
+            cache.updatedAtSeconds = spotlightTime;
+            cache.lastUpdateFrame = lightingFrameIndex_;
+            cache.nextUpdateFrame = lightingFrameIndex_ + static_cast<std::uint64_t>(interval);
+            if (updatedStatus == openbus::app::vehicle::SpotlightStatus::Invalid) {
+                cache.active = false;
+                if (!vehicle->invalidSpotlightLogged) {
+                    gameLog.Warning("Ignoring invalid vehicle spotlight selection or parameters");
+                    vehicle->invalidSpotlightLogged = true;
+                }
+            }
+            if (cache.active) {
+                ++aiSpotlightRefreshesSinceLog_;
+            }
+        }
+        if (!cache.active) {
+            continue;
+        }
+
+        auto spotlight = moveCachedSpotlight(cache, root);
+        const auto& view = modelViewMatrix();
+        const auto viewPosition = openbus::rendering::transformPoint(
+            view, {spotlight.position[0], spotlight.position[1], spotlight.position[2], 1.0});
+        const auto viewDirection = openbus::rendering::transformPoint(
+            view, {spotlight.direction[0], spotlight.direction[1], spotlight.direction[2], 0.0});
+        spotlight.position = {viewPosition[0], viewPosition[1], viewPosition[2]};
+        spotlight.direction = {viewDirection[0], viewDirection[1], viewDirection[2]};
+        if (!openbus::rendering::sphereOutsideFrustum(
+                spotlightViewFrustum,
+                {spotlight.position[0], spotlight.position[1], spotlight.position[2], 1.0},
+                spotlight.range * 4.0)) {
+            spotlightCandidates.push_back({spotlight, false});
         }
     }
-    std::stable_sort(viewSpotlights.begin(), viewSpotlights.end(),
-                     [](const auto& a, const auto& b) {
-                         return std::hypot(a.position[0], a.position[1], a.position[2]) <
-                                std::hypot(b.position[0], b.position[1], b.position[2]);
-                     });
-    if (viewSpotlights.size() > openbus::rendering::MAX_VEHICLE_SPOTLIGHTS) {
-        viewSpotlights.resize(openbus::rendering::MAX_VEHICLE_SPOTLIGHTS);
+    if (!renderingReflection_) {
+        if (aiSpotlightScheduleLogTime_ < 0.0) {
+            aiSpotlightScheduleLogTime_ = spotlightTime;
+        } else if (spotlightTime - aiSpotlightScheduleLogTime_ >= 2.0) {
+            const double intervalSeconds = spotlightTime - aiSpotlightScheduleLogTime_;
+            const double averageFrames =
+                aiSpotlightIntervalSamplesSinceLog_ > 0
+                    ? static_cast<double>(aiSpotlightIntervalFramesSinceLog_) /
+                          static_cast<double>(aiSpotlightIntervalSamplesSinceLog_)
+                    : 0.0;
+            const std::uint64_t minimumFrames = aiSpotlightIntervalSamplesSinceLog_ > 0
+                                                    ? aiSpotlightMinimumIntervalFramesSinceLog_
+                                                    : 0;
+            gameLog.Log("AI_SPOTLIGHT_SCHEDULE interval_s=" + std::to_string(intervalSeconds) +
+                        " refreshes=" + std::to_string(aiSpotlightRefreshesSinceLog_) +
+                        " average_interval_frames=" + std::to_string(averageFrames) +
+                        " minimum_interval_frames=" + std::to_string(minimumFrames) +
+                        " maximum_interval_frames=" +
+                        std::to_string(aiSpotlightMaximumIntervalFramesSinceLog_));
+            aiSpotlightScheduleLogTime_ = spotlightTime;
+            aiSpotlightRefreshesSinceLog_ = 0;
+            aiSpotlightIntervalFramesSinceLog_ = 0;
+            aiSpotlightIntervalSamplesSinceLog_ = 0;
+            aiSpotlightMinimumIntervalFramesSinceLog_ = std::numeric_limits<std::uint64_t>::max();
+            aiSpotlightMaximumIntervalFramesSinceLog_ = 0;
+        }
     }
-    openbus::rendering::setVehicleSpotlights(viewSpotlights);
+    openbus::rendering::setVehicleSpotlights(
+        openbus::app::vehicle::selectSpotlights(spotlightCandidates, spotlightCandidates.size()));
+    spotlightTrace.finish();
     {
         TraceScope phase("passenger", "RenderLoop::draw.refreshPassengerWaitingPositions");
         refreshPassengerWaitingPositions();

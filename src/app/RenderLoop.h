@@ -3,9 +3,11 @@
 #include "core/BusTypes.h"
 #include "app/FrameTiming.h"
 #include "app/MetarStationUi.h"
+#include "app/vehicle/AiSpotlightScheduler.h"
 #include "app/traffic/PassengerNetwork.h"
 #include "app/traffic/PassengerApproach.h"
 #include "app/traffic/PlayerTimetableController.h"
+#include "app/traffic/ReflectionTrafficViews.h"
 #include "app/traffic/TrafficFleet.h"
 #include "render/CameraMath.h"
 #include "map/MapConfigLoader.h"
@@ -426,6 +428,7 @@ class RenderLoop {
     // Main-camera projection * view, used to admit traffic only at off-screen entries.
     openbus::rendering::Matrix4 trafficCameraViewProjection_ = {};
     std::vector<openbus::map::MapTrafficCameraView> trafficReflectionCameraViews_;
+    openbus::app::ReflectionTrafficViews trafficReflectionViewsByIndex_;
     // Main-view eye in vehicle-local space, used to aim viewer-following reflection cameras.
     std::array<double, 3> reflectionViewerEyeLocal_ = {};
     bool reflectionViewerEyeLocalValid_ = false;
@@ -460,6 +463,15 @@ class RenderLoop {
     bool tileBoundaryDebugOverlay_ = false;
     bool tileBoundaryDebugBuilt_ = false;
     std::uint64_t tileBoundaryDebugRevision_ = 0;
+    std::uint64_t lightingFrameIndex_ = 0;
+    std::uint64_t aiSpotlightRefreshesSinceLog_ = 0;
+    std::uint64_t aiSpotlightIntervalFramesSinceLog_ = 0;
+    std::uint64_t aiSpotlightIntervalSamplesSinceLog_ = 0;
+    std::uint64_t aiSpotlightMinimumIntervalFramesSinceLog_ =
+        std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t aiSpotlightMaximumIntervalFramesSinceLog_ = 0;
+    double aiSpotlightScheduleLogTime_ = -1.0;
+    openbus::app::vehicle::AiSpotlightScheduleConfig aiSpotlightScheduleConfig_;
     std::vector<std::pair<int, int>> tileBoundaryDebugTiles_;
     bool previousTrafficSplineDebugKeyState_ = false;
     bool trafficSplineDebugOverlay_ = false;

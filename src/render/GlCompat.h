@@ -85,6 +85,9 @@
 #ifndef GL_RGBA8
 #define GL_RGBA8 0x8058
 #endif
+#ifndef GL_R32UI
+#define GL_R32UI 0x8236
+#endif
 #ifndef GL_TEXTURE2
 #define GL_TEXTURE2 0x84C2
 #endif

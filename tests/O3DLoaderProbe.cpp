@@ -1,15 +1,106 @@
 #include "assets/O3DLoader.h"
 #include "core/Environment.h"
+#include "core/Utf8Path.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <string>
 #include <vector>
+
+namespace {
+
+void appendU16(std::vector<std::uint8_t>& data, std::uint16_t value) {
+    data.push_back(static_cast<std::uint8_t>(value & 0xFFu));
+    data.push_back(static_cast<std::uint8_t>(value >> 8u));
+}
+
+void appendFloat(std::vector<std::uint8_t>& data, float value) {
+    std::uint32_t raw = 0;
+    std::memcpy(&raw, &value, sizeof(raw));
+    for (unsigned int shift = 0; shift < 32; shift += 8) {
+        data.push_back(static_cast<std::uint8_t>(raw >> shift));
+    }
+}
+
+void appendString(std::vector<std::uint8_t>& data, const std::string& value) {
+    data.push_back(static_cast<std::uint8_t>(value.size()));
+    data.insert(data.end(), value.begin(), value.end());
+}
+
+bool testO3DTextureNameEncoding() {
+    std::vector<std::uint8_t> data = {0x84, 0x19, 0x03, 0x49};
+    appendU16(data, 1);
+    appendU16(data, 0);
+    appendU16(data, 1);
+    appendU16(data, 2);
+    appendU16(data, 0);
+    data.push_back(0x17);
+    appendU16(data, 3);
+    for (const std::array<float, 3>& position :
+         {std::array<float, 3>{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f},
+          {0.0f, 1.0f, 0.0f}}) {
+        for (const float value : {position[0], position[1], position[2], 0.0f, 1.0f, 0.0f,
+                                  0.0f, 0.0f}) {
+            appendFloat(data, value);
+        }
+    }
+    data.push_back(0x26);
+    appendU16(data, 2);
+    std::string legacyTextureName = "Ww_ge-A9-Rebu-La-DrMaul_li-B13-W";
+    legacyTextureName.push_back(static_cast<char>(0xFC));
+    legacyTextureName += "-An-EI-ND-Klinikum.png";
+    std::string utf8TextureName = "sign-";
+    utf8TextureName += "\xC3\xBC";
+    utf8TextureName += ".png";
+    for (const std::string& textureName : {legacyTextureName, utf8TextureName}) {
+        for (int field = 0; field < 11; ++field) {
+            appendFloat(data, 0.0f);
+        }
+        appendString(data, textureName);
+    }
+
+    const auto fixturePath =
+        std::filesystem::temp_directory_path() /
+        ("OpenBusO3DUnicodeProbe_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".o3d");
+    struct TemporaryFile {
+        std::filesystem::path path;
+        ~TemporaryFile() {
+            std::error_code error;
+            std::filesystem::remove(path, error);
+        }
+    } cleanup{fixturePath};
+    {
+        std::ofstream output(fixturePath, std::ios::binary);
+        if (!output) {
+            return false;
+        }
+        output.write(reinterpret_cast<const char*>(data.data()),
+                     static_cast<std::streamsize>(data.size()));
+        if (!output) {
+            return false;
+        }
+    }
+    const auto parsed = openbus::rendering::O3DLoader::parse(fixturePath);
+    const std::string expectedLegacyTexture =
+        "Ww_ge-A9-Rebu-La-DrMaul_li-B13-W\xC3\xBC-An-EI-ND-Klinikum.png";
+    return parsed && parsed->materials.at("matl_0").textureName == expectedLegacyTexture &&
+           openbus::pathToUtf8(openbus::pathFromUtf8(parsed->materials.at("matl_0").textureName)) ==
+               expectedLegacyTexture &&
+           parsed->materials.at("matl_1").textureName == "sign-\xC3\xBC.png";
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     if (argc != 2) {
@@ -38,6 +129,10 @@ int main(int argc, char** argv) {
     if (!parsed || parsed->positions.empty() || parsed->triangles.empty() ||
         parsed->materials.empty()) {
         std::cerr << "failed to parse O3D fixture\n";
+        return 1;
+    }
+    if (!testO3DTextureNameEncoding()) {
+        std::cerr << "O3D texture names were not normalized to UTF-8\n";
         return 1;
     }
     std::array<double, 3> boundsMinimum = {std::numeric_limits<double>::max(),

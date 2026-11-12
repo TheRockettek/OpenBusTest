@@ -3082,12 +3082,28 @@ void verifyDrivingBehavior() {
         require(mapTrafficActorTurnSignal(shallowRight) == MapTrafficTurnSignal::Right &&
                     mapTrafficActorTurnSignal(shallowRight, 10.0) == MapTrafficTurnSignal::None,
                 "a shallow selected junction exit signals right within the approach lookahead");
+        shallowRight.distanceMeters = 10.0;
+        require(mapTrafficActorTurnSignal(shallowRight, 10.0) == MapTrafficTurnSignal::Right,
+                "a junction signal activates exactly at its lookahead boundary");
         shallowRight.distanceMeters = 21.0;
         require(mapTrafficActorTurnSignal(shallowRight) == MapTrafficTurnSignal::Right,
                 "a junction turn signal remains active while the vehicle crosses the junction");
+        shallowRight.distanceMeters = 26.25;
+        require(mapTrafficActorTurnSignal(shallowRight) == MapTrafficTurnSignal::Right,
+                "a junction signal remains active until the rear clears the junction");
         shallowRight.distanceMeters = 27.0;
         require(mapTrafficActorTurnSignal(shallowRight) == MapTrafficTurnSignal::None,
                 "a junction turn signal clears after the vehicle exits the junction");
+        shallowRight.route.closed = true;
+        shallowRight.distanceMeters = 50.0;
+        require(mapTrafficActorTurnSignal(shallowRight, 24.0) == MapTrafficTurnSignal::Right &&
+                    mapTrafficActorTurnSignal(shallowRight, 23.0) == MapTrafficTurnSignal::None,
+                "a closed route signals a turn across its loop boundary");
+        shallowRight.route.closed = false;
+        shallowRight.route.loopStartDistance = 10.0;
+        require(mapTrafficActorTurnSignal(shallowRight, 14.0) == MapTrafficTurnSignal::Right &&
+                    mapTrafficActorTurnSignal(shallowRight, 13.0) == MapTrafficTurnSignal::None,
+                "a route with a loop prefix signals turns in its repeated section");
 
         MapTrafficActor shallowLeft;
         shallowLeft.route = routeWithExit(345.0);
@@ -3102,6 +3118,24 @@ void verifyDrivingBehavior() {
         directTurn.route = std::move(directTurnRoute);
         require(mapTrafficActorTurnSignal(directTurn) == MapTrafficTurnSignal::Right,
                 "a sharp outgoing road signals by its selected route direction");
+        directTurn.distanceMeters = 10.0;
+        require(mapTrafficActorTurnSignal(directTurn, 10.0) == MapTrafficTurnSignal::Right &&
+                    mapTrafficActorTurnSignal(directTurn, 9.99) == MapTrafficTurnSignal::None,
+                "a direct road turn respects its exact lookahead boundary");
+        directTurn.distanceMeters = 22.25;
+        require(mapTrafficActorTurnSignal(directTurn, 0.0) == MapTrafficTurnSignal::Right,
+                "a direct road turn signals until the rear clears the boundary");
+        directTurn.distanceMeters = 22.26;
+        require(mapTrafficActorTurnSignal(directTurn) == MapTrafficTurnSignal::None,
+                "a direct road turn clears after the rear passes the boundary");
+        MapTrafficActor nearestTurn;
+        nearestTurn.route.segments = {approach, straight(2308, 0.0, 0.0, 270.0, 20.0), junction,
+                                      straight(2309, 0.0, 4.0, 0.0, 30.0)};
+        nearestTurn.route.cumulativeEndDistances = {20.0, 40.0, 44.0, 74.0};
+        nearestTurn.route.totalLength = 74.0;
+        nearestTurn.distanceMeters = 10.0;
+        require(mapTrafficActorTurnSignal(nearestTurn, 40.0) == MapTrafficTurnSignal::Left,
+                "a nearer road turn takes precedence over a later junction turn");
         MapTrafficRouteSegment thresholdExit = straight(2305, 0.0, 0.0, 35.0, 30.0);
         MapTrafficRoute thresholdRoute;
         thresholdRoute.segments = {approach, thresholdExit};
@@ -3148,6 +3182,8 @@ void verifyDrivingBehavior() {
         laneChange.route = std::move(laneChangeRoute);
         require(mapTrafficActorTurnSignal(laneChange) == MapTrafficTurnSignal::Right,
                 "crossing into an adjacent route lane signals even without a heading change");
+        require(mapTrafficActorTurnSignal(laneChange, 19.99) == MapTrafficTurnSignal::None,
+                "an adjacent lane change does not signal outside its lookahead");
     }
     MapTrafficRouteSegment longStraight = straight(1899, 12.0, -7.0, 23.0, 35.0);
     longStraight.sceneryPathIndex = 0;

@@ -360,7 +360,8 @@ passenger stops as if the full itinerary were available. Fallbacks do not skip
 missing checkpoints or invent connections. They start at the timetable origin
 and still wait for a clear, off-screen admission position. Set
 `OPENBUS_MAP_BUS_COUNT` to control their population (default `20`, maximum
-`200`; `0` disables map AI buses). The bounded bus pool is created at startup
+`200`; `0` disables map AI buses and skips their route search while keeping
+player timetables available). The bounded bus pool is created at startup
 and buses are admitted at scheduled times. Traffic remains lane-constrained and
 kinematic: linked SCO signal timing and stop/jump controls are active, but
 native stop-line/sign behavior is incomplete. Safe overtaking and lane changes
@@ -1099,10 +1100,11 @@ materials remain lit. Scenery scripts that set `nightlighta` control their
 nightmaps instead of weather brightness. Scenery text and free/script textures
 also follow daylight brightness unless their materials are emissive.
 Vehicle `[spotlight]` definitions selected by `Spot_Select` approximately
-illuminate model and road surfaces, including in mirrors. Up to 128 nearest
-vehicle spotlights are used per view; reflection cameras build their own
-camera-relative selection. Beams do not cast shadows, and attenuation and cone
-behavior approximate the native Direct3D spotlight parameters.
+illuminate model and road surfaces, including in mirrors. The player's visible
+spotlight takes priority, followed by the nearest AI spotlights; reflection
+cameras build their own camera-relative selection. Beams do not cast shadows,
+and attenuation and cone behavior approximate the native Direct3D spotlight
+parameters.
 At night, mirror views retain a low ambient fill so scenery outside vehicle
 headlight beams remains visible; the main view keeps its normal night lighting.
 The bus model defines the beam positions and parameters; vehicle scripts select
@@ -1367,15 +1369,64 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   the effective AI Hz and average worker tick time in milliseconds.
   `OPENBUS_FPS_CAP` is the separate software render cap and works independently
   of VSync.
-- Reflection mirrors render at `256x256` by default. Set
-  `OPENBUS_REFLECTION_SIZE=256`, `512`, or `1024` to choose the square mirror
-  target resolution.
-- Mirrors update every frame by default. Set `OPENBUS_REFLECTION_INTERVAL=4` to
-  update them once every four rendered frames; values below `1` are treated as
-  `1`.
+- Reflection targets are capped at `1024x1024` by default; mirrors with a lower
+  resolution requirement keep their smaller target. Set
+  `OPENBUS_REFLECTION_SIZE=256`, `512`, or `1024` to choose the maximum square
+  mirror target resolution.
+- Mirrors update every rendered frame by default, after rendering their first
+  visible frame immediately. Set `OPENBUS_REFLECTION_INTERVAL` to a larger
+  value to update less often; values below `1` are treated as `1`.
 - Set `OPENBUS_REFLECTION_MAX_FPS=60` to cap mirror refreshes at 60 FPS without
   limiting the main game. The cap is unset by default; when both reflection
   controls are configured, the interval and time-based cap both apply.
+- Reflection lighting has a `0.25` minimum ambient level by default, even at
+  night. Set `OPENBUS_REFLECTION_AMBIENT_FLOOR=0` to remove that mirror-only
+  floor and match the main view's night ambient level, or choose a value from
+  `0` to `1` for an intermediate level. This is read once and retained for the
+  process lifetime.
+- `OPENBUS_MAP_LIGHT_LIMIT` and `OPENBUS_VEHICLE_SPOTLIGHT_LIMIT` independently
+  cap the active map point lights and vehicle spotlights per view. Map lights
+  have no configured limit by default; their actual capacity is determined by
+  the GPU's texture-buffer limit. The map setting accepts a non-negative
+  integer, and exceeding the GPU capacity produces an error. Vehicle
+  spotlights also have no configured limit by default and use a separate
+  texture buffer with its own capacity. Explicit lower limits can
+  improve night performance but omit light sources. Use these settings to
+  benchmark the performance/lighting-quality trade-off. The default forward
+  shader evaluates all selected map lights per fragment, so scenes with many
+  active lights can be expensive.
+- Set `OPENBUS_MAP_LIGHT_VERTEX_EVALUATION=1` to evaluate scenery point lights
+  at mesh vertices and interpolate their contribution across triangles. This
+  experimental Gouraud-style path preserves all selected lights and leaves
+  vehicle spotlights per-fragment, but can change the appearance on large or
+  low-poly surfaces. It is disabled by default; compare fixed-scene captures
+  before enabling it for normal play.
+- Scenery lights are registered map-wide during loading and use a persistent
+  attribute buffer when they fit GPU capacity and are valid. It stores 16 bytes
+  of color and radius per source; positions are prepared per view. Changing the
+  active tile set does not reupload unchanged source attributes.
+  If the full registered set cannot be stored, the renderer uses an active-source
+  buffer instead. Each view still prepares and uploads a compact
+  view-space position/index list, so moving vehicles and mirrors receive
+  current lighting without reuploading the source attributes. Set
+  `OPENBUS_STATIC_MAP_LIGHT_BUFFER=0` to use the direct view-space path for
+  comparisons or compatibility testing; `1` is the default. If the active
+  source set exceeds GPU capacity but the selected lights fit, the renderer
+  logs a warning and packs those selected lights into a compact static buffer.
+  The persistent source and view buffers each use one texture-buffer texel per
+  light; the direct path uses two. Both paths remain subject to GPU capacity.
+- Scenery view selection and transforms are reused for repeated draws with the
+  same view, active sources, and light limit. A different camera, tile
+  selection, source count, or content revision invalidates that cache.
+- All registered scenery lights participate by default, including their
+  inverse-square tails beyond their configured radius. The spatial index also
+  records tiles overlapped by each radius, but is not used to discard those
+  tails. Map-wide registration increases startup work and may substantially
+  increase GPU lighting cost compared with evaluating only streamed tiles.
+- `OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1` enables experimental screen-space
+  tile masks for vehicle spotlights. Dense or unsupported masks fall back to
+  the global light loop without removing lights. This is disabled by default:
+  the tested night scenes have not shown a reliable performance benefit.
 - Mirror transparency is rendered by default, including in the run/profile
   launchers, which preserve an explicitly supplied value. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
@@ -1435,10 +1486,20 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   duration, and event cap used for the capture.
 - Set `OPENBUS_GPU_TIMING=1` to enable asynchronous OpenGL timer queries for
   main-view and reflection rendering. Results are polled only after OpenGL
-  reports them available, then logged as two-second average/maximum summaries;
-  a full query ring drops new samples rather than stalling. Reflection samples
+  reports them available, then logged as two-second average/maximum summaries.
+  A full query ring drops new samples rather than stalling. Reflection samples
   cover each target's clear and draw, while the main-view sample starts after
   reflection rendering and includes subsequent main-view draws and overlays.
+  Separate `LIGHTING_UPLOAD` lines report the number of buffer replacements
+  and bytes submitted for vehicle lights, map view lists, and static map
+  sources over each interval, including reflection views. They also report
+  the number of setter calls and the total and maximum lights selected per
+  call. Upload sizes are not measured GPU bandwidth, and selected counts are
+  not per-fragment evaluation counts. Unchanged view-space light buffers are
+  reused; a different camera or light state can require another upload. With
+  CPU tracing enabled, `lighting` scopes
+  report scenery-light preparation and player and AI spotlight preparation
+  separately; the vehicle scope also includes shared selection work.
   Set `OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES=5` to sample fewer frames in
   high-FPS profiling; this setting is independent of CPU trace sampling. As
   with CPU tracing, increase the stride roughly with FPS to keep a similar
@@ -1614,6 +1675,11 @@ construction from indirect dispatch. Scenery submission scopes are split by
 render type to show which groups dominate. These scopes are inclusive and can
 be omitted when shorter than the configured trace threshold; do not sum nested
 durations. Tracing itself adds overhead, particularly for many short events.
+Compute-culling dispatch scopes also split input validation, pre-dispatch error
+clearing, saved-state queries, uploads, configuration, execution, the
+post-dispatch error check, and state restoration. These are CPU wall times:
+driver synchronization can be charged to an error or state query and is not
+necessarily time spent executing that operation on the GPU.
 
 For large-map startup, `MapConfigLoader::loadMapTile.readAndDecode` separates
 file reading, decoding, and line splitting from the parent tile scope's parsing
@@ -1762,6 +1828,38 @@ runs always record every main frame even if
 `OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES` is set in the parent environment. The run
 and frame-time CSVs include `FinishBeforeSwap` so diagnostic runs remain
 distinguishable.
+Set `OPENBUS_MAP_AI_HOUR=23` in the parent environment to benchmark at night.
+Set `OPENBUS_BENCHMARK_CAPTURE_DIR` to a directory to capture the standard
+views once after warmup and before measurement. Captures overwrite existing
+files with the same names, so use a separate directory for each run. They
+render additional views and reflections before measurement and can affect
+subsequent timing; use separate runs for performance comparisons. Asset
+readiness can take a different number of simulation frames between runs, so
+check `BENCHMARK_READINESS_FRAMES` and compare repeat-control captures before
+interpreting image differences.
+Use `--force-vehicle-spotlights` to force spotlight definition 0 on loaded
+player and AI vehicles after their normal script updates; this benchmark-only
+override measures vehicle-spotlight rendering, not the bus scripts' light
+switch behavior. The player bus must define at least one spotlight.
+Pass `--ai-bus-config`, `--ai-model-config`, and `--ai-count` together to add
+an explicit AI vehicle pool (1-200); map-driven traffic remains separately
+controlled by `OPENBUS_MAP_AI_COUNT`.
+AI spotlight refresh scheduling defaults to 2/6/20 frames at 60/180 m
+(near/medium/far). Configure it with `OPENBUS_AI_SPOTLIGHT_NEAR_METERS`,
+`OPENBUS_AI_SPOTLIGHT_MEDIUM_METERS`, `OPENBUS_AI_SPOTLIGHT_NEAR_FRAMES`,
+`OPENBUS_AI_SPOTLIGHT_MEDIUM_FRAMES`, `OPENBUS_AI_SPOTLIGHT_FAR_FRAMES`,
+`OPENBUS_AI_SPOTLIGHT_APPROACH_MPS`, and
+`OPENBUS_AI_SPOTLIGHT_HIGH_SPEED_MPS`. Approaching or high-speed vehicles
+halve their distance-tier interval; light-state changes, braking/steering
+changes, and physics-simulated vehicles refresh immediately when relevant.
+AI spotlight refreshes are suspended for views outside their conservative
+influence sphere, and resume immediately when the light becomes relevant again.
+Other views, including reflections, are tested independently. The selected
+settings are recorded in the benchmark CSVs, while `AI_SPOTLIGHT_SCHEDULE`
+logs report observed average and maximum intervals.
+`--trace-min-duration-us` can raise the trace scope threshold when a detailed
+trace would otherwise hit the event cap; the selected threshold is recorded
+with the benchmark results.
 When `OPENBUS_GPU_TIMING=1` is set, `render_benchmark_gpu_timing.csv` contains
 one row per logged GPU timing interval, with separate main-view and reflection
 sample counts, average/maximum durations, and dropped-query counts. Run, scope,

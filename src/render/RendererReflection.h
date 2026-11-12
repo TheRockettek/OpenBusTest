@@ -29,7 +29,8 @@ struct ReflectionRequirement {
 class ReflectionRenderer {
   public:
     using VisibilityCallback = std::function<ReflectionRequirement(std::size_t)>;
-    using DrawCallback = std::function<void(const BusSimulation&, std::size_t, int, int)>;
+    using DrawCallback =
+        std::function<void(const BusSimulation&, std::size_t, std::size_t, int, int)>;
     using RestoreCallback = std::function<void(int, int)>;
 
     ReflectionRenderer();

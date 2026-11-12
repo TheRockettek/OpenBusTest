@@ -3048,11 +3048,8 @@ MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
 
     double nearestDistanceAhead = std::numeric_limits<double>::infinity();
     MapTrafficTurnSignal nearestSignal = MapTrafficTurnSignal::None;
-    const auto considerDecision = [&](double decisionStart, double decisionEnd,
-                                      MapTrafficTurnSignal signal) {
-        if (signal == MapTrafficTurnSignal::None) {
-            return;
-        }
+    const auto decisionDistanceAhead = [&](double decisionStart,
+                                           double decisionEnd) -> std::optional<double> {
         double distanceAhead = decisionStart - currentDistance;
         const double clearDistance = std::max(0.0, actor.lengthMeters * 0.5);
         if (distanceAhead < 0.0 && currentDistance <= decisionEnd + clearDistance) {
@@ -3062,7 +3059,17 @@ MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
         }
         if (distanceAhead >= 0.0 && distanceAhead <= activationDistanceMeters &&
             distanceAhead < nearestDistanceAhead) {
-            nearestDistanceAhead = distanceAhead;
+            return distanceAhead;
+        }
+        return std::nullopt;
+    };
+    const auto considerDecision = [&](double decisionStart, double decisionEnd,
+                                      MapTrafficTurnSignal signal) {
+        if (signal == MapTrafficTurnSignal::None) {
+            return;
+        }
+        if (const auto distanceAhead = decisionDistanceAhead(decisionStart, decisionEnd)) {
+            nearestDistanceAhead = *distanceAhead;
             nearestSignal = signal;
         }
     };
@@ -3096,13 +3103,15 @@ MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
         if (index > 0 && lastJunctionSegment + 1 < route.segments.size()) {
             const double junctionStart = segmentStart(index);
             const double junctionEnd = route.cumulativeEndDistances[lastJunctionSegment];
-            const auto incoming = directionAt(junctionStart - sampleOffsetMeters);
-            const auto outgoing = directionAt(junctionEnd + sampleOffsetMeters);
-            if (incoming && outgoing) {
-                considerDecision(junctionStart, junctionEnd,
-                                 turnForHeadingChange(incoming->headingRadians,
-                                                      outgoing->headingRadians,
-                                                      junctionMinimumTurnRadians));
+            if (decisionDistanceAhead(junctionStart, junctionEnd)) {
+                const auto incoming = directionAt(junctionStart - sampleOffsetMeters);
+                const auto outgoing = directionAt(junctionEnd + sampleOffsetMeters);
+                if (incoming && outgoing) {
+                    considerDecision(junctionStart, junctionEnd,
+                                     turnForHeadingChange(incoming->headingRadians,
+                                                          outgoing->headingRadians,
+                                                          junctionMinimumTurnRadians));
+                }
             }
         }
         index = lastJunctionSegment + 1;
@@ -3115,6 +3124,9 @@ MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
             continue;
         }
         const double boundary = route.cumulativeEndDistances[index];
+        if (!decisionDistanceAhead(boundary, boundary)) {
+            continue;
+        }
         const double lateralChange =
             outgoingSegment.pathLateralMeters - incomingSegment.pathLateralMeters;
         if (incomingSegment.spline.placement.splineId ==

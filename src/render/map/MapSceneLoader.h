@@ -165,6 +165,7 @@ class MapSceneLoader {
     struct IndexedSceneryObject {
         std::string assetPath;
         openbus::map::MapSceneryPose pose;
+        std::vector<std::string> labels;
         std::vector<openbus::map::MapTileRule> rules;
         int tileX = 0;
         int tileY = 0;
@@ -176,6 +177,7 @@ class MapSceneLoader {
         int parentId = 0;
         int attachmentIndex = 0;
         std::array<double, 3> rotationDegrees = {};
+        std::vector<std::string> labels;
         std::vector<openbus::map::MapTileRule> rules;
         int tileX = 0;
         int tileY = 0;
@@ -202,6 +204,12 @@ class MapSceneLoader {
                           bool waitForCompletion);
     void indexMapContent();
     void indexSceneryTrafficPathsMapWide();
+    void indexSceneryLightsMapWide();
+    void registerSceneryMapLights(const SceneryObjectConfig& metadata,
+                                  const openbus::map::MapSceneryPose& pose, int tileX, int tileY,
+                                  int objectId, const std::vector<std::string>& labels);
+    void refreshUnresolvedSceneryLights(int tileX, int tileY,
+                                        const openbus::map::MapTileData& tile);
     bool finishTrafficLaneNetworkPreparation(bool waitForCompletion);
     void buildTileContent(const openbus::map::MapTileReference& tileReference,
                           const openbus::map::MapTileData& tile, PreparedRoadTile& preparedRoads);
@@ -237,6 +245,7 @@ class MapSceneLoader {
                                                             double localY) const;
     [[nodiscard]] std::optional<std::array<double, 3>> sampleTerrainNormal(double worldX,
                                                                            double worldY) const;
+    [[nodiscard]] const openbus::map::TerrainGrid* sceneryLightTerrain(int tileX, int tileY) const;
     [[nodiscard]] std::filesystem::path
     resolveSceneryConfigPath(const std::string& assetPath) const;
     static std::string sceneryConfigIdentityKey(const std::filesystem::path& configPath);
@@ -244,7 +253,7 @@ class MapSceneLoader {
     const std::vector<std::string>& loadCarparkVehicleList(int listIndex);
     const std::vector<std::size_t>& loadSceneryAsset(const std::filesystem::path& configPath);
     const openbus::map::MapSplineProfile* cachedSplineProfile(const std::filesystem::path& path);
-    void applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
+    bool applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
                                const std::string& description);
     std::optional<ResolvedSceneryPlacement> resolveMapSceneryPlacement(int objectId,
                                                                        bool useCache = true);
@@ -256,6 +265,11 @@ class MapSceneLoader {
     Impl* impl_;
     AssetRequestManager* assetRequests_;
     std::unordered_map<std::uint64_t, openbus::map::TerrainGrid>& terrainByCoordinate;
+    mutable std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> sceneryLightTerrain_;
+    mutable std::unordered_set<std::uint64_t> unavailableSceneryLightTerrain_;
+    std::unordered_map<std::uint64_t, const openbus::map::MapTileReference*>
+        sceneryLightTerrainReferences_;
+    bool indexingSceneryLights_ = false;
     std::unordered_map<std::uint64_t, std::future<PreparedTerrainTile>> pendingTerrainRequests;
     std::unordered_map<std::uint64_t, std::future<openbus::map::MapTileData>>
         pendingTileDataRequests;
@@ -370,6 +384,28 @@ class MapSceneLoader {
     openbus::map::MapRoadConnectionIndex roadConnections;
     openbus::map::MapSplineChainResolver mapSplineResolver;
     std::unordered_map<int, ResolvedSceneryPlacement> resolvedPlacements;
+    std::unordered_set<int> indexedSceneryLightObjects_;
+    struct UnresolvedSceneryLightPlacement {
+        int objectId;
+        int tileX;
+        int tileY;
+        std::size_t firstLight;
+        std::size_t lightCount;
+    };
+    std::vector<UnresolvedSceneryLightPlacement> unresolvedSceneryLightPlacements_;
+    struct UnresolvedSplineLightPlacement {
+        int objectId;
+        int tileX;
+        int tileY;
+        std::size_t attachmentOrdinal;
+        std::size_t poseIndex;
+        std::size_t firstLight;
+        std::size_t lightCount;
+    };
+    std::vector<UnresolvedSplineLightPlacement> unresolvedSplineLightPlacements_;
+    std::map<std::tuple<std::uint64_t, int, std::size_t>,
+             std::vector<std::optional<openbus::map::MapSceneryPose>>>
+        resolvedLightSplinePoses;
     std::unordered_map<std::size_t, openbus::map::MapTileData> splineAttachmentParentTiles;
     std::unordered_set<int> resolvingPlacementIds;
     std::unordered_set<std::uint64_t> loadedTerrainTileKeys;

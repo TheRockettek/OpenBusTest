@@ -61,6 +61,7 @@ Matrix4 bentPoleTransform(const Matrix4& baseTransform, const MapPoleState& stat
 
 MapRenderer::Impl::~Impl() {
     releaseStaticPrimitiveBuffer(occlusionProxyBuffer);
+    releaseStaticMapLights(sceneryMapLightBuffer);
     if (!occlusionQueries.empty() && pglDeleteQueries != nullptr) {
         pglDeleteQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
     }
@@ -258,6 +259,7 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     stats.activeTiles = impl_->activeTileCoordinates.size();
     stats.totalTiles = impl_->mapTileCoordinates.size();
     stats.totalTerrainTiles = impl_->terrainBuffers.size();
+    stats.sceneryLightSources = impl_->sceneryMapLights.size();
     stats.totalSceneryObjects = impl_->sceneryObjectCount;
     stats.totalRoadBatches = impl_->roadBatches.size();
     stats.totalWaterBatches = impl_->waterBatches.size();
@@ -388,6 +390,31 @@ MapRenderer::activeTileBoundaryVertices(double fallbackHeight) const {
 
 MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
+}
+
+std::vector<std::array<double, 3>> MapRenderer::sceneryLightDebugPositions() const {
+    std::vector<std::array<double, 3>> positions;
+    if (!initialWindowReady()) {
+        return positions;
+    }
+    positions.reserve(impl_->sceneryMapLights.size());
+    for (const auto& light : impl_->sceneryMapLights) {
+        positions.push_back(light.position);
+    }
+    return positions;
+}
+
+std::vector<std::array<double, 3>> MapRenderer::sceneryObjectDebugPositions(int objectId) const {
+    std::vector<std::array<double, 3>> positions;
+    for (const auto& [key, chunk] : impl_->sceneryChunks) {
+        (void)key;
+        for (const auto& instance : chunk.instances) {
+            if (instance.mapObjectId == objectId) {
+                positions.push_back({instance.x, instance.y, instance.z});
+            }
+        }
+    }
+    return positions;
 }
 
 std::uint64_t MapRenderer::trafficDebugGeometryRevision() const noexcept {

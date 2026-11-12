@@ -78,6 +78,10 @@ openbus_add_probe(OpenBusVehicleConfigProbe VehicleConfigProbe.cpp
 openbus_add_probe(OpenBusVehicleControlCableProbe VehicleControlCableProbe.cpp
     LIBS openbus_core)
 openbus_add_probe(OpenBusVehicleCatalogProbe VehicleCatalogProbe.cpp LIBS openbus_config)
+openbus_add_probe(OpenBusAiSpotlightSchedulerProbe AiSpotlightSchedulerProbe.cpp)
+target_include_directories(OpenBusAiSpotlightSchedulerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+openbus_add_probe(OpenBusVehicleSpotlightTileMaskProbe VehicleSpotlightTileMaskProbe.cpp)
+target_include_directories(OpenBusVehicleSpotlightTileMaskProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 add_executable(OpenBusVehiclePreferencesProbe VehiclePreferencesProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehiclePreferences.cpp")
 target_include_directories(OpenBusVehiclePreferencesProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
@@ -379,7 +383,40 @@ foreach(backend IN ITEMS cpu compute-indirect)
 endforeach()
 set_tests_properties(OpenBusMaterialRenderingProbe PROPERTIES
     SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_MAP_LIGHT_LIMIT=250;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250;OPENBUS_REFLECTION_AMBIENT_FLOOR=0.25")
+add_test(NAME OpenBusMaterialRenderingProbe.reflection-ambient-zero
+    COMMAND OpenBusMaterialRenderingProbe)
+set_tests_properties(OpenBusMaterialRenderingProbe.reflection-ambient-zero PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_MAP_LIGHT_LIMIT=250;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250;OPENBUS_REFLECTION_AMBIENT_FLOOR=0")
+add_test(NAME OpenBusMaterialRenderingProbe.vertex-map-lighting
+    COMMAND OpenBusMaterialRenderingProbe)
+set_tests_properties(OpenBusMaterialRenderingProbe.vertex-map-lighting PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_MAP_LIGHT_LIMIT=250;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250;OPENBUS_REFLECTION_AMBIENT_FLOOR=0.25;OPENBUS_MAP_LIGHT_VERTEX_EVALUATION=1")
+add_test(NAME OpenBusMaterialRenderingProbe.spotlight-tile-image
+    COMMAND OpenBusMaterialRenderingProbe --spotlight-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.spotlight-tile-image PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250")
+add_test(NAME OpenBusMaterialRenderingProbe.unlimited
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENBUS_MAP_LIGHT_LIMIT
+        --unset=OPENBUS_VEHICLE_SPOTLIGHT_LIMIT
+        $<TARGET_FILE:OpenBusMaterialRenderingProbe>)
+set_tests_properties(OpenBusMaterialRenderingProbe.unlimited PROPERTIES
+    SKIP_RETURN_CODE 77
     ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0")
+foreach(limit IN ITEMS zero one)
+    if(limit STREQUAL "zero")
+        set(value 0)
+    else()
+        set(value 1)
+    endif()
+    add_test(NAME OpenBusMaterialRenderingProbe.spotlight-limit-${limit}
+        COMMAND OpenBusMaterialRenderingProbe --spotlight-limit-${limit})
+    set_tests_properties(OpenBusMaterialRenderingProbe.spotlight-limit-${limit} PROPERTIES
+        SKIP_RETURN_CODE 77 ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=${value}")
+endforeach()
 openbus_add_probe(OpenBusVehicleDrawSortingProbe VehicleDrawSortingProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusVehicleIndirectReuseProbe VehicleIndirectReuseProbe.cpp

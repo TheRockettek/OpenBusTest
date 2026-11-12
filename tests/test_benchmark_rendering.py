@@ -110,6 +110,15 @@ class TraceSummaryTests(unittest.TestCase):
                     "0.5",
                     "--no-material-batching",
                     "--finish-before-swap",
+                    "--force-vehicle-spotlights",
+                    "--trace-min-duration-us",
+                    "10",
+                    "--ai-bus-config",
+                    "Vehicles/test/ai.bus",
+                    "--ai-model-config",
+                    "Vehicles/test/model.cfg",
+                    "--ai-count",
+                    "2",
                     "--output-directory",
                     str(output),
                 ]
@@ -125,6 +134,17 @@ class TraceSummaryTests(unittest.TestCase):
                 self.assertEqual(kwargs["env"]["OPENBUS_MATERIAL_BATCHING"], "0")
                 self.assertEqual(kwargs["env"]["OPENBUS_GL_FINISH_BEFORE_SWAP"], "1")
                 self.assertEqual(kwargs["env"]["OPENBUS_TRACE_SAMPLE_EVERY_N_FRAMES"], "1")
+                self.assertEqual(kwargs["env"]["OPENBUS_TRACE_MIN_US"], "10")
+                self.assertEqual(
+                    kwargs["env"]["OPENBUS_BENCHMARK_FORCE_VEHICLE_SPOTLIGHTS"], "1"
+                )
+                self.assertEqual(kwargs["env"]["OPENBUS_AI_BUS_CONFIG"], "Vehicles/test/ai.bus")
+                self.assertEqual(
+                    kwargs["env"]["OPENBUS_AI_MODEL_CONFIG"], "Vehicles/test/model.cfg"
+                )
+                self.assertEqual(kwargs["env"]["OPENBUS_AI_COUNT"], "2")
+                self.assertEqual(kwargs["env"]["OPENBUS_AI_SPOTLIGHT_NEAR_METERS"], "75")
+                self.assertEqual(kwargs["env"]["OPENBUS_AI_SPOTLIGHT_FAR_FRAMES"], "24")
                 self.assertNotIn("OPENBUS_REFLECTION_MAX_FPS", kwargs["env"])
                 kwargs["stdout"].write(
                     "BENCHMARK_COMPLETE=1\n"
@@ -141,7 +161,12 @@ class TraceSummaryTests(unittest.TestCase):
             ), patch.object(benchmark_rendering, "BUILD_DIR", build), patch.object(
                 benchmark_rendering.subprocess, "run", side_effect=fake_run
             ), patch.dict(
-                benchmark_rendering.os.environ, {"OPENBUS_REFLECTION_MAX_FPS": "30"}
+                benchmark_rendering.os.environ,
+                {
+                    "OPENBUS_REFLECTION_MAX_FPS": "30",
+                    "OPENBUS_AI_SPOTLIGHT_NEAR_METERS": "75",
+                    "OPENBUS_AI_SPOTLIGHT_FAR_FRAMES": "24",
+                },
             ):
                 self.assertEqual(benchmark_rendering.run_benchmark(args), 0)
 
@@ -159,6 +184,12 @@ class TraceSummaryTests(unittest.TestCase):
             self.assertEqual(timing_rows[0]["FinishBeforeSwap"], "True")
             self.assertEqual(timing_rows[0]["TextureScale"], "0.5")
             self.assertEqual(timing_rows[0]["MaterialBatching"], "False")
+            self.assertEqual(timing_rows[0]["ForceVehicleSpotlights"], "True")
+            self.assertEqual(timing_rows[0]["TraceMinDurationUs"], "10")
+            self.assertEqual(timing_rows[0]["ConfiguredAiVehicleCount"], "2")
+            self.assertEqual(timing_rows[0]["AiBusConfig"], "Vehicles/test/ai.bus")
+            self.assertEqual(timing_rows[0]["AiSpotlightNearMeters"], "75")
+            self.assertEqual(timing_rows[0]["AiSpotlightFarFrames"], "24")
             with (output / "render_benchmark_runs.csv").open(
                 newline="", encoding="utf-8-sig"
             ) as result_file:
@@ -166,6 +197,11 @@ class TraceSummaryTests(unittest.TestCase):
             self.assertEqual(run_rows[0]["FinishBeforeSwap"], "True")
             self.assertEqual(run_rows[0]["TextureScale"], "0.5")
             self.assertEqual(run_rows[0]["MaterialBatching"], "False")
+            self.assertEqual(run_rows[0]["ForceVehicleSpotlights"], "True")
+            self.assertEqual(run_rows[0]["TraceMinDurationUs"], "10")
+            self.assertEqual(run_rows[0]["ConfiguredAiVehicleCount"], "2")
+            self.assertEqual(run_rows[0]["AiModelConfig"], "Vehicles/test/model.cfg")
+            self.assertEqual(run_rows[0]["AiSpotlightNearMeters"], "75")
 
     def test_completed_run_exports_gpu_timing_intervals(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -212,6 +248,13 @@ class TraceSummaryTests(unittest.TestCase):
                 self.assertEqual(
                     kwargs["env"]["OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES"], "5"
                 )
+                self.assertEqual(
+                    kwargs["env"]["OPENBUS_BENCHMARK_FORCE_VEHICLE_SPOTLIGHTS"], "0"
+                )
+                self.assertEqual(kwargs["env"]["OPENBUS_TRACE_MIN_US"], "1")
+                self.assertNotIn("OPENBUS_AI_BUS_CONFIG", kwargs["env"])
+                self.assertNotIn("OPENBUS_AI_MODEL_CONFIG", kwargs["env"])
+                self.assertNotIn("OPENBUS_AI_COUNT", kwargs["env"])
                 kwargs["stdout"].write(
                     "BENCHMARK_COMPLETE=1\n"
                     "BENCHMARK_WINDOW=1280x720\n"
@@ -256,6 +299,11 @@ class TraceSummaryTests(unittest.TestCase):
             self.assertEqual(gpu_rows[0]["ReflectionSamples"], "2")
             self.assertEqual(gpu_rows[0]["ReflectionMaxMs"], "2.0")
             self.assertEqual(gpu_rows[0]["ReflectionDropped"], "0")
+            self.assertEqual(gpu_rows[0]["ForceVehicleSpotlights"], "False")
+            self.assertEqual(gpu_rows[0]["TraceMinDurationUs"], "1")
+            self.assertEqual(gpu_rows[0]["ConfiguredAiVehicleCount"], "0")
+            self.assertEqual(gpu_rows[0]["AiSpotlightNearMeters"], "60")
+            self.assertEqual(gpu_rows[0]["AiSpotlightFarFrames"], "20")
 
     def test_missing_phase_marker_is_reported(self):
         events = [self.make_event("Benchmark.measure", "benchmark", 0, 600)]
@@ -363,6 +411,8 @@ class TraceSummaryTests(unittest.TestCase):
         self.assertTrue(args.material_batching)
         self.assertFalse(args.gpu_timing)
         self.assertIsNone(args.gpu_timing_sample_every_n_frames)
+        self.assertFalse(args.force_vehicle_spotlights)
+        self.assertEqual(args.trace_min_duration_us, 1)
 
     def test_finish_before_swap_flag(self):
         args = benchmark_rendering.build_parser().parse_args(["--finish-before-swap"])
@@ -378,6 +428,43 @@ class TraceSummaryTests(unittest.TestCase):
             benchmark_rendering.build_parser().parse_args(
                 ["--gpu-timing-sample-every-n-frames", "0"]
             )
+
+    def test_vehicle_spotlight_and_trace_size_options(self):
+        args = benchmark_rendering.build_parser().parse_args(
+            ["--force-vehicle-spotlights", "--trace-min-duration-us", "10"]
+        )
+        self.assertTrue(args.force_vehicle_spotlights)
+        self.assertEqual(args.trace_min_duration_us, 10)
+        with self.assertRaises(SystemExit):
+            benchmark_rendering.build_parser().parse_args(["--trace-min-duration-us", "0"])
+
+    def test_explicit_ai_vehicle_configuration_requires_both_paths_and_valid_count(self):
+        args = benchmark_rendering.build_parser().parse_args(["--ai-bus-config", "Vehicles/test/ai.bus"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "build"
+            build.mkdir()
+            (build / "OpenBus.exe").touch()
+            (build / "CMakeCache.txt").write_text(
+                "OPENBUS_ENABLE_PERF_TRACE:BOOL=ON\n", encoding="utf-8"
+            )
+            with patch.object(benchmark_rendering, "EXECUTABLE", build / "OpenBus.exe"), patch.object(
+                benchmark_rendering, "CACHE_FILE", build / "CMakeCache.txt"
+            ), patch.object(benchmark_rendering, "BUILD_DIR", build):
+                with self.assertRaisesRegex(ValueError, "must be provided together"):
+                    benchmark_rendering.run_benchmark(args)
+                invalid_count_args = benchmark_rendering.build_parser().parse_args(
+                    [
+                        "--ai-bus-config",
+                        "Vehicles/test/ai.bus",
+                        "--ai-model-config",
+                        "Vehicles/test/model.cfg",
+                        "--ai-count",
+                        "201",
+                    ]
+                )
+                with self.assertRaisesRegex(ValueError, "between 1 and 200"):
+                    benchmark_rendering.run_benchmark(invalid_count_args)
 
     def test_gpu_timing_configuration_uses_the_initialized_sample_stride(self):
         configuration = benchmark_rendering.gpu_timing_configuration(

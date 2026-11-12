@@ -119,9 +119,16 @@ std::size_t multiBatchSummaryCount(const std::filesystem::path& path) {
     return matches;
 }
 
-void writeTinyTerrain(const std::filesystem::path& path) {
+void writeTinyTerrain(const std::filesystem::path& path, float height = 0.0F,
+                      float rowHeight = 0.0F) {
     std::array<std::uint8_t, 20> terrain = {};
     terrain[0] = 1;
+    for (std::size_t offset = 4; offset < terrain.size(); offset += 4) {
+        const auto bits = std::bit_cast<std::uint32_t>(height + (offset >= 12 ? rowHeight : 0.0F));
+        for (std::size_t byte = 0; byte < 4; ++byte) {
+            terrain[offset + byte] = static_cast<std::uint8_t>(bits >> (byte * 8));
+        }
+    }
     std::ofstream output(path, std::ios::binary);
     output.write(reinterpret_cast<const char*>(terrain.data()),
                  static_cast<std::streamsize>(terrain.size()));
@@ -250,7 +257,12 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
     writeLamp(root / "model" / "green.x", "0;1;0");
     writeLamp(root / "model" / "unlit.x", "0;0;0");
     writeText(root / "shared.sco", "[mesh]\nred.x\n");
-    writeText(root / "retry.sco", "[tree]\nretry.tga\n10\n10\n1\n1\n");
+    writeText(root / "cross_light.sco",
+              "[mesh]\nred.x\n[maplight]\n0\n0\n2\n0\n0\n0\n10\n");
+    writeText(root / "light_only.sco", "[maplight]\n0\n0\n0\n0\n0\n0\n10\n");
+    writeText(root / "retry.sco",
+              "[onlyeditor]\n[tree]\nretry.tga\n10\n10\n1\n1\n"
+              "[maplight]\n0\n0\n0\n0\n0\n0\n10\n");
     const std::array<std::uint8_t, 2> brokenTexture = {};
     {
         std::ofstream output(root / "retry.tga", std::ios::binary);
@@ -267,14 +279,16 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
               "[mesh]\nyellow.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
               "[alphascale]\nmain_yellow\n"
               "[mesh]\ngreen.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
-              "[alphascale]\nmain_green\n");
+              "[alphascale]\nmain_green\n"
+              "[maplight]\n0\n0\n0\n0\n0\n0\n10\n");
     writeText(root / "support.sco",
               "[new_attachment]\nhead_mount\nattach_trans\n0\n0\n0\n");
     writeText(root / "route_attachment.sco",
-              "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n0\n3\n0\n0\n");
+              "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
+              "[maplight]\n0\n0\n0\n0\n0\n0\n10\n");
     writeText(root / "duplicate_attachment.sco",
               "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
-              "[mesh]\nred.x\n");
+              "[mesh]\nred.x\n[maplight]\n0\n0\n2\n0\n0\n0\n10\n");
     writeText(root / "human_path_attachment.sco",
               "[path]\n0\n0\n10\n0\n0\n10\n0\n0\n1\n3\n0\n0\n");
     writeText(root / "Script" / "traf_car_varlist.txt",
@@ -290,7 +304,8 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
               "(S.L.main_Yellow)\n"
               "{end}\n");
     writeText(root / "controller.sco",
-              "[onlyeditor]\n[traffic_lights_group]\n6\n"
+              "[onlyeditor]\n[maplight]\n0\n0\n0\n0\n0\n0\n10\n"
+              "[traffic_lights_group]\n6\n"
               "[traffic_light]\nSelected approach\n[phase]\n0\n2\n"
               "[phase]\n6\n2\n[phase]\n9\n2\n[approachdist]\n5\n"
               "[traffic_light]\nOther approach\n[phase]\n0\n6\n[approachdist]\n5\n"
@@ -313,7 +328,8 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
                       "[varparent]\n15340\n"
                       "[attachObj]\n0\nhead.sco\n47735\n15401\n0\n0\n0\n0\n0\n0\n"
                       "[varparent]\n15340\n"
-                      "[attachObj]\n0\nshared.sco\n301\n204\n0\n0\n0\n0\n0\n0\n");
+                      "[attachObj]\n0\nshared.sco\n301\n204\n0\n0\n0\n0\n0\n0\n"
+                      "[attachObj]\n0\ncross_light.sco\n302\n205\n0\n0\n0\n0\n0\n0\n");
     {
         std::ofstream output(root / "tile.map", std::ios::binary | std::ios::app);
         output << "[water]\n";
@@ -341,23 +357,38 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
                                     "0\n0\n0\n0\n0\n"
                                     "[splineAttachement]\n0\nroute_attachment.sco\n206\n"
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[splineAttachement]\n0\ncross_light.sco\n262\n"
+                                    "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[spline_terrain_align]\n"
                                     "[splineAttachement]\n0\nhuman_path_attachment.sco\n207\n"
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
                                     "[splineAttachement]\n0\nduplicate_attachment.sco\n310\n"
                                     "0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[spline_terrain_align]\n"
                                     "[splineAttachement]\n0\nduplicate_attachment.sco\n310\n"
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n"
+                                    "[spline_terrain_align]\n"
                                     "[object]\n0\nhuman_path_attachment.sco\n209\n"
                                     "0\n0\n10\n0\n0\n0\n0\n0\n0\n"
+                                    "[object]\n0\ncross_light.sco\n261\n"
+                                    "10\n0\n0\n0\n0\n0\n0\n"
                                   : "[object]\n0\nshared.sco\n" + std::to_string(200 + tileX) +
                                         "\n0\n0\n0\n0\n0\n0\n0\n[object]\n0\nretry.sco\n250\n"
-                                        "0\n0\n0\n0\n0\n0\n0\n") +
+                                        "0\n0\n0\n0\n0\n0\n0\n"
+                                        "[object]\n0\nlight_only.sco\n260\n"
+                                        "0\n0\n0\n0\n0\n0\n0\n"
+                                        "[object]\n0\nlate_light.sco\n263\n"
+                                        "20\n0\n0\n0\n0\n0\n0\n"
+                                        "[attachObj]\n0\nlate_attached.sco\n265\n205\n"
+                                        "0\n0\n0\n0\n0\n0\n"
+                                        "[splineAttachement]\n0\nlate_spline.sco\n264\n"
+                                        "0\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n") +
                       "[water]\n");
         writeTinyTexture(root / (tileName + ".map.2.tga"));
         if (tileX == 4) {
             writeBrokenTerrain(root / (tileName + ".terrain"));
         } else {
-            writeTinyTerrain(root / (tileName + ".terrain"));
+            writeTinyTerrain(root / (tileName + ".terrain"), 25.0F);
         }
         writeTinyWater(root / (tileName + ".map.water"));
     }
@@ -453,8 +484,24 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
     signalApproach.route = *aiRoute;
     check(openbus::map::mapTrafficActorWaitingAtSignal(signalApproach, 0.0),
           "AI actor on an SCO route must stop at its red signal");
-    check(renderer.renderStats().activeSceneryObjects == 3,
+    check(renderer.renderStats().activeSceneryObjects == 4,
           "Cross-tile spline parents must resolve for active attached scenery");
+    check(renderer.renderStats().sceneryLightSources == 10,
+          "Map-wide registration must include unloaded, light-only and runtime-tree lights");
+    const auto crossGeometry = renderer.sceneryObjectDebugPositions(302);
+    const auto mapLights = renderer.sceneryLightDebugPositions();
+    const auto splineLightIndex = mapLights.size() - 3;
+    const auto initialSplineLight = mapLights[splineLightIndex];
+    const auto initialDuplicateLightA = mapLights[splineLightIndex + 1];
+    const auto initialDuplicateLightB = mapLights[splineLightIndex + 2];
+    const std::array<double, 3> crossPosition{1500.0, 0.0, 25.0};
+    const std::array<double, 3> crossLightPosition{1500.0, 0.0, 27.0};
+    check(!crossGeometry.empty() && crossGeometry.front() == crossPosition &&
+              std::find(mapLights.begin(), mapLights.end(), crossLightPosition) != mapLights.end(),
+          "Cross-tile light and geometry must use the unloaded parent's terrain height");
+    check(std::find(mapLights.begin(), mapLights.end(), std::array<double, 3>{1210.0, 0.0, 2.0}) !=
+              mapLights.end(),
+          "Broken terrain must retain the fallback light until the tile can be loaded");
     setPerspective(32, 32, 90);
     setModelViewMatrix(translationMatrix({0, 0, -12}));
     glViewport(0, 0, 32, 32);
@@ -622,7 +669,7 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
         renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    writeTinyTerrain(root / "tile_4.terrain");
+    writeTinyTerrain(root / "tile_4.terrain", 17.0F, 60.0F);
     const std::filesystem::path probeLog = root / "probe.log";
     const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     bool assetRetryObserved = false;
@@ -638,6 +685,12 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
           "Tile window must remain on the prior view while scenery asset retries are pending");
     check(assetRetryObserved, "Scenery preparation failure must be reported for retry");
     writeTinyTexture(root / "retry.tga");
+    writeText(root / "late_light.sco",
+              "[mesh]\nred.x\n[maplight]\n0\n0\n2\n0\n0\n0\n10\n");
+    writeText(root / "late_spline.sco",
+              "[mesh]\nred.x\n[maplight]\n0\n0\n2\n0\n0\n0\n10\n");
+    writeText(root / "late_attached.sco",
+              "[mesh]\nred.x\n[maplight]\n3\n0\n2\n0\n0\n0\n10\n");
     bool nextWindowActivated = false;
     const auto activationDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (std::chrono::steady_clock::now() < activationDeadline) {
@@ -652,11 +705,52 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
         nextWindowActivated,
         "Background tile parsing and bounded publication must eventually activate the new window");
     const MapRenderStats streamedStats = renderer.renderStats();
+    check(streamedStats.sceneryLightSources == 13,
+          "Streaming must recover missing lights without duplicating existing registrations");
+    const auto recoveredLights = renderer.sceneryLightDebugPositions();
+    check(std::find(recoveredLights.begin(), recoveredLights.end(),
+                    std::array<double, 3>{1210.0, 0.0, 19.0}) != recoveredLights.end() &&
+              std::find(recoveredLights.begin(), recoveredLights.end(),
+                        std::array<double, 3>{1210.0, 0.0, 2.0}) == recoveredLights.end() &&
+              renderer.sceneryObjectDebugPositions(261) ==
+                  std::vector<std::array<double, 3>>{{1210.0, 0.0, 17.0}},
+          "Recovered terrain must update the registered light before publishing scenery");
+    const auto splineGeometry = renderer.sceneryObjectDebugPositions(262);
+    const auto& recoveredSplineLight = recoveredLights[splineLightIndex];
+    check(splineGeometry.size() == 1 && recoveredSplineLight != initialSplineLight &&
+              std::abs(std::hypot(recoveredSplineLight[0] - splineGeometry[0][0],
+                                  recoveredSplineLight[1] - splineGeometry[0][1],
+                                  recoveredSplineLight[2] - splineGeometry[0][2]) -
+                       2.0) < 0.0001,
+          "Recovered spline terrain alignment must update the light and its geometry together");
+    check(recoveredLights[splineLightIndex + 1] != initialDuplicateLightA &&
+              recoveredLights[splineLightIndex + 2] != initialDuplicateLightB,
+          "Duplicate spline attachment lights must each recover their alignment");
+    check(std::find(recoveredLights.begin(), recoveredLights.end(),
+                    std::array<double, 3>{1520.0, 0.0, 27.0}) != recoveredLights.end() &&
+              renderer.sceneryObjectDebugPositions(263) ==
+                  std::vector<std::array<double, 3>>{{1520.0, 0.0, 25.0}},
+          "A scenery asset restored after indexing must register its light with its geometry");
+    const auto lateSplineGeometry = renderer.sceneryObjectDebugPositions(264);
+    check(lateSplineGeometry.size() == 1 &&
+              std::abs(std::hypot(recoveredLights.back()[0] - lateSplineGeometry[0][0],
+                                  recoveredLights.back()[1] - lateSplineGeometry[0][1],
+                                  recoveredLights.back()[2] - lateSplineGeometry[0][2]) -
+                       2.0) < 0.0001,
+          "A restored spline asset must register a light at its streamed geometry");
+    const auto lateAttachedGeometry = renderer.sceneryObjectDebugPositions(265);
+    const auto& lateAttachedLight = recoveredLights[recoveredLights.size() - 2];
+    check(lateAttachedGeometry.size() == 1 &&
+              std::abs(std::hypot(lateAttachedLight[0] - lateAttachedGeometry[0][0],
+                                  lateAttachedLight[1] - lateAttachedGeometry[0][1],
+                                  lateAttachedLight[2] - lateAttachedGeometry[0][2]) -
+                       std::sqrt(13.0)) < 0.0001,
+          "A restored attached asset must register a light at its streamed geometry");
     check(streamedStats.activeRoadBatches == 2 && streamedStats.totalRoadBatches == 3,
           "Background road geometry preparation must publish both streamed tiles");
     check(streamedStats.totalWaterBatches == 3,
           "Background water sidecar preparation must publish both streamed tiles");
-    check(streamedStats.activeSceneryObjects == 5,
+    check(streamedStats.activeSceneryObjects == 10,
           "Duplicate spline-attachment IDs must not suppress their visual placements");
     check(logContains(probeLog, "duplicate spline-attachment ID index entries",
                       "visual placements processed independently; ID references ambiguous"),

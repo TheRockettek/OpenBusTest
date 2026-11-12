@@ -28,6 +28,9 @@ struct ReflectionTarget {
     unsigned int depthTexture = 0;
     int width = 0;
     int height = 0;
+    std::uint64_t lastRenderedFrame = 0;
+    std::chrono::steady_clock::time_point lastRenderTime = {};
+    bool hasRendered = false;
 };
 
 std::unordered_map<int, unsigned int> activeReflectionTextures;
@@ -68,8 +71,6 @@ struct ReflectionRenderer::Impl {
     int frameInterval;
     double maximumFrameRate;
     std::uint64_t frameCounter = 0;
-    std::chrono::steady_clock::time_point lastRenderTime = {};
-    bool hasRendered = false;
     std::vector<ReflectionTarget> targets;
 
     Impl(int maximumSizeValue, int frameIntervalValue, double maximumFrameRateValue)
@@ -199,17 +200,6 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
         return;
     }
     ++impl_->frameCounter;
-    if (impl_->frameCounter % static_cast<std::uint64_t>(impl_->frameInterval) != 0) {
-        return;
-    }
-    const auto renderStart = std::chrono::steady_clock::now();
-    if (impl_->maximumFrameRate > 0.0 && impl_->hasRendered &&
-        std::chrono::duration<double>(renderStart - impl_->lastRenderTime).count() <
-            1.0 / impl_->maximumFrameRate) {
-        return;
-    }
-    impl_->lastRenderTime = renderStart;
-    impl_->hasRendered = true;
 
     Matrix4 previousModelView;
     {
@@ -238,6 +228,20 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
             ++reflectionIndex;
             continue;
         }
+        const auto renderStart = std::chrono::steady_clock::now();
+        if (target.hasRendered) {
+            if (impl_->frameCounter - target.lastRenderedFrame <
+                static_cast<std::uint64_t>(impl_->frameInterval)) {
+                ++reflectionIndex;
+                continue;
+            }
+            if (impl_->maximumFrameRate > 0.0 &&
+                std::chrono::duration<double>(renderStart - target.lastRenderTime).count() <
+                    1.0 / impl_->maximumFrameRate) {
+                ++reflectionIndex;
+                continue;
+            }
+        }
 
         const int requestedTargetSize =
             std::clamp(requirement.size, kMinReflectionTargetSize, impl_->maximumSize);
@@ -254,8 +258,11 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
         }
         {
             TraceScope phase("render", "ReflectionRenderer::render.target.draw");
-            draw(simulation, cameraIndex, target.width, target.height);
+            draw(simulation, cameraIndex, reflectionIndex, target.width, target.height);
         }
+        target.lastRenderedFrame = impl_->frameCounter;
+        target.lastRenderTime = renderStart;
+        target.hasRendered = true;
         ++reflectionIndex;
     }
     {

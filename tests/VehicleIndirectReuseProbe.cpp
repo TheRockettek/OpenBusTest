@@ -1155,7 +1155,7 @@ int main(int argc, char** argv) {
             reflections.render(
                 bus, cameras, {0, 0, 64, 64},
                 [](std::size_t) { return ReflectionRequirement{true, 64}; },
-                [&](const BusSimulation&, std::size_t, int width, int height) {
+                [&](const BusSimulation&, std::size_t, std::size_t, int width, int height) {
                     rendered = true;
                     setPerspective(width, height, 90);
                     setModelViewMatrix(identityMatrix());
@@ -1258,7 +1258,7 @@ int main(int argc, char** argv) {
             reflections.render(
                 bus, cameras, {0, 0, 64, 64},
                 [](std::size_t) { return ReflectionRequirement{true, 64}; },
-                [&](const BusSimulation&, std::size_t, int width, int height) {
+                [&](const BusSimulation&, std::size_t, std::size_t, int width, int height) {
                     cpuRendered = true;
                     setPerspective(width, height, 90);
                     setModelViewMatrix(multiplyMatrix4(translationMatrix({0, 0, -20}),

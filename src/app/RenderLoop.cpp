@@ -56,6 +56,25 @@ double positiveEnvironmentRate(const char* name, double defaultValue) {
     }
 }
 
+int positiveEnvironmentFrameInterval(const char* name, int defaultValue) {
+    const char* value = openbus::getEnvironment(name);
+    if (value == nullptr) {
+        return defaultValue;
+    }
+    try {
+        std::size_t parsed = 0;
+        const long interval = std::stol(value, &parsed);
+        if (value[parsed] != '\0' || interval < 1 || interval > 32) {
+            throw std::invalid_argument("Expected an integer from 1 to 32");
+        }
+        return static_cast<int>(interval);
+    } catch (const std::exception&) {
+        gameLog.Warning(std::string("Invalid ") + name +
+                        "; using the default AI spotlight interval");
+        return defaultValue;
+    }
+}
+
 double minimumObjectViewportFraction(const char* name) {
     const char* value = openbus::getEnvironment(name);
     if (value == nullptr || *value == '\0') {
@@ -121,6 +140,44 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
     trafficFleet_.aiSimulationRateHz = positiveEnvironmentRate("OPENBUS_AI_HZ", 0.0);
     trafficFleet_.aiMaximumRateHz = positiveEnvironmentRate("OPENBUS_MAX_FPS", 0.0);
     trafficFleet_.aiRateDivisor = positiveEnvironmentRate("OPENBUS_AI_HZ_DIVISOR", 1.0);
+    aiSpotlightScheduleConfig_.nearDistanceMeters =
+        positiveEnvironmentRate("OPENBUS_AI_SPOTLIGHT_NEAR_METERS", 60.0);
+    aiSpotlightScheduleConfig_.mediumDistanceMeters =
+        positiveEnvironmentRate("OPENBUS_AI_SPOTLIGHT_MEDIUM_METERS", 180.0);
+    aiSpotlightScheduleConfig_.nearIntervalFrames =
+        positiveEnvironmentFrameInterval("OPENBUS_AI_SPOTLIGHT_NEAR_FRAMES", 2);
+    aiSpotlightScheduleConfig_.mediumIntervalFrames =
+        positiveEnvironmentFrameInterval("OPENBUS_AI_SPOTLIGHT_MEDIUM_FRAMES", 6);
+    aiSpotlightScheduleConfig_.farIntervalFrames =
+        positiveEnvironmentFrameInterval("OPENBUS_AI_SPOTLIGHT_FAR_FRAMES", 20);
+    aiSpotlightScheduleConfig_.approachingSpeedMetersPerSecond =
+        positiveEnvironmentRate("OPENBUS_AI_SPOTLIGHT_APPROACH_MPS", 5.0);
+    aiSpotlightScheduleConfig_.highSpeedMetersPerSecond =
+        positiveEnvironmentRate("OPENBUS_AI_SPOTLIGHT_HIGH_SPEED_MPS", 18.0);
+    if (aiSpotlightScheduleConfig_.nearDistanceMeters >=
+        aiSpotlightScheduleConfig_.mediumDistanceMeters) {
+        gameLog.Warning("AI spotlight near distance must be less than medium distance; "
+                        "using 60 m and 180 m defaults");
+        aiSpotlightScheduleConfig_.nearDistanceMeters = 60.0;
+        aiSpotlightScheduleConfig_.mediumDistanceMeters = 180.0;
+    }
+    if (aiSpotlightScheduleConfig_.nearIntervalFrames >
+            aiSpotlightScheduleConfig_.mediumIntervalFrames ||
+        aiSpotlightScheduleConfig_.mediumIntervalFrames >
+            aiSpotlightScheduleConfig_.farIntervalFrames) {
+        gameLog.Warning("AI spotlight intervals must increase with distance; "
+                        "using 2/6/20 frame defaults");
+        aiSpotlightScheduleConfig_.nearIntervalFrames = 2;
+        aiSpotlightScheduleConfig_.mediumIntervalFrames = 6;
+        aiSpotlightScheduleConfig_.farIntervalFrames = 20;
+    }
+    gameLog.Log("AI spotlight scheduling intervals are " +
+                std::to_string(aiSpotlightScheduleConfig_.nearIntervalFrames) + "/" +
+                std::to_string(aiSpotlightScheduleConfig_.mediumIntervalFrames) + "/" +
+                std::to_string(aiSpotlightScheduleConfig_.farIntervalFrames) +
+                " frames at <= " + std::to_string(aiSpotlightScheduleConfig_.nearDistanceMeters) +
+                " m, <= " + std::to_string(aiSpotlightScheduleConfig_.mediumDistanceMeters) +
+                " m and farther (approaching/high-speed lights update twice as often).");
     const double renderFpsCapHz = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
     frameTiming_.setFrameRateCap(renderFpsCapHz);
     mainViewMinimumObjectViewportFraction_ =
@@ -216,6 +273,9 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     const bool benchmarkMode = parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
+    if (benchmarkMode) {
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+    }
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
@@ -372,6 +432,8 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
     setupOptions.vehicleConfigurationPath = resolvedVehicleConfigPath;
     if (!isAiVehicle && configurePlayerView) {
         vehicleCameras_.clear();
+        trafficReflectionViewsByIndex_.clear();
+        trafficReflectionCameraViews_.clear();
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
                 camera.kind == VehicleCameraKind::Passenger ||
@@ -1185,6 +1247,8 @@ void RenderLoop::RemovePlayerVehicle() {
                                    }),
                     vehicles_.end());
     vehicleCameras_.clear();
+    trafficReflectionViewsByIndex_.clear();
+    trafficReflectionCameraViews_.clear();
     vehicleScheduleViews_.clear();
     vehicleTicketSellingViews_.clear();
     cameraView_ = 0;
@@ -1248,6 +1312,8 @@ void RenderLoop::ResetForStartupMenu() {
     ++playerPassengerServiceGeneration_;
     mapRenderer_.reset();
     vehicleCameras_.clear();
+    trafficReflectionViewsByIndex_.clear();
+    trafficReflectionCameraViews_.clear();
     vehicleScheduleViews_.clear();
     vehicleTicketSellingViews_.clear();
     mouseControlEnabled_ = false;

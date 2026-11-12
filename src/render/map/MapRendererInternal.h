@@ -30,6 +30,8 @@
 #include "render/RenderPrimitives.h"
 #include "map/SceneryMaterialBinding.h"
 #include "render/map/MapRenderer.h"
+#include "render/map/StaticLightTileIndex.h"
+#include "render/map/StaticLightViewCache.h"
 #include "render/map/TreeSeason.h"
 #include "scripting/ScriptRuntime.h"
 
@@ -333,11 +335,6 @@ struct MapRenderer::Impl {
         std::size_t instanceIndex = 0;
     };
 
-    struct SceneryMapLight {
-        std::uint64_t sourceTileKey = 0;
-        MapPointLight light;
-    };
-
     struct SceneryRuntimeDefinition {
         VehicleConfig configuration;
         std::vector<ModelScriptTexture> scriptTextures;
@@ -408,7 +405,11 @@ struct MapRenderer::Impl {
     std::unordered_map<std::string, std::shared_future<std::shared_ptr<Image>>>
         humanTextureRequests;
     std::vector<std::vector<double>> sceneryLodThresholdSets;
-    std::vector<SceneryMapLight> sceneryMapLights;
+    std::vector<MapPointLight> sceneryMapLights;
+    std::uint64_t sceneryMapLightRevision = 0;
+    mutable map_detail::StaticLightTileIndex sceneryMapLightIndex;
+    mutable map_detail::StaticLightViewCache sceneryMapLightViewCache;
+    mutable StaticMapLightBuffer sceneryMapLightBuffer;
     std::vector<std::unique_ptr<SceneryScriptState>> sceneryScriptStates;
     std::vector<std::size_t> activeSceneryScriptStateIndices;
     std::unordered_map<std::uint64_t, std::vector<std::size_t>> sceneryScriptStatesByTile;

@@ -437,6 +437,23 @@ struct Vehicle {
     std::vector<ModelEnhancedLight> enhancedLights;
     std::vector<InteriorLightController> enhancedLightControllers;
     std::vector<ModelSpotlight> spotlights;
+    struct AiSpotlightCache {
+        openbus::rendering::VehicleSpotlight worldLight;
+        std::array<double, 3> rootPosition = {};
+        double rootYawRadians = 0.0;
+        double rootPitchDegrees = std::numeric_limits<double>::quiet_NaN();
+        double rootRollDegrees = std::numeric_limits<double>::quiet_NaN();
+        double selection = std::numeric_limits<double>::quiet_NaN();
+        double brake = std::numeric_limits<double>::quiet_NaN();
+        double steering = std::numeric_limits<double>::quiet_NaN();
+        double updatedAtSeconds = 0.0;
+        std::uint64_t lastUpdateFrame = 0;
+        std::uint64_t lastRelevantFrame = 0;
+        std::uint64_t nextUpdateFrame = 0;
+        bool initialized = false;
+        bool selectionActive = false;
+        bool active = false;
+    } aiSpotlightCache;
     bool invalidSpotlightLogged = false;
     Matrix4 interiorLightRootModelView = identityMatrix();
     std::string modelCacheKey;

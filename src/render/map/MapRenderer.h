@@ -36,6 +36,7 @@ struct MapRenderStats {
     std::size_t totalTerrainTiles = 0;
     std::size_t activeSceneryObjects = 0;
     std::size_t totalSceneryObjects = 0;
+    std::size_t sceneryLightSources = 0;
     std::size_t activeRoadBatches = 0;
     std::size_t totalRoadBatches = 0;
     std::size_t totalWaterBatches = 0;
@@ -104,6 +105,8 @@ class MapRenderer {
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     std::vector<std::array<double, 3>> activeTileBoundaryVertices(double fallbackHeight) const;
     MapRenderStats renderStats() const;
+    std::vector<std::array<double, 3>> sceneryLightDebugPositions() const;
+    std::vector<std::array<double, 3>> sceneryObjectDebugPositions(int objectId) const;
     std::uint64_t trafficDebugGeometryRevision() const noexcept;
     TrafficSignalDebugStats trafficSignalDebugStats() const;
     std::vector<TrafficSignalHeadDebugInfo>

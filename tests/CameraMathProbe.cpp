@@ -52,6 +52,11 @@ int main() {
         return 1;
     }
     const auto frustum = openbus::rendering::buildViewFrustum(projection);
+    if (!openbus::rendering::sphereOutsideFrustum(frustum, {40.0, 0.0, -10.0, 1.0}, 4.0) ||
+        openbus::rendering::sphereOutsideFrustum(frustum, {12.0, 0.0, -10.0, 1.0}, 2.0)) {
+        std::cerr << "Spotlight influence-sphere frustum test was not conservative\n";
+        return 1;
+    }
     const auto rotatedView = openbus::rendering::rotationMatrix(45.0, 0.0, 1.0, 0.0);
     const auto inverseView = openbus::rendering::rotationMatrix(-45.0, 0.0, 1.0, 0.0);
     const auto rotatedCenter = [&](double depth) {
