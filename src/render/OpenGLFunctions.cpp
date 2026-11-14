@@ -17,6 +17,7 @@ TexBufferProc pglTexBuffer = nullptr;
 DeleteBuffersProc pglDeleteBuffers = nullptr;
 CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
 CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
+TexImage2DMultisampleProc pglTexImage2DMultisample = nullptr;
 GenerateMipmapProc pglGenerateMipmap = nullptr;
 GetStringiProc pglGetStringi = nullptr;
 ActiveTextureProc pglActiveTexture = nullptr;
@@ -110,6 +111,8 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<CompressedTexImage2DProc>(glfwGetProcAddress("glCompressedTexImage2D"));
     pglCompressedTexImage3D =
         reinterpret_cast<CompressedTexImage3DProc>(glfwGetProcAddress("glCompressedTexImage3D"));
+    pglTexImage2DMultisample = reinterpret_cast<TexImage2DMultisampleProc>(
+        glfwGetProcAddress("glTexImage2DMultisample"));
     pglGenerateMipmap =
         reinterpret_cast<GenerateMipmapProc>(glfwGetProcAddress("glGenerateMipmap"));
     pglActiveTexture = reinterpret_cast<ActiveTextureProc>(glfwGetProcAddress("glActiveTexture"));

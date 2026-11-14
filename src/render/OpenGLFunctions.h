@@ -45,6 +45,8 @@ using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsize
                                           const void*);
 using CompressedTexImage3DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint,
                                           GLsizei, const void*);
+using TexImage2DMultisampleProc = void(APIENTRY*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei,
+                                                  GLboolean);
 using GenerateMipmapProc = void(APIENTRY*)(GLenum);
 using GetStringiProc = const GLubyte*(APIENTRY*)(GLenum, GLuint);
 using ActiveTextureProc = void (*)(GLenum);
@@ -107,6 +109,7 @@ extern TexBufferProc pglTexBuffer;
 extern DeleteBuffersProc pglDeleteBuffers;
 extern CompressedTexImage2DProc pglCompressedTexImage2D;
 extern CompressedTexImage3DProc pglCompressedTexImage3D;
+extern TexImage2DMultisampleProc pglTexImage2DMultisample;
 extern GenerateMipmapProc pglGenerateMipmap;
 extern GetStringiProc pglGetStringi;
 extern ActiveTextureProc pglActiveTexture;

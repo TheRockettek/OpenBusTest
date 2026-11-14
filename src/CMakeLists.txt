@@ -224,6 +224,24 @@ openbus_add_module(openbus_render
         OpenBus::GLFW
         OpenGL::GL
 )
+set(OPENBUS_SMAA_ROOT "${PROJECT_SOURCE_DIR}/third_party/smaa")
+set(OPENBUS_SMAA_SHADER "${OPENBUS_SMAA_ROOT}/SMAA.hlsl")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OPENBUS_SMAA_SHADER}")
+file(READ "${OPENBUS_SMAA_SHADER}" OPENBUS_SMAA_SHADER_SOURCE)
+string(ASCII 183 OPENBUS_SMAA_MIDDLE_DOT)
+string(REPLACE "${OPENBUS_SMAA_MIDDLE_DOT}" "+" OPENBUS_SMAA_SHADER_SOURCE
+       "${OPENBUS_SMAA_SHADER_SOURCE}")
+string(FIND "${OPENBUS_SMAA_SHADER_SOURCE}" ")OPENBUS_SMAA\"" OPENBUS_SMAA_DELIMITER_POSITION)
+if(NOT OPENBUS_SMAA_DELIMITER_POSITION EQUAL -1)
+    message(FATAL_ERROR "The SMAA shader contains the reserved C++ resource delimiter")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/SmaaShader.h"
+    "#pragma once\ninline constexpr char openbusSmaaShader[] = R\"OPENBUS_SMAA(\n${OPENBUS_SMAA_SHADER_SOURCE}\n)OPENBUS_SMAA\";\n")
+target_include_directories(openbus_render
+    PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        "${OPENBUS_SMAA_ROOT}/Textures"
+)
 
 add_executable(OpenBus
     app/CrashHandler.cpp

@@ -247,7 +247,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         weatherBrightness.has_value() ? 1.0 - std::clamp(*weatherBrightness, 0.0, 1.0) : 0.0;
     const std::vector<std::size_t>* activeLights = nullptr;
     if (mapLightStrength > 0.0 && !impl_->activeTileKeys.empty()) {
-        activeLights = &impl_->sceneryMapLightIndex.allIndices();
+        activeLights = &impl_->sceneryMapLightIndex.activeIndices(impl_->activeTileKeys);
     }
     if (activeLights != nullptr) {
         const bool prepared = impl_->sceneryMapLightViewCache.prepare(

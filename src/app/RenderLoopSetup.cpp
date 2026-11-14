@@ -125,8 +125,9 @@ std::string environmentValue(const char* name) {
 
 bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                 StartupSelection& selection) {
-    const openbus::app::ScopedSwapInterval menuVsync(glfwSwapInterval, 1, vsyncEnabled_ ? 1 : 0);
+    const openbus::app::ScopedSwapInterval menuVsync(glfwSwapInterval, 1, vsyncEnabled_);
     imguiEnabled_ = true;
+    mainMenuGraphicsOpen_ = false;
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     const std::vector<std::filesystem::path> maps = discoverMaps(omsiRoot);
     if (maps.empty()) {
@@ -396,7 +397,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F), "Enter a valid date and time.");
         }
         ImGui::Spacing();
-        ImGui::BeginDisabled(!canStart);
+        ImGui::BeginDisabled(!canStart || displayPreviewPending_);
         const auto saveSelection = [&] {
             selection.mapDirectory = maps[selectedMapIndex];
             selection.mapDefinition = std::move(*selectedDefinition);
@@ -414,6 +415,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             selection.timeSeconds = static_cast<double>(hour * 3600 + minute * 60);
         };
         if (ImGui::Button("Start map", ImVec2(-1.0F, 42.0F))) {
+            mainMenuGraphicsOpen_ = false;
             saveSelection();
             try {
                 TraceScope mapTrace("startup", "startup.beginInitialMapSceneLoad");
@@ -431,6 +433,9 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             }
         }
         ImGui::EndDisabled();
+        if (ImGui::Button("Graphics settings", ImVec2(-1.0F, 36.0F))) {
+            mainMenuGraphicsOpen_ = true;
+        }
         ImGui::End();
 
         if (showAssetValidationWindow) {
@@ -546,9 +551,11 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             }
             ImGui::End();
         }
+        drawPauseMenuUi();
         imguiLayer_->render();
         glfwSwapBuffers(window_);
     }
+    mainMenuGraphicsOpen_ = false;
     return false;
 }
 
@@ -1581,16 +1588,17 @@ void RenderLoop::revertDisplaySettingsPreview() {
 }
 
 void RenderLoop::drawPauseMenuUi() {
-    if (displayPreviewPending_ && !pauseMenuOpen_) {
+    if (displayPreviewPending_ && !pauseMenuOpen_ && !mainMenuGraphicsOpen_) {
         pauseMenuOpen_ = true;
         setPausedState(true);
     }
     if (!imguiEnabled_ || renderingReflection_ || captureMode_ ||
-        (!pauseMenuOpen_ && !displayPreviewPending_)) {
+        (!pauseMenuOpen_ && !displayPreviewPending_ && !mainMenuGraphicsOpen_)) {
         return;
     }
 
-    if (!pauseMenuOpen_)
+    const bool graphicsSettingsOnly = mainMenuGraphicsOpen_;
+    if (!pauseMenuOpen_ && !graphicsSettingsOnly)
         return;
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1598,7 +1606,7 @@ void RenderLoop::drawPauseMenuUi() {
                                    viewport->WorkPos.y + viewport->WorkSize.y * 0.5F),
                             ImGuiCond_Always, ImVec2(0.5F, 0.5F));
     ImGui::SetNextWindowBgAlpha(0.95F);
-    if (!ImGui::Begin("Pause Menu", nullptr,
+    if (!ImGui::Begin(graphicsSettingsOnly ? "Graphics settings" : "Pause Menu", nullptr,
                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
                           ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::End();
@@ -1637,12 +1645,20 @@ void RenderLoop::drawPauseMenuUi() {
         ImGui::EndPopup();
     }
 
-    if (ImGui::Button("Resume", ImVec2(260.0F, 36.0F))) {
-        pauseMenuOpen_ = false;
-        setPausedState(false);
+    if (graphicsSettingsOnly) {
+        ImGui::BeginDisabled(displayPreviewPending_);
+        if (ImGui::Button("Back to startup menu", ImVec2(260.0F, 36.0F))) {
+            mainMenuGraphicsOpen_ = false;
+        }
+        ImGui::EndDisabled();
+    } else {
+        if (ImGui::Button("Resume", ImVec2(260.0F, 36.0F))) {
+            pauseMenuOpen_ = false;
+            setPausedState(false);
+        }
     }
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("Graphics")) {
+    if (graphicsSettingsOnly || ImGui::CollapsingHeader("Graphics")) {
         if (!graphicsPreferencesError_.empty()) {
             ImGui::TextWrapped("Graphics settings error: %s", graphicsPreferencesError_.c_str());
         }
@@ -1660,13 +1676,17 @@ void RenderLoop::drawPauseMenuUi() {
                 double renderScale;
                 double vehicleTextureScale;
                 double mapTextureScale;
+                int sceneryLightLimit;
             };
             constexpr std::array<QualityPreset, 3> qualityPresets = {{
-                {"Low", 256, 3, 30.0, 0.25, 0.5, 0.5, 0.5, 0.5},
-                {"Medium", 512, 2, 45.0, 0.1, 0.2, 0.75, 0.75, 0.75},
-                {"High", 1024, 1, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0},
+                {"Low", 256, 3, 30.0, 0.25, 0.5, 0.5, 0.5, 0.5, 128},
+                {"Medium", 512, 2, 45.0, 0.1, 0.2, 0.75, 0.75, 0.75, 512},
+                {"High", 1024, 1, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0},
             }};
-            const auto matchesPreset = [&preferences](const QualityPreset& preset) {
+            const bool sceneryLightLimitOverridden =
+                openbus::getEnvironment("OPENBUS_MAP_LIGHT_LIMIT") != nullptr;
+            const auto matchesPreset = [&preferences,
+                                        sceneryLightLimitOverridden](const QualityPreset& preset) {
                 return preferences.reflectionSize == preset.reflectionSize &&
                        preferences.reflectionInterval == preset.reflectionInterval &&
                        preferences.reflectionMaxFps == preset.reflectionMaxFps &&
@@ -1674,7 +1694,9 @@ void RenderLoop::drawPauseMenuUi() {
                        preferences.minimumObjectSizeMirrorsPercent == preset.mirrorCullPercent &&
                        preferences.renderScale == preset.renderScale &&
                        preferences.vehicleTextureScale == preset.vehicleTextureScale &&
-                       preferences.mapTextureScale == preset.mapTextureScale;
+                       preferences.mapTextureScale == preset.mapTextureScale &&
+                       (sceneryLightLimitOverridden ||
+                        preferences.sceneryLightLimit == preset.sceneryLightLimit);
             };
             const QualityPreset* matchedPreset = nullptr;
             for (const auto& preset : qualityPresets) {
@@ -1703,13 +1725,15 @@ void RenderLoop::drawPauseMenuUi() {
                         if (openbus::getEnvironment("OPENBUS_TEXTURE_SCALE") == nullptr)
                             preferences.vehicleTextureScale = preset.vehicleTextureScale;
                         preferences.mapTextureScale = preset.mapTextureScale;
+                        if (openbus::getEnvironment("OPENBUS_MAP_LIGHT_LIMIT") == nullptr)
+                            preferences.sceneryLightLimit = preset.sceneryLightLimit;
                     }
                 }
                 ImGui::EndCombo();
             }
-            ImGui::TextWrapped("Presets adjust implemented world render scale, reflection, and "
-                               "visibility settings. Edit individual values for a custom "
-                               "configuration.");
+            ImGui::TextWrapped("Presets adjust implemented world render scale, map/vehicle "
+                               "texture quality, reflection, visibility, and scenery-light "
+                               "limits. Edit individual values for a custom configuration.");
             const auto beginOverride = [](const char* name) {
                 const bool overridden = openbus::getEnvironment(name) != nullptr;
                 ImGui::BeginDisabled(overridden);
@@ -1871,7 +1895,11 @@ void RenderLoop::drawPauseMenuUi() {
 
             ImGui::Separator();
             ImGui::TextUnformatted("Anti-aliasing");
-            const char* antiAliasingLabel = preferences.antiAliasingMode == "fxaa" ? "FXAA" : "Off";
+            const char* antiAliasingLabel =
+                preferences.antiAliasingMode == "fxaa"  ? "FXAA"
+                : preferences.antiAliasingMode == "msaa" ? "MSAA 4x"
+                : preferences.antiAliasingMode == "smaa" ? "SMAA"
+                                                          : "Off";
             if (ImGui::BeginCombo("Anti-aliasing mode", antiAliasingLabel)) {
                 if (ImGui::Selectable("Off", preferences.antiAliasingMode == "off")) {
                     preferences.antiAliasingMode = "off";
@@ -1879,12 +1907,20 @@ void RenderLoop::drawPauseMenuUi() {
                 if (ImGui::Selectable("FXAA", preferences.antiAliasingMode == "fxaa")) {
                     preferences.antiAliasingMode = "fxaa";
                 }
+                if (ImGui::Selectable("MSAA 4x", preferences.antiAliasingMode == "msaa")) {
+                    preferences.antiAliasingMode = "msaa";
+                }
+                if (ImGui::Selectable("SMAA", preferences.antiAliasingMode == "smaa")) {
+                    preferences.antiAliasingMode = "smaa";
+                }
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
             ImGui::TextDisabled("Live on save");
-            ImGui::TextDisabled("MSAA is not available until motion and depth buffers can be "
-                                "resolved without mixing surfaces.");
+            ImGui::TextWrapped("MSAA resolves color by coverage while motion, validity, and depth "
+                               "come from the nearest covered sample. If 4x is unavailable, the "
+                               "renderer tries 2x, then falls back to FXAA. FXAA is the lighter "
+                               "choice for slower scenes.");
 
             ImGui::Separator();
             ImGui::TextUnformatted("World render scale");
@@ -1953,6 +1989,35 @@ void RenderLoop::drawPauseMenuUi() {
             ImGui::TextDisabled("Restart required");
             ImGui::TextWrapped("Disable only for troubleshooting missing vehicle parts; "
                                "rendering parts outside the view can increase CPU and GPU work.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Lighting performance");
+            overridden = beginOverride("OPENBUS_MAP_LIGHT_LIMIT");
+            constexpr std::array<const char*, 8> sceneryLightLimitOptions = {
+                "Unlimited", "64", "128", "256", "512", "1024", "2048", "4096"};
+            constexpr std::array<int, 8> sceneryLightLimits = {0,   64,   128,  256,
+                                                               512, 1024, 2048, 4096};
+            std::string sceneryLightLimitLabel =
+                preferences.sceneryLightLimit == 0 ? "Unlimited"
+                                                   : std::to_string(preferences.sceneryLightLimit);
+            if (ImGui::BeginCombo("Scenery lights per view", sceneryLightLimitLabel.c_str())) {
+                for (std::size_t index = 0; index < sceneryLightLimits.size(); ++index) {
+                    if (ImGui::Selectable(sceneryLightLimitOptions[index],
+                                          preferences.sceneryLightLimit ==
+                                              sceneryLightLimits[index])) {
+                        preferences.sceneryLightLimit = sceneryLightLimits[index];
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            endOverride(overridden, "OPENBUS_MAP_LIGHT_LIMIT");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live on save");
+            ImGui::TextWrapped("Limits map lights evaluated in each view, prioritizing the "
+                               "nearest sources. Lower limits can remove distant lights but "
+                               "substantially reduce GPU work in dense night scenes; 0 is "
+                               "unlimited. The selection is limited to lights affecting the "
+                               "currently active map tiles.");
 
             ImGui::Separator();
             ImGui::TextUnformatted("Texture filtering and quality");
@@ -2047,6 +2112,8 @@ void RenderLoop::drawPauseMenuUi() {
                     if (openbus::getEnvironment("OPENBUS_FRUSTUM_CULLING") != nullptr)
                         edited.vehicleFrustumCulling =
                             graphicsPreferencesBaseline_.vehicleFrustumCulling;
+                    if (openbus::getEnvironment("OPENBUS_MAP_LIGHT_LIMIT") != nullptr)
+                        edited.sceneryLightLimit = graphicsPreferencesBaseline_.sceneryLightLimit;
                     diskPreferences.values = openbus::core::mergeGraphicsPreferences(
                         graphicsPreferencesBaseline_, edited, diskPreferences.values);
                     openbus::core::saveGraphicsPreferences(graphicsPreferencesPath_,
@@ -2061,7 +2128,8 @@ void RenderLoop::drawPauseMenuUi() {
                     if (openbus::getEnvironment("OPENBUS_FPS_CAP") == nullptr) {
                         frameTiming_.setFrameRateCap(preferences.fpsCap);
                     }
-                    openbus::rendering::setFxaaEnabled(preferences.antiAliasingMode == "fxaa");
+                    openbus::rendering::setAntiAliasingMode(
+                        preferences.antiAliasingMode);
                     if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT") ==
                         nullptr) {
                         mainViewMinimumObjectViewportFraction_ =
@@ -2072,6 +2140,8 @@ void RenderLoop::drawPauseMenuUi() {
                         reflectionMinimumObjectViewportFraction_ =
                             preferences.minimumObjectSizeMirrorsPercent / 100.0;
                     }
+                    openbus::rendering::configureMapLightSelectionLimit(
+                        static_cast<std::size_t>(preferences.sceneryLightLimit));
                     graphicsPreferencesError_.clear();
                 } catch (const std::exception& error) {
                     graphicsPreferencesError_ = error.what();
@@ -2086,9 +2156,16 @@ void RenderLoop::drawPauseMenuUi() {
             ImGui::TextWrapped("Saved beside the OpenBus executable. Display changes use a "
                                "15-second confirmation; reflection, anisotropic filtering, "
                                "texture mipmaps, map and vehicle texture resolution, and "
-                               "vehicle frustum-culling changes require a restart.");
+                               "vehicle frustum-culling changes require a restart. Other "
+                               "supported settings, including the scenery-light limit, apply "
+                               "when saved.");
         }
     }
+    if (graphicsSettingsOnly) {
+        ImGui::End();
+        return;
+    }
+
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Weather")) {
         if (!weatherPresetsLoaded_) {

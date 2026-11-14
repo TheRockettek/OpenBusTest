@@ -17,6 +17,7 @@ struct GraphicsPreferences {
     bool generateTextureMipmaps = false;
     double mapTextureScale = 1.0;
     double vehicleTextureScale = 1.0;
+    int sceneryLightLimit = 0;
     bool vehicleFrustumCulling = true;
     std::string antiAliasingMode = "off";
     double renderScale = 1.0;

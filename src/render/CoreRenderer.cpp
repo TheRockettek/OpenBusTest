@@ -8,6 +8,9 @@
 #include "core/Logger.h"
 #include "render/OpenGLFunctions.h"
 #include "core/PerfTrace.h"
+#include "SmaaShader.h"
+#include <AreaTex.h>
+#include <SearchTex.h>
 
 #include <algorithm>
 #include <array>
@@ -59,6 +62,7 @@ std::size_t submittedFrameTriangleCount = 0;
 std::size_t submittedReflectionTriangleCount = 0;
 bool reflectionTrianglePass = false;
 std::atomic<std::uint64_t> glDebugErrorGeneration = 0;
+std::size_t configuredMapLightSelectionLimit = 0;
 
 constexpr std::size_t kGpuTimerQueriesPerPass = 32;
 constexpr std::size_t kGpuTimerPassCount = 2;
@@ -88,8 +92,21 @@ std::size_t readLightLimit(const char* variableName, std::size_t maximum,
 
 std::size_t mapLightLimit() {
     constexpr std::size_t maximum = std::numeric_limits<GLint>::max() / 2;
-    static const std::size_t limit = readLightLimit("OPENBUS_MAP_LIGHT_LIMIT", maximum, maximum);
-    return limit;
+    struct EnvironmentOverride {
+        bool present;
+        std::size_t limit;
+    };
+    static const EnvironmentOverride environmentOverride = [] {
+        const bool present = openbus::getEnvironment("OPENBUS_MAP_LIGHT_LIMIT") != nullptr;
+        return EnvironmentOverride{present,
+                                   readLightLimit("OPENBUS_MAP_LIGHT_LIMIT", maximum, maximum)};
+    }();
+    if (environmentOverride.present) {
+        return environmentOverride.limit;
+    }
+    return configuredMapLightSelectionLimit == 0
+               ? maximum
+               : std::min(configuredMapLightSelectionLimit, maximum);
 }
 
 std::size_t vehicleSpotlightLimit() {
@@ -593,6 +610,10 @@ GLuint materialProgram = 0;
 GLuint environmentProgram = 0;
 GLuint primitiveProgram = 0;
 GLuint textureQuadProgram = 0;
+GLuint motionResolveProgram = 0;
+GLuint smaaEdgeProgram = 0;
+GLuint smaaWeightsProgram = 0;
+GLuint smaaNeighborhoodProgram = 0;
 GLuint cloudProgram = 0;
 GLuint precipitationProgram = 0;
 GLuint precipitationVertexArray = 0;
@@ -620,6 +641,7 @@ constexpr GLenum vehicleSpotlightTextureUnit = GL_TEXTURE0 + 11;
 constexpr GLenum staticMapLightTextureUnit = GL_TEXTURE0 + 12;
 constexpr GLenum staticMapViewTextureUnit = GL_TEXTURE0 + 13;
 constexpr GLenum vehicleSpotlightTileMaskTextureUnit = GL_TEXTURE0 + 14;
+enum class AntiAliasingMode { Off, Fxaa, Msaa, Smaa };
 std::vector<GLuint> staticPrimitiveBuffers;
 std::vector<std::pair<GLuint, GLuint>> staticMapLightBuffers;
 std::uint64_t rendererGeneration = 0;
@@ -631,14 +653,29 @@ struct MotionTarget {
     GLuint motionVectors = 0;
     GLuint validity = 0;
     GLuint depth = 0;
+    GLuint multisampleFramebuffer = 0;
+    GLuint multisampleColor = 0;
+    GLuint multisampleMotionVectors = 0;
+    GLuint multisampleValidity = 0;
+    GLuint multisampleDepth = 0;
+    GLuint smaaEdgeFramebuffer = 0;
+    GLuint smaaEdges = 0;
+    GLuint smaaWeightsFramebuffer = 0;
+    GLuint smaaWeights = 0;
     int width = 0;
     int height = 0;
+    int samples = 0;
+    AntiAliasingMode mode = AntiAliasingMode::Off;
     GLint previousFramebuffer = 0;
     GLint previousViewport[4] = {};
     GLboolean previousDepthMask = GL_TRUE;
     GLboolean previousColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    GLboolean previousMultisampleEnabled = GL_TRUE;
 };
 MotionTarget motionTarget;
+GLuint smaaAreaTexture = 0;
+GLuint smaaSearchTexture = 0;
+bool smaaLookupReady = false;
 MotionHistory motionHistory;
 MotionDataResources publishedMotionData;
 std::uint64_t motionFrameId = 0;
@@ -649,6 +686,14 @@ Uniforms modelUniforms;
 Uniforms materialUniforms;
 Uniforms environmentUniforms;
 Uniforms primitiveUniforms;
+struct FullscreenUniforms {
+    GLint rect = -1;
+    GLint flipTextureY = -1;
+};
+FullscreenUniforms motionResolveFullscreen;
+FullscreenUniforms smaaEdgeFullscreen;
+FullscreenUniforms smaaWeightsFullscreen;
+FullscreenUniforms smaaNeighborhoodFullscreen;
 GLint textureQuadRect = -1;
 GLint textureQuadTexture = -1;
 GLint textureQuadFlipTextureY = -1;
@@ -656,7 +701,21 @@ GLint textureQuadMotionValidity = -1;
 GLint textureQuadMotionDebugMode = -1;
 GLint textureQuadFxaaEnabled = -1;
 GLint textureQuadInverseResolution = -1;
-bool fxaaEnabled = false;
+GLint motionResolveColorSamples = -1;
+GLint motionResolveMotionSamples = -1;
+GLint motionResolveValiditySamples = -1;
+GLint motionResolveDepthSamples = -1;
+GLint motionResolveSampleCount = -1;
+GLint smaaEdgeColorTexture = -1;
+GLint smaaEdgeMetrics = -1;
+GLint smaaWeightsEdgeTexture = -1;
+GLint smaaWeightsAreaTexture = -1;
+GLint smaaWeightsSearchTexture = -1;
+GLint smaaWeightsMetrics = -1;
+GLint smaaNeighborhoodColorTexture = -1;
+GLint smaaNeighborhoodWeightsTexture = -1;
+GLint smaaNeighborhoodMetrics = -1;
+AntiAliasingMode antiAliasingMode = AntiAliasingMode::Off;
 GLint cloudView = -1;
 GLint cloudProjectionScale = -1;
 GLint cloudOrigin = -1;
@@ -702,19 +761,34 @@ struct MaterialUniformState {
 MaterialUniformState materialUniformState;
 
 void destroyMotionTarget() {
-    if (motionTarget.framebuffer != 0) {
-        pglDeleteFramebuffers(1, &motionTarget.framebuffer);
-    }
-    const std::array<GLuint, 4> textures = {motionTarget.color, motionTarget.motionVectors,
-                                            motionTarget.validity, motionTarget.depth};
+    const std::array<GLuint, 4> framebuffers = {
+        motionTarget.framebuffer, motionTarget.multisampleFramebuffer,
+        motionTarget.smaaEdgeFramebuffer, motionTarget.smaaWeightsFramebuffer};
+    pglDeleteFramebuffers(static_cast<GLsizei>(framebuffers.size()), framebuffers.data());
+    const std::array<GLuint, 10> textures = {
+        motionTarget.color,
+        motionTarget.motionVectors,
+        motionTarget.validity,
+        motionTarget.depth,
+        motionTarget.multisampleColor,
+        motionTarget.multisampleMotionVectors,
+        motionTarget.multisampleValidity,
+        motionTarget.multisampleDepth,
+        motionTarget.smaaEdges,
+        motionTarget.smaaWeights};
     glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
     motionTarget = {};
     publishedMotionData = {};
 }
 
 bool ensureMotionTarget(int width, int height) {
+    const auto targetModeFor = [](AntiAliasingMode mode) {
+        return mode == AntiAliasingMode::Msaa || mode == AntiAliasingMode::Smaa
+                   ? mode
+                   : AntiAliasingMode::Off;
+    };
     if (motionTarget.framebuffer != 0 && motionTarget.width == width &&
-        motionTarget.height == height) {
+        motionTarget.height == height && motionTarget.mode == targetModeFor(antiAliasingMode)) {
         return true;
     }
     if (failedMotionTargetWidth == width && failedMotionTargetHeight == height) {
@@ -752,12 +826,12 @@ bool ensureMotionTarget(int width, int height) {
     const GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
     pglDrawBuffers(3, drawBuffers);
     const GLenum status = pglCheckFramebufferStatus(GL_FRAMEBUFFER);
-    pglBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-    glBindTexture(GL_TEXTURE_2D, 0);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
         std::ostringstream error;
         error << "Motion-data framebuffer is incomplete (status 0x" << std::hex << status << ')';
         gameLog.Error(error.str());
+        pglBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        glBindTexture(GL_TEXTURE_2D, 0);
         destroyMotionTarget();
         failedMotionTargetWidth = width;
         failedMotionTargetHeight = height;
@@ -766,6 +840,144 @@ bool ensureMotionTarget(int width, int height) {
 
     motionTarget.width = width;
     motionTarget.height = height;
+
+    if (antiAliasingMode == AntiAliasingMode::Msaa && motionResolveProgram == 0) {
+        antiAliasingMode = AntiAliasingMode::Fxaa;
+        gameLog.Warning("MSAA resolve shader is unavailable; using FXAA");
+    }
+    if (antiAliasingMode == AntiAliasingMode::Smaa &&
+        (smaaEdgeProgram == 0 || smaaWeightsProgram == 0 || smaaNeighborhoodProgram == 0 ||
+         !smaaLookupReady)) {
+        antiAliasingMode = AntiAliasingMode::Fxaa;
+        gameLog.Warning("SMAA shaders or lookup textures are unavailable; using FXAA");
+    }
+
+    if (antiAliasingMode == AntiAliasingMode::Msaa) {
+        GLint maximumSamples = 0;
+        glGetIntegerv(GL_MAX_SAMPLES, &maximumSamples);
+        const int requestedSamples = 4;
+        const auto destroyMultisampleTarget = [&] {
+            if (motionTarget.multisampleFramebuffer != 0) {
+                pglDeleteFramebuffers(1, &motionTarget.multisampleFramebuffer);
+            }
+            const std::array<GLuint, 4> textures = {
+                motionTarget.multisampleColor, motionTarget.multisampleMotionVectors,
+                motionTarget.multisampleValidity, motionTarget.multisampleDepth};
+            glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
+            motionTarget.multisampleFramebuffer = 0;
+            motionTarget.multisampleColor = 0;
+            motionTarget.multisampleMotionVectors = 0;
+            motionTarget.multisampleValidity = 0;
+            motionTarget.multisampleDepth = 0;
+            motionTarget.samples = 0;
+        };
+        const auto tryCreateMultisampleTarget = [&](int samples) {
+            if (pglTexImage2DMultisample == nullptr || samples > maximumSamples) {
+                return false;
+            }
+            pglGenFramebuffers(1, &motionTarget.multisampleFramebuffer);
+            pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.multisampleFramebuffer);
+            const auto createMultisampleTexture = [&](GLuint& texture, GLint internalFormat) {
+                glGenTextures(1, &texture);
+                glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, texture);
+                pglTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, internalFormat,
+                                         width, height, GL_TRUE);
+            };
+            createMultisampleTexture(motionTarget.multisampleColor, GL_RGBA8);
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                    GL_TEXTURE_2D_MULTISAMPLE, motionTarget.multisampleColor, 0);
+            createMultisampleTexture(motionTarget.multisampleMotionVectors, GL_RG16F);
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                                    GL_TEXTURE_2D_MULTISAMPLE,
+                                    motionTarget.multisampleMotionVectors, 0);
+            createMultisampleTexture(motionTarget.multisampleValidity, GL_R8);
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,
+                                    GL_TEXTURE_2D_MULTISAMPLE,
+                                    motionTarget.multisampleValidity, 0);
+            glGenTextures(1, &motionTarget.multisampleDepth);
+            glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, motionTarget.multisampleDepth);
+            pglTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, GL_DEPTH_COMPONENT24,
+                                     width, height, GL_TRUE);
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                    GL_TEXTURE_2D_MULTISAMPLE, motionTarget.multisampleDepth, 0);
+            const GLenum multisampleDrawBuffers[] = {
+                GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+            pglDrawBuffers(3, multisampleDrawBuffers);
+            const bool complete = pglCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+                                  GL_FRAMEBUFFER_COMPLETE;
+            glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+            if (!complete) {
+                destroyMultisampleTarget();
+                return false;
+            }
+            motionTarget.samples = samples;
+            return true;
+        };
+        pglActiveTexture(GL_TEXTURE0);
+        currentTextureUnit = GL_TEXTURE0;
+        if (!tryCreateMultisampleTarget(requestedSamples) &&
+            !tryCreateMultisampleTarget(2)) {
+            destroyMultisampleTarget();
+            antiAliasingMode = AntiAliasingMode::Fxaa;
+            gameLog.Warning("4x MSAA is unavailable for the motion-data targets; using FXAA");
+        } else if (motionTarget.samples != requestedSamples) {
+            gameLog.Warning("4x MSAA is unavailable; using 2x MSAA");
+        }
+    } else if (antiAliasingMode == AntiAliasingMode::Smaa) {
+        const auto destroySmaaTargets = [&] {
+            const std::array<GLuint, 2> framebuffers = {motionTarget.smaaEdgeFramebuffer,
+                                                        motionTarget.smaaWeightsFramebuffer};
+            pglDeleteFramebuffers(static_cast<GLsizei>(framebuffers.size()), framebuffers.data());
+            const std::array<GLuint, 2> textures = {motionTarget.smaaEdges,
+                                                    motionTarget.smaaWeights};
+            glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
+            motionTarget.smaaEdgeFramebuffer = 0;
+            motionTarget.smaaEdges = 0;
+            motionTarget.smaaWeightsFramebuffer = 0;
+            motionTarget.smaaWeights = 0;
+        };
+        const auto createSmaaTexture = [&](GLuint& texture, GLint internalFormat, GLenum format) {
+            glGenTextures(1, &texture);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format,
+                         GL_UNSIGNED_BYTE, nullptr);
+        };
+        pglActiveTexture(GL_TEXTURE0);
+        currentTextureUnit = GL_TEXTURE0;
+        pglGenFramebuffers(1, &motionTarget.smaaEdgeFramebuffer);
+        pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.smaaEdgeFramebuffer);
+        createSmaaTexture(motionTarget.smaaEdges, GL_RG8, GL_RG);
+        pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                motionTarget.smaaEdges, 0);
+        const GLenum smaaDrawBuffer = GL_COLOR_ATTACHMENT0;
+        pglDrawBuffers(1, &smaaDrawBuffer);
+        bool smaaComplete =
+            pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (smaaComplete) {
+            pglGenFramebuffers(1, &motionTarget.smaaWeightsFramebuffer);
+            pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.smaaWeightsFramebuffer);
+            createSmaaTexture(motionTarget.smaaWeights, GL_RGBA8, GL_RGBA);
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                    motionTarget.smaaWeights, 0);
+            pglDrawBuffers(1, &smaaDrawBuffer);
+            smaaComplete =
+                pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        }
+        if (!smaaComplete) {
+            destroySmaaTargets();
+            antiAliasingMode = AntiAliasingMode::Fxaa;
+            gameLog.Warning("SMAA render targets could not be created; using FXAA");
+        }
+    }
+
+    motionTarget.mode = targetModeFor(antiAliasingMode);
+    pglBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
     publishedMotionData.motionVectors = motionTarget.motionVectors;
     publishedMotionData.validity = motionTarget.validity;
     publishedMotionData.depth = motionTarget.depth;
@@ -1500,6 +1712,98 @@ void main() {
             fragmentColor = vec4(heat, 1.0);
         }
     }
+}
+)GLSL";
+
+const char* motionResolveFragmentShader = R"GLSL(
+#version 330 core
+in vec2 vTexCoord;
+uniform sampler2DMS uColorSamples;
+uniform sampler2DMS uMotionSamples;
+uniform sampler2DMS uValiditySamples;
+uniform sampler2DMS uDepthSamples;
+uniform int uSampleCount;
+layout(location = 0) out vec4 fragmentColor;
+layout(location = 1) out vec2 motionVector;
+layout(location = 2) out float motionValidity;
+void main() {
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    vec4 colorSum = vec4(0.0);
+    float nearestDepth = 1.0;
+    int nearestSample = 0;
+    for (int sampleIndex = 0; sampleIndex < 16; ++sampleIndex) {
+        if (sampleIndex >= uSampleCount) {
+            break;
+        }
+        colorSum += texelFetch(uColorSamples, pixel, sampleIndex);
+        float sampleDepth = texelFetch(uDepthSamples, pixel, sampleIndex).r;
+        if (sampleDepth < nearestDepth) {
+            nearestDepth = sampleDepth;
+            nearestSample = sampleIndex;
+        }
+    }
+    fragmentColor = colorSum / float(uSampleCount);
+    motionVector = texelFetch(uMotionSamples, pixel, nearestSample).rg;
+    motionValidity = texelFetch(uValiditySamples, pixel, nearestSample).r;
+    gl_FragDepth = nearestDepth;
+}
+)GLSL";
+
+std::string makeSmaaFragmentShader(std::string_view mainFunction) {
+    std::string source =
+        "#version 330 core\n"
+        "#define SMAA_GLSL_3\n"
+        "#define SMAA_INCLUDE_VS 1\n"
+        "#define SMAA_INCLUDE_PS 1\n"
+        "#define SMAA_PRESET_HIGH\n"
+        "#define SMAA_RT_METRICS uMetrics\n"
+        "uniform vec4 uMetrics;\n";
+    source += openbusSmaaShader;
+    source += "\nin vec2 vTexCoord;\n"
+              "layout(location = 0) out vec4 fragmentColor;\n"
+              "layout(location = 1) out vec2 motionVector;\n"
+              "layout(location = 2) out float motionValidity;\n";
+    source.append(mainFunction);
+    return source;
+}
+
+const char* smaaEdgeMain = R"GLSL(
+uniform sampler2D uColorTexture;
+void main() {
+    vec4 offsets[3];
+    SMAAEdgeDetectionVS(vTexCoord, offsets);
+    fragmentColor = vec4(SMAAColorEdgeDetectionPS(vTexCoord, offsets, uColorTexture), 0.0, 1.0);
+    motionVector = vec2(0.0);
+    motionValidity = 0.0;
+}
+)GLSL";
+
+const char* smaaWeightsMain = R"GLSL(
+uniform sampler2D uEdgesTexture;
+uniform sampler2D uAreaTexture;
+uniform sampler2D uSearchTexture;
+void main() {
+    vec2 pixelCoordinates;
+    vec4 offsets[3];
+    SMAABlendingWeightCalculationVS(vTexCoord, pixelCoordinates, offsets);
+    fragmentColor = SMAABlendingWeightCalculationPS(
+        vTexCoord, pixelCoordinates, offsets, uEdgesTexture, uAreaTexture, uSearchTexture,
+        vec4(0.0));
+    motionVector = vec2(0.0);
+    motionValidity = 0.0;
+}
+)GLSL";
+
+const char* smaaNeighborhoodMain = R"GLSL(
+uniform sampler2D uColorTexture;
+uniform sampler2D uWeightsTexture;
+void main() {
+    vec4 offsets;
+    SMAANeighborhoodBlendingVS(vTexCoord, offsets);
+    fragmentColor = SMAANeighborhoodBlendingPS(
+        vTexCoord, offsets, uColorTexture, uWeightsTexture);
+    motionVector = vec2(0.0);
+    motionValidity = 0.0;
 }
 )GLSL";
 
@@ -2376,6 +2680,14 @@ std::size_t mapLightSelectionLimit() {
     return mapLightLimit();
 }
 
+void configureMapLightSelectionLimit(std::size_t limit) {
+    configuredMapLightSelectionLimit = limit;
+    if (openbus::getEnvironment("OPENBUS_MAP_LIGHT_LIMIT") == nullptr) {
+        gameLog.Log("Map scenery-light selection limit: " +
+                    (limit == 0 ? std::string("unlimited") : std::to_string(limit)));
+    }
+}
+
 bool initializeCoreRenderer() {
     const GLubyte* vendor = glGetString(GL_VENDOR);
     const GLubyte* renderer = glGetString(GL_RENDERER);
@@ -2409,6 +2721,14 @@ bool initializeCoreRenderer() {
     environmentProgram = createProgram(modelVertexShader, environmentFragmentShader, true);
     primitiveProgram = createProgram(primitiveVertexShader, primitiveFragmentShader);
     textureQuadProgram = createProgram(textureQuadVertexShader, textureQuadFragmentShader);
+    motionResolveProgram = createProgram(textureQuadVertexShader, motionResolveFragmentShader);
+    const std::string smaaEdgeSource = makeSmaaFragmentShader(smaaEdgeMain);
+    const std::string smaaWeightsSource = makeSmaaFragmentShader(smaaWeightsMain);
+    const std::string smaaNeighborhoodSource = makeSmaaFragmentShader(smaaNeighborhoodMain);
+    smaaEdgeProgram = createProgram(textureQuadVertexShader, smaaEdgeSource.c_str());
+    smaaWeightsProgram = createProgram(textureQuadVertexShader, smaaWeightsSource.c_str());
+    smaaNeighborhoodProgram =
+        createProgram(textureQuadVertexShader, smaaNeighborhoodSource.c_str());
     cloudProgram = createProgram(cloudVertexShader, cloudFragmentShader, true);
     precipitationProgram =
         createProgram(precipitationVertexShader, precipitationFragmentShader, true);
@@ -2429,6 +2749,45 @@ bool initializeCoreRenderer() {
     textureQuadMotionDebugMode = pglGetUniformLocation(textureQuadProgram, "uMotionDebugMode");
     textureQuadFxaaEnabled = pglGetUniformLocation(textureQuadProgram, "uFxaaEnabled");
     textureQuadInverseResolution = pglGetUniformLocation(textureQuadProgram, "uInverseResolution");
+    if (motionResolveProgram != 0) {
+        motionResolveFullscreen = {pglGetUniformLocation(motionResolveProgram, "uRect"),
+                                   pglGetUniformLocation(motionResolveProgram, "uFlipTextureY")};
+        motionResolveColorSamples =
+            pglGetUniformLocation(motionResolveProgram, "uColorSamples");
+        motionResolveMotionSamples =
+            pglGetUniformLocation(motionResolveProgram, "uMotionSamples");
+        motionResolveValiditySamples =
+            pglGetUniformLocation(motionResolveProgram, "uValiditySamples");
+        motionResolveDepthSamples =
+            pglGetUniformLocation(motionResolveProgram, "uDepthSamples");
+        motionResolveSampleCount =
+            pglGetUniformLocation(motionResolveProgram, "uSampleCount");
+    }
+    if (smaaEdgeProgram != 0) {
+        smaaEdgeFullscreen = {pglGetUniformLocation(smaaEdgeProgram, "uRect"),
+                              pglGetUniformLocation(smaaEdgeProgram, "uFlipTextureY")};
+        smaaEdgeColorTexture = pglGetUniformLocation(smaaEdgeProgram, "uColorTexture");
+        smaaEdgeMetrics = pglGetUniformLocation(smaaEdgeProgram, "uMetrics");
+    }
+    if (smaaWeightsProgram != 0) {
+        smaaWeightsFullscreen = {pglGetUniformLocation(smaaWeightsProgram, "uRect"),
+                                 pglGetUniformLocation(smaaWeightsProgram, "uFlipTextureY")};
+        smaaWeightsEdgeTexture = pglGetUniformLocation(smaaWeightsProgram, "uEdgesTexture");
+        smaaWeightsAreaTexture = pglGetUniformLocation(smaaWeightsProgram, "uAreaTexture");
+        smaaWeightsSearchTexture = pglGetUniformLocation(smaaWeightsProgram, "uSearchTexture");
+        smaaWeightsMetrics = pglGetUniformLocation(smaaWeightsProgram, "uMetrics");
+    }
+    if (smaaNeighborhoodProgram != 0) {
+        smaaNeighborhoodFullscreen = {
+            pglGetUniformLocation(smaaNeighborhoodProgram, "uRect"),
+            pglGetUniformLocation(smaaNeighborhoodProgram, "uFlipTextureY")};
+        smaaNeighborhoodColorTexture =
+            pglGetUniformLocation(smaaNeighborhoodProgram, "uColorTexture");
+        smaaNeighborhoodWeightsTexture =
+            pglGetUniformLocation(smaaNeighborhoodProgram, "uWeightsTexture");
+        smaaNeighborhoodMetrics =
+            pglGetUniformLocation(smaaNeighborhoodProgram, "uMetrics");
+    }
     cloudView = pglGetUniformLocation(cloudProgram, "uView");
     cloudProjectionScale = pglGetUniformLocation(cloudProgram, "uProjectionScale");
     cloudOrigin = pglGetUniformLocation(cloudProgram, "uOrigin");
@@ -2524,6 +2883,29 @@ bool initializeCoreRenderer() {
         pglEnableVertexAttribArray(0);
         pglEnableVertexAttribArray(1);
         pglBindVertexArray(0);
+        pglActiveTexture(GL_TEXTURE0);
+        currentTextureUnit = GL_TEXTURE0;
+        glGenTextures(1, &smaaAreaTexture);
+        glBindTexture(GL_TEXTURE_2D, smaaAreaTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, AREATEX_WIDTH, AREATEX_HEIGHT, 0, GL_RG,
+                     GL_UNSIGNED_BYTE, areaTexBytes);
+        glGenTextures(1, &smaaSearchTexture);
+        glBindTexture(GL_TEXTURE_2D, smaaSearchTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 0, GL_RED,
+                     GL_UNSIGNED_BYTE, searchTexBytes);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        smaaLookupReady = smaaAreaTexture != 0 && smaaSearchTexture != 0;
+        if (!smaaLookupReady) {
+            gameLog.Warning("SMAA lookup textures could not be initialized");
+        }
         useProgram(modelProgram);
         pglUniform1i(modelUniforms.mapLightTexture, 10);
         pglUniform1i(modelUniforms.spotlightTexture, 11);
@@ -2570,6 +2952,28 @@ bool initializeCoreRenderer() {
         pglUniform1i(textureQuadMotionDebugMode, 0);
         pglUniform1i(textureQuadFxaaEnabled, 0);
         pglUniform2f(textureQuadInverseResolution, 1.0F, 1.0F);
+        if (motionResolveProgram != 0) {
+            useProgram(motionResolveProgram);
+            pglUniform1i(motionResolveColorSamples, 0);
+            pglUniform1i(motionResolveMotionSamples, 1);
+            pglUniform1i(motionResolveValiditySamples, 2);
+            pglUniform1i(motionResolveDepthSamples, 3);
+        }
+        if (smaaEdgeProgram != 0) {
+            useProgram(smaaEdgeProgram);
+            pglUniform1i(smaaEdgeColorTexture, 0);
+        }
+        if (smaaWeightsProgram != 0) {
+            useProgram(smaaWeightsProgram);
+            pglUniform1i(smaaWeightsEdgeTexture, 0);
+            pglUniform1i(smaaWeightsAreaTexture, 1);
+            pglUniform1i(smaaWeightsSearchTexture, 2);
+        }
+        if (smaaNeighborhoodProgram != 0) {
+            useProgram(smaaNeighborhoodProgram);
+            pglUniform1i(smaaNeighborhoodColorTexture, 0);
+            pglUniform1i(smaaNeighborhoodWeightsTexture, 1);
+        }
         useProgram(0);
         setLightingViewMatrix(identityMatrix());
         setWeatherLighting(std::nullopt);
@@ -2604,6 +3008,12 @@ bool initializeCoreRenderer() {
 void shutdownCoreRenderer() {
     shutdownGpuTiming();
     destroyMotionTarget();
+    const std::array<GLuint, 2> smaaLookupTextures = {smaaAreaTexture, smaaSearchTexture};
+    glDeleteTextures(static_cast<GLsizei>(smaaLookupTextures.size()), smaaLookupTextures.data());
+    smaaAreaTexture = 0;
+    smaaSearchTexture = 0;
+    smaaLookupReady = false;
+    antiAliasingMode = AntiAliasingMode::Off;
     motionHistory.invalidate();
     motionFrameId = 0;
     motionFrameActive = false;
@@ -2715,6 +3125,22 @@ void shutdownCoreRenderer() {
         pglDeleteProgram(textureQuadProgram);
         textureQuadProgram = 0;
     }
+    if (motionResolveProgram != 0) {
+        pglDeleteProgram(motionResolveProgram);
+        motionResolveProgram = 0;
+    }
+    if (smaaEdgeProgram != 0) {
+        pglDeleteProgram(smaaEdgeProgram);
+        smaaEdgeProgram = 0;
+    }
+    if (smaaWeightsProgram != 0) {
+        pglDeleteProgram(smaaWeightsProgram);
+        smaaWeightsProgram = 0;
+    }
+    if (smaaNeighborhoodProgram != 0) {
+        pglDeleteProgram(smaaNeighborhoodProgram);
+        smaaNeighborhoodProgram = 0;
+    }
     if (cloudProgram != 0) {
         pglDeleteProgram(cloudProgram);
         cloudProgram = 0;
@@ -2756,7 +3182,14 @@ bool beginMotionDataFrame(int width, int height, double timestampSeconds, double
     glGetIntegerv(GL_VIEWPORT, motionTarget.previousViewport);
     glGetBooleanv(GL_DEPTH_WRITEMASK, &motionTarget.previousDepthMask);
     glGetBooleanv(GL_COLOR_WRITEMASK, motionTarget.previousColorMask);
-    pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.framebuffer);
+    motionTarget.previousMultisampleEnabled = glIsEnabled(GL_MULTISAMPLE);
+    if (motionTarget.samples > 1) {
+        glEnable(GL_MULTISAMPLE);
+    }
+    const GLuint renderFramebuffer = motionTarget.samples > 1
+                                         ? motionTarget.multisampleFramebuffer
+                                         : motionTarget.framebuffer;
+    pglBindFramebuffer(GL_FRAMEBUFFER, renderFramebuffer);
     const GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
     pglDrawBuffers(3, drawBuffers);
     glViewport(0, 0, renderWidth, renderHeight);
@@ -2780,32 +3213,137 @@ void finishMotionDataFrame() {
     const MotionDataFrame completedFrame = motionHistory.frame();
     motionHistory.completeFrame();
     const GLuint previousFramebuffer = static_cast<GLuint>(motionTarget.previousFramebuffer);
-    if (fxaaEnabled && textureQuadProgram != 0 && motionTarget.width > 0 &&
-        motionTarget.height > 0) {
-        pglBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
-        glViewport(motionTarget.previousViewport[0], motionTarget.previousViewport[1],
-                   motionTarget.previousViewport[2], motionTarget.previousViewport[3]);
-        const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
-        const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
-        const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
-        const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+    const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    GLint previousDepthFunction = GL_LESS;
+    glGetIntegerv(GL_DEPTH_FUNC, &previousDepthFunction);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glDepthMask(GL_FALSE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    const auto drawFullscreen = [&](GLuint program, const FullscreenUniforms& quadUniforms,
+                                    const GLuint* textures,
+                                    const GLenum* textureTargets, const GLint* samplerLocations,
+                                    int textureCount, GLint metricsLocation,
+                                    GLint sampleCountLocation, int sampleCount) {
+        constexpr std::array<float, 16> vertices = {
+            0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F,
+            0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F};
+        useProgram(program);
+        pglBindVertexArray(textureQuadVertexArray);
+        currentVertexArray = textureQuadVertexArray;
+        pglBindBuffer(GL_ARRAY_BUFFER, textureQuadBuffer);
+        currentArrayBuffer = textureQuadBuffer;
+        pglBufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(vertices.size() * sizeof(float)),
+                      vertices.data(), GL_STREAM_DRAW);
+        pglVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
+        pglVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                               reinterpret_cast<const void*>(2 * sizeof(float)));
+        if (quadUniforms.rect >= 0) {
+            pglUniform4f(quadUniforms.rect, -1.0F, -1.0F, 2.0F, 2.0F);
+        }
+        if (quadUniforms.flipTextureY >= 0) {
+            pglUniform1i(quadUniforms.flipTextureY, 0);
+        }
+        for (int index = 0; index < textureCount; ++index) {
+            const GLenum unit = GL_TEXTURE0 + static_cast<GLenum>(index);
+            selectTextureUnit(unit);
+            if (textureTargets[index] == GL_TEXTURE_2D) {
+                bindTexture(textureTargets[index], textures[index]);
+            } else {
+                glBindTexture(textureTargets[index], textures[index]);
+            }
+            if (samplerLocations[index] >= 0) {
+                pglUniform1i(samplerLocations[index], index);
+            }
+        }
+        if (metricsLocation >= 0) {
+            pglUniform4f(metricsLocation, 1.0F / static_cast<float>(motionTarget.width),
+                         1.0F / static_cast<float>(motionTarget.height),
+                         static_cast<float>(motionTarget.width),
+                         static_cast<float>(motionTarget.height));
+        }
+        if (sampleCountLocation >= 0) {
+            pglUniform1i(sampleCountLocation, sampleCount);
+        }
+        selectTextureUnit(GL_TEXTURE0);
+        recordTriangleSubmission(trianglesForPrimitive(GL_TRIANGLE_STRIP, 4));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    };
+
+    if (motionTarget.samples > 1) {
+        pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.framebuffer);
+        const GLenum drawBuffers[] = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+        pglDrawBuffers(3, drawBuffers);
+        glViewport(0, 0, motionTarget.width, motionTarget.height);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_ALWAYS);
+        glDepthMask(GL_TRUE);
+        const std::array<GLuint, 4> textures = {
+            motionTarget.multisampleColor, motionTarget.multisampleMotionVectors,
+            motionTarget.multisampleValidity, motionTarget.multisampleDepth};
+        const std::array<GLenum, 4> textureTargets = {
+            GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE,
+            GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE};
+        const std::array<GLint, 4> samplers = {
+            motionResolveColorSamples, motionResolveMotionSamples,
+            motionResolveValiditySamples, motionResolveDepthSamples};
+        drawFullscreen(motionResolveProgram, motionResolveFullscreen, textures.data(),
+                       textureTargets.data(),
+                       samplers.data(), static_cast<int>(textures.size()), -1,
+                       motionResolveSampleCount, motionTarget.samples);
         glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_SCISSOR_TEST);
         glDepthMask(GL_FALSE);
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+
+    pglBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+    glViewport(motionTarget.previousViewport[0], motionTarget.previousViewport[1],
+               motionTarget.previousViewport[2], motionTarget.previousViewport[3]);
+    if (antiAliasingMode == AntiAliasingMode::Fxaa && textureQuadProgram != 0) {
         drawTextureQuad(motionTarget.color, -1.0F, -1.0F, 2.0F, 2.0F, false, 0, 0, true,
                         1.0F / static_cast<float>(motionTarget.width),
                         1.0F / static_cast<float>(motionTarget.height));
-        if (depthTestEnabled == GL_TRUE)
-            glEnable(GL_DEPTH_TEST);
-        if (blendEnabled == GL_TRUE)
-            glEnable(GL_BLEND);
-        if (cullEnabled == GL_TRUE)
-            glEnable(GL_CULL_FACE);
-        if (scissorEnabled == GL_TRUE)
-            glEnable(GL_SCISSOR_TEST);
+    } else if (antiAliasingMode == AntiAliasingMode::Smaa &&
+               motionTarget.smaaEdgeFramebuffer != 0 && motionTarget.smaaWeightsFramebuffer != 0) {
+        const GLfloat zero[] = {0.0F, 0.0F, 0.0F, 0.0F};
+        const GLenum colorTarget[] = {GL_TEXTURE_2D};
+        const GLenum edgeTargets[] = {GL_TEXTURE_2D, GL_TEXTURE_2D, GL_TEXTURE_2D};
+        const GLenum neighborhoodTargets[] = {GL_TEXTURE_2D, GL_TEXTURE_2D};
+
+        pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.smaaEdgeFramebuffer);
+        glViewport(0, 0, motionTarget.width, motionTarget.height);
+        pglClearBufferfv(GL_COLOR, 0, zero);
+        const GLuint edgeInput[] = {motionTarget.color};
+        const GLint edgeSamplers[] = {smaaEdgeColorTexture};
+        drawFullscreen(smaaEdgeProgram, smaaEdgeFullscreen, edgeInput, colorTarget, edgeSamplers, 1,
+                       smaaEdgeMetrics, -1, 0);
+
+        pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.smaaWeightsFramebuffer);
+        const std::array<GLuint, 3> weightInputs = {
+            motionTarget.smaaEdges, smaaAreaTexture, smaaSearchTexture};
+        const std::array<GLint, 3> weightSamplers = {
+            smaaWeightsEdgeTexture, smaaWeightsAreaTexture, smaaWeightsSearchTexture};
+        drawFullscreen(smaaWeightsProgram, smaaWeightsFullscreen, weightInputs.data(), edgeTargets,
+                       weightSamplers.data(), static_cast<int>(weightInputs.size()),
+                       smaaWeightsMetrics, -1, 0);
+
+        pglBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+        glViewport(motionTarget.previousViewport[0], motionTarget.previousViewport[1],
+                   motionTarget.previousViewport[2], motionTarget.previousViewport[3]);
+        const std::array<GLuint, 2> neighborhoodInputs = {
+            motionTarget.color, motionTarget.smaaWeights};
+        const std::array<GLint, 2> neighborhoodSamplers = {
+            smaaNeighborhoodColorTexture, smaaNeighborhoodWeightsTexture};
+        drawFullscreen(smaaNeighborhoodProgram, smaaNeighborhoodFullscreen,
+                       neighborhoodInputs.data(),
+                       neighborhoodTargets, neighborhoodSamplers.data(),
+                       static_cast<int>(neighborhoodInputs.size()), smaaNeighborhoodMetrics, -1, 0);
     } else {
         pglBindFramebuffer(GL_READ_FRAMEBUFFER, motionTarget.framebuffer);
         glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -2827,6 +3365,24 @@ void finishMotionDataFrame() {
     glColorMask(motionTarget.previousColorMask[0], motionTarget.previousColorMask[1],
                 motionTarget.previousColorMask[2], motionTarget.previousColorMask[3]);
     glDepthMask(motionTarget.previousDepthMask);
+    glDepthFunc(static_cast<GLenum>(previousDepthFunction));
+    if (depthTestEnabled == GL_TRUE) {
+        glEnable(GL_DEPTH_TEST);
+    }
+    if (blendEnabled == GL_TRUE) {
+        glEnable(GL_BLEND);
+    }
+    if (cullEnabled == GL_TRUE) {
+        glEnable(GL_CULL_FACE);
+    }
+    if (scissorEnabled == GL_TRUE) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+    if (motionTarget.previousMultisampleEnabled == GL_TRUE) {
+        glEnable(GL_MULTISAMPLE);
+    } else {
+        glDisable(GL_MULTISAMPLE);
+    }
     motionFrameActive = false;
     publishedMotionData.frame = completedFrame;
 
@@ -2865,8 +3421,36 @@ void finishMotionDataFrame() {
     }
 }
 
-void setFxaaEnabled(bool enabled) {
-    fxaaEnabled = enabled;
+void setAntiAliasingMode(std::string_view mode) {
+    if (mode == "off") {
+        antiAliasingMode = AntiAliasingMode::Off;
+    } else if (mode == "fxaa") {
+        antiAliasingMode = AntiAliasingMode::Fxaa;
+    } else if (mode == "msaa") {
+        antiAliasingMode = AntiAliasingMode::Msaa;
+    } else if (mode == "smaa") {
+        antiAliasingMode = AntiAliasingMode::Smaa;
+    } else {
+        throw std::invalid_argument("Anti-aliasing mode must be off, fxaa, msaa or smaa");
+    }
+}
+
+std::string_view effectiveAntiAliasingMode() noexcept {
+    switch (antiAliasingMode) {
+    case AntiAliasingMode::Fxaa:
+        return "fxaa";
+    case AntiAliasingMode::Msaa:
+        return "msaa";
+    case AntiAliasingMode::Smaa:
+        return "smaa";
+    case AntiAliasingMode::Off:
+    default:
+        return "off";
+    }
+}
+
+int motionDataMultisampleCount() noexcept {
+    return motionTarget.samples;
 }
 
 void invalidateMotionDataHistory() {

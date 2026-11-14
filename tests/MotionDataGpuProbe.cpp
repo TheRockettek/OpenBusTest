@@ -5,6 +5,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -48,6 +50,55 @@ void readMotionPixel(GLuint framebuffer, const MotionDataResources& resources, i
             "depth readback framebuffer is incomplete");
     glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
     pglBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+}
+
+std::vector<std::uint8_t> readOutputPixels(int width, int height) {
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) *
+                                     static_cast<std::size_t>(height) * 4);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    return pixels;
+}
+
+std::size_t changedPixelCount(const std::vector<std::uint8_t>& first,
+                              const std::vector<std::uint8_t>& second) {
+    require(first.size() == second.size(), "AA output captures have different dimensions");
+    std::size_t changed = 0;
+    for (std::size_t offset = 0; offset < first.size(); offset += 4) {
+        if (std::abs(static_cast<int>(first[offset]) - static_cast<int>(second[offset])) > 2 ||
+            std::abs(static_cast<int>(first[offset + 1]) -
+                     static_cast<int>(second[offset + 1])) > 2 ||
+            std::abs(static_cast<int>(first[offset + 2]) -
+                     static_cast<int>(second[offset + 2])) > 2) {
+            ++changed;
+        }
+    }
+    return changed;
+}
+
+bool hasIntermediateChangedPixel(const std::vector<std::uint8_t>& baseline,
+                                const std::vector<std::uint8_t>& filtered, int width, int height) {
+    const std::size_t backgroundOffset = 0;
+    const std::size_t foregroundOffset =
+        (static_cast<std::size_t>(height / 2) * static_cast<std::size_t>(width) +
+         static_cast<std::size_t>(width / 2)) *
+        4;
+    for (std::size_t offset = 0; offset < filtered.size(); offset += 4) {
+        bool changed = false;
+        bool intermediate = false;
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            changed |= std::abs(static_cast<int>(baseline[offset + channel]) -
+                                static_cast<int>(filtered[offset + channel])) > 2;
+            const int background = baseline[backgroundOffset + channel];
+            const int foreground = baseline[foregroundOffset + channel];
+            const int value = filtered[offset + channel];
+            intermediate |= value > std::min(background, foreground) + 2 &&
+                            value < std::max(background, foreground) - 2;
+        }
+        if (changed && intermediate) {
+            return true;
+        }
+    }
+    return false;
 }
 
 struct BenchmarkResult {
@@ -110,11 +161,11 @@ void runBenchmark(GLuint vertexBuffer, MotionObjectKey object, int width, int he
     const BenchmarkResult motion = measureFrames(true, vertexBuffer, object, width, height,
                                                  warmupFrames * 2 + measuredFrames,
                                                  measuredFrames);
-    setFxaaEnabled(true);
+    setAntiAliasingMode("fxaa");
     const BenchmarkResult fxaa = measureFrames(true, vertexBuffer, object, width, height,
                                                warmupFrames * 2 + measuredFrames * 2,
                                                measuredFrames);
-    setFxaaEnabled(false);
+    setAntiAliasingMode("off");
     const int halfScaleFirstFrame = warmupFrames * 2 + measuredFrames * 3;
     benchmarkFrames(true, vertexBuffer, object, width, height, halfScaleFirstFrame, warmupFrames,
                     0.5);
@@ -208,7 +259,7 @@ int main(int argc, char** argv) {
         }
 
         pglGenFramebuffers(1, &readbackFramebuffer);
-        setFxaaEnabled(true);
+        setAntiAliasingMode("fxaa");
         for (int frameIndex = 0; frameIndex < 4; ++frameIndex) {
             const Matrix4 view =
                 frameIndex == 3 ? translationMatrix({-0.25, 0.0, 0.0}) : identityMatrix();
@@ -280,7 +331,7 @@ int main(int argc, char** argv) {
                         "depth texture must contain the current projected geometry depth");
             }
         }
-        setFxaaEnabled(false);
+        setAntiAliasingMode("off");
 
         glViewport(0, 0, width, height);
         setModelViewMatrix(identityMatrix());
@@ -303,7 +354,7 @@ int main(int argc, char** argv) {
                     scaledOutputPixel[2] > 100,
                 "scaled world color must be upscaled into the display framebuffer");
 
-        setFxaaEnabled(true);
+        setAntiAliasingMode("fxaa");
         setModelViewMatrix(identityMatrix());
         require(beginMotionDataFrame(width, height, 2.016, 0.5),
                 "scaled FXAA motion-data target could not be created");
@@ -312,7 +363,57 @@ int main(int argc, char** argv) {
         finishMotionDataFrame();
         require(motionDataResources().frame.historyValid,
                 "history should remain valid for stable scaled frames");
-        setFxaaEnabled(false);
+        setAntiAliasingMode("off");
+
+        const auto renderAntiAliasingFrame = [&](std::string_view mode, double timestamp) {
+            setAntiAliasingMode(mode);
+            glViewport(0, 0, width, height);
+            setModelViewMatrix(identityMatrix());
+            require(beginMotionDataFrame(width, height, timestamp),
+                    "anti-aliasing test render target could not be created");
+            drawModelBatch(vertexBuffer, 3, ModelMaterial{}, {1.0, 1.0, 1.0}, 1.0, 0, false,
+                           std::nullopt, 1.0, nullptr, object);
+            finishMotionDataFrame();
+            return readOutputPixels(width, height);
+        };
+        const auto unfilteredPixels = renderAntiAliasingFrame("off", 3.0);
+        const auto fxaaPixels = renderAntiAliasingFrame("fxaa", 3.016);
+        require(effectiveAntiAliasingMode() == "fxaa" &&
+                    changedPixelCount(unfilteredPixels, fxaaPixels) > 0 &&
+                    hasIntermediateChangedPixel(unfilteredPixels, fxaaPixels, width, height),
+                "FXAA must smooth an edge in the rendered output");
+
+        static_cast<void>(renderAntiAliasingFrame("msaa", 3.032));
+        const auto msaaPixels = renderAntiAliasingFrame("msaa", 3.048);
+        require(effectiveAntiAliasingMode() == "msaa" ||
+                    effectiveAntiAliasingMode() == "fxaa",
+                "MSAA must either be active or explicitly fall back to FXAA");
+        if (effectiveAntiAliasingMode() == "msaa") {
+            require(motionDataMultisampleCount() >= 2,
+                    "active MSAA must use at least two samples");
+        } else {
+            require(motionDataMultisampleCount() == 0,
+                    "the FXAA fallback must not retain an MSAA target");
+        }
+        require(changedPixelCount(unfilteredPixels, msaaPixels) > 0 &&
+                    hasIntermediateChangedPixel(unfilteredPixels, msaaPixels, width, height),
+                "MSAA or its documented fallback must smooth an edge");
+        std::array<float, 2> msaaMotion = {};
+        std::uint8_t msaaValidity = 0;
+        float msaaDepth = 1.0F;
+        readMotionPixel(readbackFramebuffer, motionDataResources(), 16, 16, msaaMotion,
+                        msaaValidity, msaaDepth);
+        require(msaaValidity >= 250 && std::abs(msaaMotion[0]) < 0.15F &&
+                    std::abs(msaaMotion[1]) < 0.15F && msaaDepth > 0.45F && msaaDepth < 0.55F,
+                "MSAA resolve must preserve nearest-surface motion and depth metadata");
+
+        const auto smaaPixels = renderAntiAliasingFrame("smaa", 3.064);
+        require(effectiveAntiAliasingMode() == "smaa",
+                "SMAA shaders and lookup resources must initialize without fallback");
+        require(changedPixelCount(unfilteredPixels, smaaPixels) > 0 &&
+                    hasIntermediateChangedPixel(unfilteredPixels, smaaPixels, width, height),
+                "SMAA must smooth an edge in the rendered output");
+        setAntiAliasingMode("off");
 
         pglDeleteFramebuffers(1, &readbackFramebuffer);
         readbackFramebuffer = 0;

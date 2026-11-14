@@ -211,7 +211,9 @@ void shutdownCoreRenderer();
 bool beginMotionDataFrame(int width, int height, double timestampSeconds, double renderScale = 1.0);
 void finishMotionDataFrame();
 void invalidateMotionDataHistory();
-void setFxaaEnabled(bool enabled);
+void setAntiAliasingMode(std::string_view mode);
+[[nodiscard]] std::string_view effectiveAntiAliasingMode() noexcept;
+[[nodiscard]] int motionDataMultisampleCount() noexcept;
 [[nodiscard]] MotionDataResources motionDataResources();
 void invalidateTextureBindings();
 // Use for renderer-visible buffers so cached VAO and compute bindings cannot
@@ -248,6 +250,7 @@ LightingBufferUploadStats lightingBufferUploadStats();
 void resetLightingBufferUploadStats();
 void recordMapLightViewPreparation(bool reused);
 std::size_t mapLightSelectionLimit();
+void configureMapLightSelectionLimit(std::size_t limit);
 // Positions and directions are in the current view space.
 void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights);
 // Map-light positions are in the current view space; strength normally follows darkness.

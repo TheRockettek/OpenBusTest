@@ -6,13 +6,13 @@ class ScopedSwapInterval {
   public:
     using Setter = void (*)(int);
 
-    ScopedSwapInterval(Setter setter, int interval, int restoreInterval)
-        : setter_(setter), restoreInterval_(restoreInterval) {
+    ScopedSwapInterval(Setter setter, int interval, const bool& restoreVsync)
+        : setter_(setter), restoreVsync_(&restoreVsync) {
         setter_(interval);
     }
 
     ~ScopedSwapInterval() {
-        setter_(restoreInterval_);
+        setter_(*restoreVsync_ ? 1 : 0);
     }
 
     ScopedSwapInterval(const ScopedSwapInterval&) = delete;
@@ -20,7 +20,7 @@ class ScopedSwapInterval {
 
   private:
     Setter setter_;
-    int restoreInterval_;
+    const bool* restoreVsync_;
 };
 
 } // namespace openbus::app

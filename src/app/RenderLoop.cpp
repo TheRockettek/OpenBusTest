@@ -426,6 +426,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         static_cast<float>(graphicsPreferences_.values.anisotropicFiltering));
     configureMaterialTextureMipmaps(graphicsPreferences_.values.generateTextureMipmaps);
     configureMapTextureScale(graphicsPreferences_.values.mapTextureScale);
+    openbus::rendering::configureMapLightSelectionLimit(
+        static_cast<std::size_t>(graphicsPreferences_.values.sceneryLightLimit));
     textureAnisotropySupported_ = textureAnisotropy.supported;
     maximumTextureAnisotropy_ = textureAnisotropy.maximum;
     appliedTextureAnisotropy_ = textureAnisotropy.applied;
@@ -443,7 +445,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         glfwTerminate();
         throw std::runtime_error("Failed to initialize core OpenGL renderer");
     }
-    openbus::rendering::setFxaaEnabled(graphicsPreferences_.values.antiAliasingMode == "fxaa");
+    openbus::rendering::setAntiAliasingMode(
+        graphicsPreferences_.values.antiAliasingMode);
     imguiLayer_ = std::make_unique<ImGuiLayer>(window_);
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);

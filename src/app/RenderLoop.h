@@ -367,6 +367,7 @@ class RenderLoop {
     bool openSpawnPopup_ = false;
     bool openPlayerTimetablePopup_ = false;
     bool pauseMenuOpen_ = false;
+    bool mainMenuGraphicsOpen_ = false;
     bool debugMenuOpen_ = false;
     bool debugCalendarInitialized_ = false;
     openbus::WeatherSelection weatherSelection_;

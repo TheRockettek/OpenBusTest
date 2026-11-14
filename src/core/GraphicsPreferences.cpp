@@ -28,7 +28,7 @@
 namespace openbus::core {
 namespace {
 
-constexpr std::array<std::string_view, 19> keys = {"display.mode",
+constexpr std::array<std::string_view, 20> keys = {"display.mode",
                                                    "display.width",
                                                    "display.height",
                                                    "display.refresh_rate",
@@ -46,7 +46,8 @@ constexpr std::array<std::string_view, 19> keys = {"display.mode",
                                                    "textures.vehicle_texture_scale",
                                                    "advanced.vehicle_frustum_culling",
                                                    "textures.generate_mipmaps",
-                                                   "textures.map_texture_scale"};
+                                                   "textures.map_texture_scale",
+                                                   "lighting.scenery_light_limit"};
 
 std::string_view trim(std::string_view value) {
     const auto first = value.find_first_not_of(" \t\r");
@@ -88,8 +89,8 @@ void assign(GraphicsPreferences& preferences, std::string_view key, std::string_
         return;
     }
     if (key == keys[13]) {
-        if (value != "off" && value != "fxaa") {
-            throw std::invalid_argument("mode must be off or fxaa; MSAA is not supported");
+        if (value != "off" && value != "fxaa" && value != "msaa" && value != "smaa") {
+            throw std::invalid_argument("mode must be off, fxaa, msaa or smaa");
         }
         preferences.antiAliasingMode = std::string(value);
         return;
@@ -153,6 +154,12 @@ void assign(GraphicsPreferences& preferences, std::string_view key, std::string_
             throw std::invalid_argument("map texture scale must be between 0.25 and 1.0");
         }
         preferences.mapTextureScale = number;
+    } else if (key == keys[19]) {
+        if (number < 0.0 || number > 16384.0 || std::floor(number) != number) {
+            throw std::invalid_argument(
+                "scenery light limit must be zero or an integer from 1 to 16384");
+        }
+        preferences.sceneryLightLimit = static_cast<int>(number);
     } else {
         if (number < 0.0 || number > 100.0) {
             throw std::invalid_argument("object size percentage must be between 0 and 100");
@@ -204,6 +211,8 @@ std::string valueFor(const GraphicsPreferences& preferences, std::string_view ke
         stream << (preferences.generateTextureMipmaps ? "true" : "false");
     if (key == keys[18])
         stream << preferences.mapTextureScale;
+    if (key == keys[19])
+        stream << preferences.sceneryLightLimit;
     return stream.str();
 }
 
@@ -336,12 +345,18 @@ GraphicsPreferences mergeGraphicsPreferences(const GraphicsPreferences& baseline
         disk.monitor = edited.monitor;
     if (edited.anisotropicFiltering != baseline.anisotropicFiltering)
         disk.anisotropicFiltering = edited.anisotropicFiltering;
+    if (edited.generateTextureMipmaps != baseline.generateTextureMipmaps)
+        disk.generateTextureMipmaps = edited.generateTextureMipmaps;
     if (edited.antiAliasingMode != baseline.antiAliasingMode)
         disk.antiAliasingMode = edited.antiAliasingMode;
     if (edited.renderScale != baseline.renderScale)
         disk.renderScale = edited.renderScale;
     if (edited.vehicleTextureScale != baseline.vehicleTextureScale)
         disk.vehicleTextureScale = edited.vehicleTextureScale;
+    if (edited.mapTextureScale != baseline.mapTextureScale)
+        disk.mapTextureScale = edited.mapTextureScale;
+    if (edited.sceneryLightLimit != baseline.sceneryLightLimit)
+        disk.sceneryLightLimit = edited.sceneryLightLimit;
     if (edited.vehicleFrustumCulling != baseline.vehicleFrustumCulling)
         disk.vehicleFrustumCulling = edited.vehicleFrustumCulling;
     if (edited.vsync != baseline.vsync)
