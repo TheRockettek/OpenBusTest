@@ -125,6 +125,8 @@ using openbus::rendering::translationMatrix;
 using openbus::rendering::ViewFrustum;
 
 struct Vehicle {
+    std::uint64_t motionObjectId = openbus::rendering::allocateMotionObjectId();
+
     struct DrawProfileStats {
         struct TransparentSortBatch {
             std::string meshName;
@@ -608,13 +610,16 @@ struct Vehicle {
                      openbus::rendering::ViewpointContext& soundViewpoint, bool isAiVehicle,
                      bool deferTrafficInitialization = false,
                      VehicleSetupOptions selectedSetupOptions = {},
-                     bool passengerServiceRequired = false)
+                     bool passengerServiceRequired = false, double configuredTextureScale = 1.0,
+                     bool configuredFrustumCulling = true)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey + "|" + selectedSetupOptions.appearanceKey),
           sharedDefinition(definition), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ), setupOptions(std::move(selectedSetupOptions)),
           wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
         TraceScope constructionTrace("startup", "Vehicle::Vehicle.initialize");
+        textureScale = configuredTextureScale;
+        frustumCulling = configuredFrustumCulling;
         if (const char* scale = openbus::getEnvironment("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);

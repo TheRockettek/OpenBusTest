@@ -651,6 +651,79 @@ bool checkedTextureBufferSize(std::size_t width, std::size_t height, std::size_t
     return checkedBufferSize(width, height, bytesPerPixel, size);
 }
 
+std::size_t preferredMipLevelForScale(double scale, std::size_t levelCount) {
+    if (levelCount <= 1 || !std::isfinite(scale) || scale <= 0.0 || scale >= 1.0) {
+        return 0;
+    }
+    const auto nearestLevel =
+        static_cast<std::size_t>(std::max(0L, std::lround(std::log2(1.0 / scale))));
+    return std::min(nearestLevel, levelCount - 1);
+}
+
+bool TextureLoader::scaleImage(const Image& image, double scale, Image& scaledImage) {
+    if (!std::isfinite(scale) || scale <= 0.0 || scale > 1.0 || image.width <= 0 ||
+        image.height <= 0) {
+        return false;
+    }
+    std::size_t sourceSize = 0;
+    if (!checkedBufferSize(static_cast<std::size_t>(image.width),
+                           static_cast<std::size_t>(image.height), 4, sourceSize) ||
+        image.rgba.size() < sourceSize) {
+        return false;
+    }
+    const int width = std::max(1, static_cast<int>(std::lround(image.width * scale)));
+    const int height = std::max(1, static_cast<int>(std::lround(image.height * scale)));
+    std::size_t outputSize = 0;
+    if (!checkedBufferSize(static_cast<std::size_t>(width), static_cast<std::size_t>(height), 4,
+                           outputSize)) {
+        return false;
+    }
+
+    Image result;
+    result.width = width;
+    result.height = height;
+    result.rgba.resize(outputSize);
+    const double scaleX = static_cast<double>(image.width) / width;
+    const double scaleY = static_cast<double>(image.height) / height;
+    for (int y = 0; y < height; ++y) {
+        const double sourceTop = y * scaleY;
+        const double sourceBottom = (y + 1) * scaleY;
+        const int firstSourceY = static_cast<int>(std::floor(sourceTop));
+        const int lastSourceY = static_cast<int>(std::ceil(sourceBottom));
+        for (int x = 0; x < width; ++x) {
+            const double sourceLeft = x * scaleX;
+            const double sourceRight = (x + 1) * scaleX;
+            const int firstSourceX = static_cast<int>(std::floor(sourceLeft));
+            const int lastSourceX = static_cast<int>(std::ceil(sourceRight));
+            std::array<double, 4> channels = {};
+            for (int sourceY = firstSourceY; sourceY < lastSourceY; ++sourceY) {
+                const double overlapY =
+                    std::max(0.0, std::min(sourceBottom, sourceY + 1.0) -
+                                      std::max(sourceTop, static_cast<double>(sourceY)));
+                for (int sourceX = firstSourceX; sourceX < lastSourceX; ++sourceX) {
+                    const double overlapX =
+                        std::max(0.0, std::min(sourceRight, sourceX + 1.0) -
+                                          std::max(sourceLeft, static_cast<double>(sourceX)));
+                    const double weight = overlapX * overlapY;
+                    const std::size_t sourceOffset =
+                        (static_cast<std::size_t>(sourceY) * image.width + sourceX) * 4;
+                    for (std::size_t channel = 0; channel < channels.size(); ++channel) {
+                        channels[channel] += image.rgba[sourceOffset + channel] * weight;
+                    }
+                }
+            }
+            const double totalArea = scaleX * scaleY;
+            const std::size_t targetOffset = (static_cast<std::size_t>(y) * width + x) * 4;
+            for (std::size_t channel = 0; channel < channels.size(); ++channel) {
+                result.rgba[targetOffset + channel] = static_cast<std::uint8_t>(
+                    std::clamp(std::lround(channels[channel] / totalArea), 0L, 255L));
+            }
+        }
+    }
+    scaledImage = std::move(result);
+    return true;
+}
+
 TextureFileFormat TextureLoader::detectFormat(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {

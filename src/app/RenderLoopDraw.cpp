@@ -25,6 +25,19 @@ namespace {
 
 constexpr double waitingPassengerIdleGaitWeight = 0.08;
 constexpr double waitingPassengerIdleCycleRadiansPerSecond = 0.7;
+constexpr std::uint64_t passengerMotionSubobjectBit = std::uint64_t{1} << 63U;
+
+openbus::rendering::MotionObjectKey waitingPassengerMotionObject(int stopId,
+                                                                 std::size_t arrivalOrder) {
+    const auto stopKey = static_cast<std::uint32_t>(stopId);
+    return {passengerMotionSubobjectBit | stopKey, static_cast<std::uint64_t>(arrivalOrder)};
+}
+
+openbus::rendering::MotionObjectKey seatedPassengerMotionObject(const Vehicle& bus,
+                                                                std::size_t seatIndex) {
+    return {bus.motionObjectId,
+            passengerMotionSubobjectBit | static_cast<std::uint64_t>(seatIndex)};
+}
 
 struct ActiveSceneryTrafficSegment {
     std::size_t index;
@@ -1377,6 +1390,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         TraceScope phase("render", "RenderLoop::draw.reflections");
         renderReflectionViews(simulation, world);
     }
+    if (!renderingReflection_ && !captureMode_) {
+        const double renderTimestamp =
+            std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        openbus::rendering::beginMotionDataFrame(framebufferWidth_, framebufferHeight_,
+                                                 renderTimestamp,
+                                                 graphicsPreferences_.values.renderScale);
+    }
     openbus::rendering::GpuTimerScope mainViewGpuTimer(openbus::rendering::GpuTimingPass::MainView);
     if (!renderingReflection_) {
         openbus::rendering::setWeatherLighting(weatherVariables.environmentBrightness(), false);
@@ -1715,9 +1736,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 if (!pose) {
                     throw std::runtime_error("Cannot sample a pedestrian render pose");
                 }
-                mapRenderer_->drawHumanTrafficActor(std::filesystem::path(human.actor.modelPath),
-                                                    *pose, human.gait.phaseRadians,
-                                                    human.gait.weight);
+                mapRenderer_->drawHumanTrafficActor(
+                    std::filesystem::path(human.actor.modelPath), *pose, human.gait.phaseRadians,
+                    human.gait.weight, std::nullopt, nullptr, {human.motionObjectId, 0});
             }
             if (!scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_) {
                 for (const auto& passenger : alightedPassengers_) {
@@ -1731,7 +1752,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                             openbus::app::passengerWalkingGaitPhase(
                                 passenger.travelledMeters /
                                 openbus::app::passengerApproachSpeedMetersPerSecond),
-                            1.0);
+                            1.0, std::nullopt, nullptr, {passenger.motionObjectId, 0});
                     }
                 }
             }
@@ -2100,7 +2121,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                 : simulation.simulationTime() *
                                           waitingPassengerIdleCycleRadiansPerSecond +
                                       static_cast<double>(passenger) * 1.7,
-                            gaitWeight);
+                            gaitWeight, std::nullopt, nullptr,
+                            waitingPassengerMotionObject(stopId,
+                                                         passengers[passenger].arrivalOrder));
                     }
                 }
             }
@@ -2269,7 +2292,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     mapRenderer_->drawHumanTrafficActor(
                         scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0, 0.0,
                         openbus::rendering::HumanSeatPose{seat.seatHeight, 1.0},
-                        passengerLightingForBus);
+                        passengerLightingForBus, seatedPassengerMotionObject(bus, seatIndex));
                 }
             }
             if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId) {
@@ -2322,7 +2345,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             const auto drawPassengerBetweenPoses = [&](const PassengerCabinTravelPathData& path,
                                                        double progress, double startHeading,
                                                        double endHeading, std::size_t modelIndex,
-                                                       double seatHeight, bool boarding) {
+                                                       double seatHeight, bool boarding,
+                                                       std::size_t seatIndex) {
                 const bool hasSeat = seatHeight > 0.0;
                 const auto transition = passengerSeatTransition(progress, boarding, hasSeat);
                 if (stopInRange) {
@@ -2344,7 +2368,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         scheduledPassengerHumanModels_[modelIndex], passengerPose, gaitPhase,
                         1.0 - transition.seatedFraction,
                         openbus::rendering::HumanSeatPose{seatHeight, transition.seatedFraction},
-                        insideFraction >= 0.5 ? passengerLightingForBus : nullptr);
+                        insideFraction >= 0.5 ? passengerLightingForBus : nullptr,
+                        seatedPassengerMotionObject(bus, seatIndex));
                 }
             };
             for (const std::size_t seat : alightingSeats) {
@@ -2380,7 +2405,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                   scheduledPassengerHumanModels_.size();
                     drawPassengerBetweenPoses(path, service.alightingProgressForSeat(seat),
                                               seatPose.headingRadians, outsidePose.headingRadians,
-                                              modelIndex, position.seatHeight, false);
+                                              modelIndex, position.seatHeight, false, seat);
                 }
             }
             for (const auto& boarding : service.boardingPassengers()) {
@@ -2409,7 +2434,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         : boarding.modelIndex % scheduledPassengerHumanModels_.size();
                 drawPassengerBetweenPoses(path, boarding.progress, outsidePose.headingRadians,
                                           seatPose.headingRadians, modelIndex, position.seatHeight,
-                                          true);
+                                          true, boarding.seatIndex);
             }
         };
         const auto drawTypeFourScenery = [&]() {
@@ -4164,6 +4189,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         wasRecording = recording;
     }
 #endif
+    if (!renderingReflection_) {
+        openbus::rendering::finishMotionDataFrame();
+    }
     if (!renderingReflection_ && mapRenderer_ != nullptr) {
         mapRenderer_->finishFrame();
     }

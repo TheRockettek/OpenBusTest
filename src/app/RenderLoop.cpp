@@ -56,6 +56,18 @@ double positiveEnvironmentRate(const char* name, double defaultValue) {
     }
 }
 
+double graphicsFpsCap(double defaultValue) {
+    const char* value = openbus::getEnvironment("OPENBUS_FPS_CAP");
+    if (value == nullptr)
+        return defaultValue;
+    try {
+        return openbus::core::parseGraphicsFpsCapOverride(value);
+    } catch (const std::exception&) {
+        gameLog.Warning("Invalid OPENBUS_FPS_CAP; ignoring the setting");
+        return defaultValue;
+    }
+}
+
 int positiveEnvironmentFrameInterval(const char* name, int defaultValue) {
     const char* value = openbus::getEnvironment(name);
     if (value == nullptr) {
@@ -75,10 +87,10 @@ int positiveEnvironmentFrameInterval(const char* name, int defaultValue) {
     }
 }
 
-double minimumObjectViewportFraction(const char* name) {
+double minimumObjectViewportFraction(const char* name, double defaultPercent) {
     const char* value = openbus::getEnvironment(name);
     if (value == nullptr || *value == '\0') {
-        return 0.0;
+        return defaultPercent / 100.0;
     }
     try {
         std::size_t parsed = 0;
@@ -100,9 +112,22 @@ double minimumObjectViewportFraction(const char* name) {
 RenderLoop::RenderLoop(int width, int height, const char* title,
                        openbus::app::SteamPresence& steamPresence)
     : steamPresence_(steamPresence), window_(nullptr),
-      assetRequestManager_(std::make_unique<AssetRequestManager>()),
-      reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
+      assetRequestManager_(std::make_unique<AssetRequestManager>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
+    try {
+        graphicsPreferencesPath_ = openbus::core::graphicsPreferencesPath();
+        graphicsPreferences_ = openbus::core::loadGraphicsPreferences(graphicsPreferencesPath_);
+        graphicsPreferencesBaseline_ = graphicsPreferences_.values;
+        activeGraphicsPreferences_ = graphicsPreferences_.values;
+        graphicsPreferencesLoaded_ = true;
+    } catch (const std::exception& error) {
+        graphicsPreferencesError_ = error.what();
+        gameLog.Warning("Graphics preferences were not loaded: " + graphicsPreferencesError_);
+        activeGraphicsPreferences_ = graphicsPreferences_.values;
+    }
+    reflectionRenderer_ = std::make_unique<openbus::rendering::ReflectionRenderer>(
+        graphicsPreferences_.values.reflectionSize, graphicsPreferences_.values.reflectionInterval,
+        graphicsPreferences_.values.reflectionMaxFps);
     const char* odometerMode = openbus::getEnvironment("OPENBUS_ODOMETER_MODE");
     vehicleOdometerMode_ = odometerMode ? openbus::app::parseVehicleOdometerMode(odometerMode)
                                         : openbus::app::parseVehicleOdometerMode();
@@ -178,12 +203,14 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
                 " frames at <= " + std::to_string(aiSpotlightScheduleConfig_.nearDistanceMeters) +
                 " m, <= " + std::to_string(aiSpotlightScheduleConfig_.mediumDistanceMeters) +
                 " m and farther (approaching/high-speed lights update twice as often).");
-    const double renderFpsCapHz = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
+    const double renderFpsCapHz = graphicsFpsCap(graphicsPreferences_.values.fpsCap);
     frameTiming_.setFrameRateCap(renderFpsCapHz);
     mainViewMinimumObjectViewportFraction_ =
-        minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT");
+        minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT",
+                                      graphicsPreferences_.values.minimumObjectSizeMainPercent);
     reflectionMinimumObjectViewportFraction_ =
-        minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT");
+        minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT",
+                                      graphicsPreferences_.values.minimumObjectSizeMirrorsPercent);
     if (mainViewMinimumObjectViewportFraction_ > 0.0) {
         gameLog.Log("Main-view minimum object size culling set to " +
                     std::to_string(mainViewMinimumObjectViewportFraction_ * 100.0) + "%");
@@ -273,19 +300,80 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     const bool benchmarkMode = parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
+    int windowWidth = benchmarkMode ? width : graphicsPreferences_.values.width;
+    int windowHeight = benchmarkMode ? height : graphicsPreferences_.values.height;
+    GLFWmonitor* windowMonitor = nullptr;
+    GLFWmonitor* selectedMonitor = nullptr;
+    bool centerWindowOnMonitor = false;
+    int refreshRate = GLFW_DONT_CARE;
+    const auto windowMode = graphicsPreferences_.values.windowMode;
+    if (!benchmarkMode) {
+        int monitorCount = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+        const int monitorIndex = graphicsPreferences_.values.monitor;
+        if (monitors == nullptr || monitorCount == 0) {
+            gameLog.Warning("No display monitor is available; starting windowed.");
+        } else {
+            selectedMonitor = monitors[monitorIndex < monitorCount ? std::max(monitorIndex, 0) : 0];
+            if (monitorIndex >= monitorCount) {
+                gameLog.Warning("Configured monitor is unavailable; using the primary display.");
+            }
+            if (windowMode == "exclusive") {
+                const GLFWvidmode* requestedMode = nullptr;
+                int modeCount = 0;
+                const GLFWvidmode* modes = glfwGetVideoModes(selectedMonitor, &modeCount);
+                for (int index = 0; modes != nullptr && index < modeCount; ++index) {
+                    if (modes[index].width == windowWidth && modes[index].height == windowHeight &&
+                        modes[index].refreshRate == graphicsPreferences_.values.refreshRate) {
+                        requestedMode = &modes[index];
+                        break;
+                    }
+                }
+                if (requestedMode == nullptr) {
+                    requestedMode = glfwGetVideoMode(selectedMonitor);
+                    if (requestedMode != nullptr) {
+                        windowWidth = requestedMode->width;
+                        windowHeight = requestedMode->height;
+                        gameLog.Warning("Configured exclusive display mode is unavailable; using "
+                                        "the monitor's current mode.");
+                    }
+                }
+                if (requestedMode != nullptr) {
+                    windowMonitor = selectedMonitor;
+                    refreshRate = requestedMode->refreshRate;
+                }
+            } else if (windowMode == "borderless") {
+                const GLFWvidmode* desktopMode = glfwGetVideoMode(selectedMonitor);
+                if (desktopMode != nullptr) {
+                    windowWidth = desktopMode->width;
+                    windowHeight = desktopMode->height;
+                    windowMonitor = nullptr;
+                    glfwWindowHint(GLFW_REFRESH_RATE, GLFW_DONT_CARE);
+                }
+            } else {
+                centerWindowOnMonitor = glfwGetVideoMode(selectedMonitor) != nullptr;
+            }
+        }
+    }
     if (benchmarkMode) {
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+    } else {
+        glfwWindowHint(GLFW_DECORATED, windowMode == "borderless" ? GLFW_FALSE : GLFW_TRUE);
     }
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
-    window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    glfwWindowHint(GLFW_REFRESH_RATE, refreshRate);
+    window_ = glfwCreateWindow(windowWidth, windowHeight, title, windowMonitor, nullptr);
+    glfwWindowHint(GLFW_REFRESH_RATE, GLFW_DONT_CARE);
     if (!window_) {
         gameLog.Warning("OpenGL 4.3 context unavailable; retrying 3.3 with CPU culling");
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
+        glfwWindowHint(GLFW_REFRESH_RATE, refreshRate);
+        window_ = glfwCreateWindow(windowWidth, windowHeight, title, windowMonitor, nullptr);
+        glfwWindowHint(GLFW_REFRESH_RATE, GLFW_DONT_CARE);
     }
     if (!window_) {
         gameLog.Error("Failed to create OpenGL window");
@@ -296,6 +384,20 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         gameLog.Log(
             std::string("Benchmark window is ") +
             (glfwGetWindowAttrib(window_, GLFW_VISIBLE) == GLFW_TRUE ? "visible" : "hidden"));
+    }
+    if (!benchmarkMode && selectedMonitor != nullptr &&
+        (windowMode == "borderless" || centerWindowOnMonitor)) {
+        int monitorX = 0;
+        int monitorY = 0;
+        glfwGetMonitorPos(selectedMonitor, &monitorX, &monitorY);
+        if (centerWindowOnMonitor) {
+            const GLFWvidmode* desktopMode = glfwGetVideoMode(selectedMonitor);
+            if (desktopMode != nullptr) {
+                monitorX += (desktopMode->width - windowWidth) / 2;
+                monitorY += (desktopMode->height - windowHeight) / 2;
+            }
+        }
+        glfwSetWindowPos(window_, monitorX, monitorY);
     }
     glfwMakeContextCurrent(window_);
     glfwGetFramebufferSize(window_, &framebufferWidth_, &framebufferHeight_);
@@ -308,9 +410,10 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
     }
     glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
     const char* vsyncSetting = openbus::getEnvironment("OPENBUS_VSYNC");
-    vsyncEnabled_ = vsyncSetting == nullptr ||
-                    (std::string(vsyncSetting) != "0" && std::string(vsyncSetting) != "off" &&
-                     std::string(vsyncSetting) != "false");
+    vsyncEnabled_ = vsyncSetting == nullptr
+                        ? graphicsPreferences_.values.vsync
+                        : (std::string(vsyncSetting) != "0" && std::string(vsyncSetting) != "off" &&
+                           std::string(vsyncSetting) != "false");
     glfwSwapInterval(vsyncEnabled_ ? 1 : 0);
     gameLog.Log(std::string("VSync ") + (vsyncEnabled_ ? "enabled" : "disabled"));
     if (!loadOpenGLFunctions()) {
@@ -319,12 +422,28 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         glfwTerminate();
         throw std::runtime_error("OpenGL VBO functions are unavailable");
     }
+    const auto textureAnisotropy = configureMaterialTextureAnisotropy(
+        static_cast<float>(graphicsPreferences_.values.anisotropicFiltering));
+    configureMaterialTextureMipmaps(graphicsPreferences_.values.generateTextureMipmaps);
+    configureMapTextureScale(graphicsPreferences_.values.mapTextureScale);
+    textureAnisotropySupported_ = textureAnisotropy.supported;
+    maximumTextureAnisotropy_ = textureAnisotropy.maximum;
+    appliedTextureAnisotropy_ = textureAnisotropy.applied;
+    if (graphicsPreferences_.values.anisotropicFiltering > 1 && !textureAnisotropySupported_) {
+        gameLog.Warning("Anisotropic filtering was requested but is not supported by this "
+                        "OpenGL device.");
+    } else {
+        gameLog.Log(
+            "Material texture anisotropic filtering: " + std::to_string(appliedTextureAnisotropy_) +
+            "x (device maximum " + std::to_string(maximumTextureAnisotropy_) + "x)");
+    }
     if (!openbus::rendering::initializeCoreRenderer()) {
         glfwDestroyWindow(window_);
         window_ = nullptr;
         glfwTerminate();
         throw std::runtime_error("Failed to initialize core OpenGL renderer");
     }
+    openbus::rendering::setFxaaEnabled(graphicsPreferences_.values.antiAliasingMode == "fxaa");
     imguiLayer_ = std::make_unique<ImGuiLayer>(window_);
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
@@ -476,7 +595,8 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
             definition, placementForVehicle(vehicleConfiguration, placement, isAiVehicle),
             modelOffsetZ, loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_,
             soundViewpoint_, isAiVehicle, false, std::move(setupOptions),
-            configKind == VehicleFileKind::Bus);
+            configKind == VehicleFileKind::Bus, activeGraphicsPreferences_.vehicleTextureScale,
+            activeGraphicsPreferences_.vehicleFrustumCulling);
     }
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
@@ -868,11 +988,14 @@ bool RenderLoop::AddTrafficVehicle(
                 trafficState.pendingCoupledVehicle = assetRequests->submit(
                     [rearDefinition, rearPlacement, rearModelOffsetZ, loadingPolicy, assetRequests,
                      simulationState, soundEngine, soundViewpoint,
+                     vehicleTextureScale = activeGraphicsPreferences_.vehicleTextureScale,
+                     vehicleFrustumCulling = activeGraphicsPreferences_.vehicleFrustumCulling,
                      rearSetupOptions = std::move(rearSetupOptions)]() mutable {
                         return std::make_unique<Vehicle>(
                             rearDefinition, rearPlacement, rearModelOffsetZ, loadingPolicy,
                             *assetRequests, *simulationState, *soundEngine, *soundViewpoint, true,
-                            true, std::move(rearSetupOptions), true);
+                            true, std::move(rearSetupOptions), true, vehicleTextureScale,
+                            vehicleFrustumCulling);
                     });
                 trafficState.hasCoupledVehicle = true;
             }
@@ -881,13 +1004,15 @@ bool RenderLoop::AddTrafficVehicle(
                             busConfigPath.string() + "': " + error.what());
         }
     }
-    std::future<std::unique_ptr<Vehicle>> pendingVehicle =
-        assetRequests->submit([definition, configuredPlacement, modelOffsetZ, loadingPolicy,
-                               assetRequests, simulationState, soundEngine, soundViewpoint, isBus] {
-            return std::make_unique<Vehicle>(definition, configuredPlacement, modelOffsetZ,
-                                             loadingPolicy, *assetRequests, *simulationState,
-                                             *soundEngine, *soundViewpoint, true, true,
-                                             VehicleSetupOptions{}, isBus);
+    std::future<std::unique_ptr<Vehicle>> pendingVehicle = assetRequests->submit(
+        [definition, configuredPlacement, modelOffsetZ, loadingPolicy, assetRequests,
+         simulationState, soundEngine, soundViewpoint, isBus,
+         vehicleTextureScale = activeGraphicsPreferences_.vehicleTextureScale,
+         vehicleFrustumCulling = activeGraphicsPreferences_.vehicleFrustumCulling] {
+            return std::make_unique<Vehicle>(
+                definition, configuredPlacement, modelOffsetZ, loadingPolicy, *assetRequests,
+                *simulationState, *soundEngine, *soundViewpoint, true, true, VehicleSetupOptions{},
+                isBus, vehicleTextureScale, vehicleFrustumCulling);
         });
     trafficState.pendingVehicle = std::move(pendingVehicle);
     trafficFleet_.vehicles.push_back(std::move(trafficState));

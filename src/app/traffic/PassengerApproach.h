@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <numbers>
 #include <optional>
 #include <stdexcept>
@@ -345,6 +346,7 @@ struct PassengerPedestrianHandoff {
     double connectorMeters = 0.0;
     double travelledMeters = 0.0;
     std::size_t modelIndex = 0;
+    std::uint64_t motionObjectId = 0;
 };
 
 inline std::optional<PassengerPedestrianHandoff>

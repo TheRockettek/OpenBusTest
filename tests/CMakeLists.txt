@@ -267,6 +267,10 @@ openbus_add_probe(OpenBusMetarStationUiProbe MetarStationUiProbe.cpp LIBS openbu
 target_sources(OpenBusMetarStationUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/MetarStationUi.cpp")
 target_include_directories(OpenBusMetarStationUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusGraphicsPreferencesProbe GraphicsPreferencesProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusMotionDataProbe MotionDataProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusMotionDataGpuProbe MotionDataGpuProbe.cpp LIBS openbus_render)
+set_tests_properties(OpenBusMotionDataGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusHumanGaitProbe HumanGaitProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusReflectionSettingsProbe ReflectionSettingsProbe.cpp
@@ -284,6 +288,8 @@ openbus_add_probe(OpenBusCloudRenderingProbe CloudRenderingProbe.cpp LIBS openbu
 set_tests_properties(OpenBusCloudRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusPrecipitationRenderingProbe PrecipitationRenderingProbe.cpp LIBS openbus_render)
 set_tests_properties(OpenBusPrecipitationRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusMapTextureScaleProbe MapTextureScaleProbe.cpp LIBS openbus_render)
+set_tests_properties(OpenBusMapTextureScaleProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusMapOcclusionRenderingProbe MapOcclusionRenderingProbe.cpp
     LIBS openbus_render)
 set_tests_properties(OpenBusMapOcclusionRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)

@@ -13,6 +13,17 @@ namespace {
 constexpr GLenum anySamplesPassed = 0x8C2F;
 constexpr GLenum queryWait = 0x8E13;
 
+MotionObjectKey trackedMapMotionObject(const void* object, const void* subObject, GLuint buffer) {
+    constexpr std::uint64_t mapMotionIdTag = std::uint64_t{1} << 63U;
+    const auto objectAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(object));
+    const auto subObjectAddress =
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(subObject));
+    const auto bufferId = static_cast<std::uint64_t>(buffer);
+    return {objectAddress | mapMotionIdTag,
+            subObjectAddress ^ (bufferId + 0x9e3779b97f4a7c15ULL + (subObjectAddress << 6U) +
+                                (subObjectAddress >> 2U))};
+}
+
 const std::vector<PrimitiveVertex>& occlusionProxyCube() {
     static const std::vector<PrimitiveVertex> vertices = [] {
         constexpr std::array<std::array<float, 3>, 8> corners = {{
@@ -63,7 +74,8 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
                                         const openbus::map::MapTrafficPose& pose,
                                         double gaitPhaseRadians, double gaitWeight,
                                         std::optional<HumanSeatPose> seat,
-                                        const ModelMaterial* passengerLighting) const {
+                                        const ModelMaterial* passengerLighting,
+                                        MotionObjectKey motionObject) const {
     const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     auto model = impl_->humanTrafficModels.find(cacheKey);
     if (model == impl_->humanTrafficModels.end()) {
@@ -191,7 +203,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             }
             drawModelBatch(batch.buffer, batch.vertexCount, material, batch.color, batch.alpha,
                            batch.alphaMode, batch.cullBackFaces, gait, 1.0,
-                           weightBuffer != 0 && palette ? &skin : nullptr);
+                           weightBuffer != 0 && palette ? &skin : nullptr, motionObject);
         }
     };
     drawBatches(false);
@@ -652,7 +664,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             pushMatrix();
             multiplyMatrix(translationMatrix({minX, minY, 0.0}));
             drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
-                                  {1.0, 1.0, 1.0}, 1.0, 0);
+                                  {1.0, 1.0, 1.0}, 1.0, 0, false, 1.0,
+                                  trackedMapMotionObject(&tile, &tile, tile.buffer));
             if (!tile.groundTextureLayers.empty()) {
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -662,7 +675,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                     ModelMaterial layer = sourceLayer;
                     layer.snowCoverage = material.snowCoverage;
                     drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, layer,
-                                          {1.0, 1.0, 1.0}, 1.0, 2);
+                                          {1.0, 1.0, 1.0}, 1.0, 2, false, 1.0,
+                                          trackedMapMotionObject(&tile, &tile, tile.buffer));
                 }
                 glDepthMask(GL_TRUE);
                 glDepthFunc(GL_LESS);
@@ -726,7 +740,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             pushMatrix();
             multiplyMatrix(translationMatrix({minX, minY, 0.0}));
             drawIndexedModelBatch(water->buffer, water->indexBuffer, water->indexCount, material,
-                                  waterColor, 0.62, 0);
+                                  waterColor, 0.62, 0, false, 1.0,
+                                  trackedMapMotionObject(water, water, water->buffer));
             popMatrix();
             if (conditionalRender)
                 pglEndConditionalRender();
@@ -780,7 +795,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 material.specularPower = 48.0F;
             }
             drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, material, color,
-                                  1.0, road.alphaMode, road.cullBackFaces);
+                                  1.0, road.alphaMode, road.cullBackFaces, 1.0,
+                                  trackedMapMotionObject(&road, &road, road.buffer));
             popMatrix();
             if (conditionalRender)
                 pglEndConditionalRender();
@@ -804,7 +820,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         multiplyMatrix(instance.transform);
         drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color,
                        batch.alpha * alphaScale, alphaMode, batch.cullBackFaces, std::nullopt,
-                       visibilityFade);
+                       visibilityFade, nullptr,
+                       trackedMapMotionObject(&instance, &batch, batch.buffer));
         popMatrix();
         if (conditionalRender) {
             pglEndConditionalRender();

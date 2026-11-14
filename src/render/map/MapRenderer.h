@@ -4,6 +4,7 @@
 #include "map/MapSplineProfile.h"
 #include "map/MapTrafficRuntime.h"
 #include "render/HumanSkinning.h"
+#include "render/MotionData.h"
 
 #include <array>
 #include <cstddef>
@@ -169,7 +170,8 @@ class MapRenderer {
     void drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                const openbus::map::MapTrafficPose& pose, double gaitPhaseRadians,
                                double gaitWeight, std::optional<HumanSeatPose> seat = std::nullopt,
-                               const ModelMaterial* passengerLighting = nullptr) const;
+                               const ModelMaterial* passengerLighting = nullptr,
+                               MotionObjectKey motionObject = {}) const;
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
     trafficSignalControllers() const;
     std::vector<openbus::map::MapTrafficSignalRequest>

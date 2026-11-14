@@ -36,24 +36,24 @@ struct ReflectionTarget {
 std::unordered_map<int, unsigned int> activeReflectionTextures;
 bool activeReflectionPass = false;
 
-int reflectionSizeFromEnvironment() {
+int reflectionSizeFromEnvironment(int defaultSize) {
     const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_SIZE");
     if (value == nullptr) {
-        return 1024;
+        return defaultSize;
     }
     const int size = std::atoi(value);
     return size == 256 || size == 512 || size == 1024 ? size : 256;
 }
 
-int reflectionIntervalFromEnvironment() {
+int reflectionIntervalFromEnvironment(int defaultInterval) {
     const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_INTERVAL");
-    return value == nullptr ? 1 : std::max(1, std::atoi(value));
+    return value == nullptr ? defaultInterval : std::max(1, std::atoi(value));
 }
 
-double reflectionMaxFrameRateFromEnvironment() {
+double reflectionMaxFrameRateFromEnvironment(double defaultRate) {
     const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_MAX_FPS");
     if (value == nullptr) {
-        return 0.0;
+        return defaultRate;
     }
     try {
         const double frameRate = std::stod(value);
@@ -96,10 +96,12 @@ struct ReflectionRenderer::Impl {
     }
 };
 
-ReflectionRenderer::ReflectionRenderer()
-    : impl_(std::make_unique<Impl>(reflectionSizeFromEnvironment(),
-                                   reflectionIntervalFromEnvironment(),
-                                   reflectionMaxFrameRateFromEnvironment())) {
+ReflectionRenderer::ReflectionRenderer() : ReflectionRenderer(1024, 1, 0.0) {}
+
+ReflectionRenderer::ReflectionRenderer(int maximumSize, int frameInterval, double maximumFrameRate)
+    : impl_(std::make_unique<Impl>(reflectionSizeFromEnvironment(maximumSize),
+                                   reflectionIntervalFromEnvironment(frameInterval),
+                                   reflectionMaxFrameRateFromEnvironment(maximumFrameRate))) {
     gameLog.Log("Reflection targets: " + std::to_string(impl_->maximumSize) + "x" +
                 std::to_string(impl_->maximumSize) + ", every " +
                 std::to_string(impl_->frameInterval) + " frame(s)");

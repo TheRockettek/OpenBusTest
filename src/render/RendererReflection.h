@@ -34,6 +34,7 @@ class ReflectionRenderer {
     using RestoreCallback = std::function<void(int, int)>;
 
     ReflectionRenderer();
+    ReflectionRenderer(int maximumSize, int frameInterval, double maximumFrameRate);
     ~ReflectionRenderer();
 
     ReflectionRenderer(const ReflectionRenderer&) = delete;

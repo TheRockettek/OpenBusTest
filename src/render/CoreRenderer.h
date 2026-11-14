@@ -2,6 +2,7 @@
 
 #include "render/CameraMath.h"
 #include "render/GlCompat.h"
+#include "render/MotionData.h"
 #include "core/WeatherState.h"
 
 #include <array>
@@ -195,8 +196,23 @@ struct HumanSkinDraw {
     const std::array<Matrix4, HUMAN_BONE_COUNT>* palette = nullptr;
 };
 
+struct MotionDataResources {
+    GLuint motionVectors = 0;
+    GLuint validity = 0;
+    GLuint depth = 0;
+    int width = 0;
+    int height = 0;
+    MotionDataFrame frame;
+    bool available = false;
+};
+
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
+bool beginMotionDataFrame(int width, int height, double timestampSeconds, double renderScale = 1.0);
+void finishMotionDataFrame();
+void invalidateMotionDataHistory();
+void setFxaaEnabled(bool enabled);
+[[nodiscard]] MotionDataResources motionDataResources();
 void invalidateTextureBindings();
 // Use for renderer-visible buffers so cached VAO and compute bindings cannot
 // retain a deleted name that OpenGL may later reuse.
@@ -278,16 +294,17 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
                     const std::array<double, 3>& color, double alpha, int alphaMode,
                     bool cullBackFaces = false,
                     std::optional<HumanGaitParameters> humanGait = std::nullopt,
-                    double visibilityFade = 1.0, const HumanSkinDraw* humanSkin = nullptr);
+                    double visibilityFade = 1.0, const HumanSkinDraw* humanSkin = nullptr,
+                    MotionObjectKey motionObject = {});
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
                            double alpha, int alphaMode, bool cullBackFaces = false,
-                           double visibilityFade = 1.0);
+                           double visibilityFade = 1.0, MotionObjectKey motionObject = {});
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
                        const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY,
                        GLuint indexBuffer = 0, double visibilityFade = 1.0, GLuint textTexture = 0,
-                       bool useTextTexture = false);
+                       bool useTextTexture = false, MotionObjectKey motionObject = {});
 void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, double alpha);
 void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
                     float lineWidth = 1.0f);
@@ -297,6 +314,8 @@ bool drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           bool useIndirectOcclusionProxy = false);
 void releaseStaticPrimitiveBuffer(StaticPrimitiveBuffer& cache);
 void drawTextureQuad(GLuint texture, float x, float y, float width, float height,
-                     bool flipTextureY = false);
+                     bool flipTextureY = false, int motionDebugMode = 0,
+                     GLuint motionValidityTexture = 0, bool fxaaEnabled = false,
+                     float inverseWidth = 0.0F, float inverseHeight = 0.0F);
 
 } // namespace openbus::rendering

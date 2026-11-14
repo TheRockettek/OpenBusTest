@@ -431,6 +431,10 @@ void recordTriangleSubmission(std::size_t triangles) {
 struct Uniforms {
     GLint projection = -1;
     GLint modelView = -1;
+    GLint previousProjection = -1;
+    GLint previousModelView = -1;
+    GLint motionRenderSize = -1;
+    GLint motionHistoryValid = -1;
     GLint texture = -1;
     GLint textureArray = -1;
     GLint textureScale = -1;
@@ -621,6 +625,26 @@ std::vector<std::pair<GLuint, GLuint>> staticMapLightBuffers;
 std::uint64_t rendererGeneration = 0;
 GLuint textureQuadVertexArray = 0;
 GLuint textureQuadBuffer = 0;
+struct MotionTarget {
+    GLuint framebuffer = 0;
+    GLuint color = 0;
+    GLuint motionVectors = 0;
+    GLuint validity = 0;
+    GLuint depth = 0;
+    int width = 0;
+    int height = 0;
+    GLint previousFramebuffer = 0;
+    GLint previousViewport[4] = {};
+    GLboolean previousDepthMask = GL_TRUE;
+    GLboolean previousColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+};
+MotionTarget motionTarget;
+MotionHistory motionHistory;
+MotionDataResources publishedMotionData;
+std::uint64_t motionFrameId = 0;
+bool motionFrameActive = false;
+int failedMotionTargetWidth = 0;
+int failedMotionTargetHeight = 0;
 Uniforms modelUniforms;
 Uniforms materialUniforms;
 Uniforms environmentUniforms;
@@ -628,6 +652,11 @@ Uniforms primitiveUniforms;
 GLint textureQuadRect = -1;
 GLint textureQuadTexture = -1;
 GLint textureQuadFlipTextureY = -1;
+GLint textureQuadMotionValidity = -1;
+GLint textureQuadMotionDebugMode = -1;
+GLint textureQuadFxaaEnabled = -1;
+GLint textureQuadInverseResolution = -1;
+bool fxaaEnabled = false;
 GLint cloudView = -1;
 GLint cloudProjectionScale = -1;
 GLint cloudOrigin = -1;
@@ -672,6 +701,84 @@ struct MaterialUniformState {
 };
 MaterialUniformState materialUniformState;
 
+void destroyMotionTarget() {
+    if (motionTarget.framebuffer != 0) {
+        pglDeleteFramebuffers(1, &motionTarget.framebuffer);
+    }
+    const std::array<GLuint, 4> textures = {motionTarget.color, motionTarget.motionVectors,
+                                            motionTarget.validity, motionTarget.depth};
+    glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
+    motionTarget = {};
+    publishedMotionData = {};
+}
+
+bool ensureMotionTarget(int width, int height) {
+    if (motionTarget.framebuffer != 0 && motionTarget.width == width &&
+        motionTarget.height == height) {
+        return true;
+    }
+    if (failedMotionTargetWidth == width && failedMotionTargetHeight == height) {
+        return false;
+    }
+    GLint previousFramebuffer = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+    destroyMotionTarget();
+
+    pglGenFramebuffers(1, &motionTarget.framebuffer);
+    pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.framebuffer);
+    const auto createTexture = [&](GLuint& texture, GLint internalFormat, GLenum format,
+                                   GLenum type, GLint filter) {
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
+    };
+    createTexture(motionTarget.color, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+    pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, motionTarget.color,
+                            0);
+    createTexture(motionTarget.motionVectors, GL_RG16F, GL_RG, GL_FLOAT, GL_NEAREST);
+    pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
+                            motionTarget.motionVectors, 0);
+    createTexture(motionTarget.validity, GL_R8, GL_RED, GL_UNSIGNED_BYTE, GL_NEAREST);
+    pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D,
+                            motionTarget.validity, 0);
+    createTexture(motionTarget.depth, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT,
+                  GL_NEAREST);
+    pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, motionTarget.depth,
+                            0);
+    const GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+    pglDrawBuffers(3, drawBuffers);
+    const GLenum status = pglCheckFramebufferStatus(GL_FRAMEBUFFER);
+    pglBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::ostringstream error;
+        error << "Motion-data framebuffer is incomplete (status 0x" << std::hex << status << ')';
+        gameLog.Error(error.str());
+        destroyMotionTarget();
+        failedMotionTargetWidth = width;
+        failedMotionTargetHeight = height;
+        return false;
+    }
+
+    motionTarget.width = width;
+    motionTarget.height = height;
+    publishedMotionData.motionVectors = motionTarget.motionVectors;
+    publishedMotionData.validity = motionTarget.validity;
+    publishedMotionData.depth = motionTarget.depth;
+    publishedMotionData.width = width;
+    publishedMotionData.height = height;
+    publishedMotionData.available = true;
+    failedMotionTargetWidth = 0;
+    failedMotionTargetHeight = 0;
+    motionHistory.invalidate();
+    invalidateTextureBindings();
+    return true;
+}
+
 const char* modelVertexShader = R"GLSL(
 #version 330 core
 layout(location = 0) in vec3 aPosition;
@@ -683,6 +790,9 @@ layout(location = 5) in vec4 aHumanWeights2;
 layout(location = 6) in vec4 aHumanWeights3;
 uniform mat4 uProjection;
 uniform mat4 uModelView;
+uniform mat4 uPreviousProjection;
+uniform mat4 uPreviousModelView;
+uniform bool uMotionHistoryValid;
 uniform vec2 uTexcoordOffset;
 uniform bool uFlipModelTextureY;
 uniform bool uHumanGaitEnabled;
@@ -716,6 +826,8 @@ out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
 out vec3 vVertexMapLighting;
+out vec4 vPreviousClipPosition;
+flat out float vMotionHistoryValid;
 uniform bool uVertexMapLightEvaluation;
 uniform bool uUseTextTexture;
 uniform bool uWeatherLitDynamicTexture;
@@ -914,6 +1026,10 @@ void main() {
     vNormal = mat3(transpose(inverse(uModelView))) * normal;
     vViewPosition = viewPosition.xyz;
     vVertexMapLighting = vec3(0.0);
+    vPreviousClipPosition =
+        uPreviousProjection * uPreviousModelView * vec4(position, 1.0);
+    vMotionHistoryValid =
+        uMotionHistoryValid && !uHumanSkinEnabled && !uHumanGaitEnabled ? 1.0 : 0.0;
     if (uVertexMapLightEvaluation &&
         (uMaterialBatch || !uUseTextTexture || uWeatherLitDynamicTexture)) {
         vVertexMapLighting = mapLightLighting(viewPosition.xyz, normalize(vNormal));
@@ -928,6 +1044,8 @@ in vec3 vTexCoord;
 in vec3 vNormal;
 in vec3 vViewPosition;
 in vec3 vVertexMapLighting;
+in vec4 vPreviousClipPosition;
+flat in float vMotionHistoryValid;
 uniform bool uVertexMapLightEvaluation;
 uniform mat4 uModelView;
 uniform vec3 uLightDirection;
@@ -981,7 +1099,10 @@ uniform vec4 uColor;
 uniform int uAlphaMode;
 uniform float uVisibilityFade;
 uniform bool uCullBackFaces;
-out vec4 fragmentColor;
+uniform vec2 uMotionRenderSize;
+layout(location = 0) out vec4 fragmentColor;
+layout(location = 1) out vec2 motionVector;
+layout(location = 2) out float motionValidity;
 void main() {
     // Imported content meshes are one-sided; generated geometry and mirrored
     // instances remain two-sided.
@@ -1157,6 +1278,13 @@ void main() {
         discard;
     }
     fragmentColor = color;
+    bool previousPositionValid =
+        vMotionHistoryValid > 0.5 && vPreviousClipPosition.w > 0.000001;
+    vec2 previousNdc =
+        previousPositionValid ? vPreviousClipPosition.xy / vPreviousClipPosition.w : vec2(0.0);
+    vec2 previousPixel = (previousNdc * 0.5 + 0.5) * uMotionRenderSize;
+    motionVector = previousPositionValid ? previousPixel - gl_FragCoord.xy : vec2(0.0);
+    motionValidity = previousPositionValid ? 1.0 : 0.0;
 }
 )GLSL";
 
@@ -1166,6 +1294,8 @@ in vec3 vTexCoord;
 in vec3 vNormal;
 in vec3 vViewPosition;
 in vec3 vVertexMapLighting;
+in vec4 vPreviousClipPosition;
+flat in float vMotionHistoryValid;
 uniform bool uVertexMapLightEvaluation;
 uniform vec4 uMaterialColors[128];
 uniform sampler2D uMaterialTextures[8];
@@ -1177,7 +1307,10 @@ uniform float uAmbientLight;
 uniform float uDiffuseLight;
 uniform vec3 uFogColor;
 uniform float uVisibilityFade;
-out vec4 fragmentColor;
+uniform vec2 uMotionRenderSize;
+layout(location = 0) out vec4 fragmentColor;
+layout(location = 1) out vec2 motionVector;
+layout(location = 2) out float motionValidity;
 void main() {
     int materialIndex = clamp(int(vTexCoord.z + 0.5), 0, 127);
     int textureIndex = clamp(materialIndex, 0, 7);
@@ -1222,6 +1355,13 @@ void main() {
     }
     color.a *= clamp(uVisibilityFade, 0.0, 1.0);
     fragmentColor = color;
+    bool previousPositionValid =
+        vMotionHistoryValid > 0.5 && vPreviousClipPosition.w > 0.000001;
+    vec2 previousNdc =
+        previousPositionValid ? vPreviousClipPosition.xy / vPreviousClipPosition.w : vec2(0.0);
+    vec2 previousPixel = (previousNdc * 0.5 + 0.5) * uMotionRenderSize;
+    motionVector = previousPositionValid ? previousPixel - gl_FragCoord.xy : vec2(0.0);
+    motionValidity = previousPositionValid ? 1.0 : 0.0;
 }
 )GLSL";
 
@@ -1287,9 +1427,79 @@ const char* textureQuadFragmentShader = R"GLSL(
 #version 330 core
 in vec2 vTexCoord;
 uniform sampler2D uTexture;
+uniform sampler2D uMotionValidity;
+uniform int uMotionDebugMode;
+uniform int uFxaaEnabled;
+uniform vec2 uInverseResolution;
 out vec4 fragmentColor;
+float luma(vec3 color) {
+    return dot(color, vec3(0.299, 0.587, 0.114));
+}
 void main() {
-    fragmentColor = texture(uTexture, vTexCoord);
+    vec2 motion = texture(uTexture, vTexCoord).rg;
+    if (uMotionDebugMode == 0) {
+        vec4 center = texture(uTexture, vTexCoord);
+        if (uFxaaEnabled == 0) {
+            fragmentColor = center;
+            return;
+        }
+        vec3 northwest = texture(uTexture, vTexCoord + vec2(-1.0, -1.0) *
+                                                         uInverseResolution).rgb;
+        vec3 northeast = texture(uTexture, vTexCoord + vec2(1.0, -1.0) *
+                                                         uInverseResolution).rgb;
+        vec3 southwest = texture(uTexture, vTexCoord + vec2(-1.0, 1.0) *
+                                                         uInverseResolution).rgb;
+        vec3 southeast = texture(uTexture, vTexCoord + vec2(1.0, 1.0) *
+                                                         uInverseResolution).rgb;
+        float centerLuma = luma(center.rgb);
+        float northwestLuma = luma(northwest);
+        float northeastLuma = luma(northeast);
+        float southwestLuma = luma(southwest);
+        float southeastLuma = luma(southeast);
+        float minimumLuma = min(centerLuma, min(min(northwestLuma, northeastLuma),
+                                                min(southwestLuma, southeastLuma)));
+        float maximumLuma = max(centerLuma, max(max(northwestLuma, northeastLuma),
+                                                max(southwestLuma, southeastLuma)));
+        if (maximumLuma - minimumLuma <
+            max(0.0312, maximumLuma * 0.125)) {
+            fragmentColor = center;
+            return;
+        }
+        vec2 direction = vec2(
+            -((northwestLuma + northeastLuma) - (southwestLuma + southeastLuma)),
+            (northwestLuma + southwestLuma) - (northeastLuma + southeastLuma));
+        float directionReduce =
+            max((northwestLuma + northeastLuma + southwestLuma + southeastLuma) *
+                    0.03125,
+                1.0 / 128.0);
+        float inverseDirectionMinimum =
+            1.0 / (min(abs(direction.x), abs(direction.y)) + directionReduce);
+        direction = clamp(direction * inverseDirectionMinimum, vec2(-8.0), vec2(8.0)) *
+                    uInverseResolution;
+        vec3 colorA = 0.5 *
+                      (texture(uTexture, vTexCoord + direction * (1.0 / 3.0 - 0.5)).rgb +
+                       texture(uTexture, vTexCoord + direction * (2.0 / 3.0 - 0.5)).rgb);
+        vec3 colorB = colorA * 0.5 +
+                      0.25 * (texture(uTexture, vTexCoord + direction * -0.5).rgb +
+                              texture(uTexture, vTexCoord + direction * 0.5).rgb);
+        float lumaB = luma(colorB);
+        vec3 result = lumaB < minimumLuma || lumaB > maximumLuma ? colorA : colorB;
+        fragmentColor = vec4(result, center.a);
+    } else {
+        float valid = texture(uMotionValidity, vTexCoord).r;
+        if (valid < 0.5) {
+            fragmentColor = vec4(1.0, 0.0, 1.0, 1.0);
+        } else if (uMotionDebugMode == 1) {
+            float magnitude = clamp(length(motion) / 64.0, 0.0, 1.0);
+            vec2 direction = length(motion) > 0.0001 ? normalize(motion) : vec2(0.0);
+            fragmentColor = vec4(direction * 0.5 + 0.5, magnitude, 1.0);
+        } else {
+            float value = clamp(length(motion) / 32.0, 0.0, 1.0);
+            vec3 heat = clamp(vec3(1.5) - abs(4.0 * value - vec3(3.0, 2.0, 1.0)),
+                              0.0, 1.0);
+            fragmentColor = vec4(heat, 1.0);
+        }
+    }
 }
 )GLSL";
 
@@ -1615,6 +1825,27 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
             throw std::runtime_error("Map-light shader is missing a version directive");
         fragment.insert(versionEnd + 1, mapLightShaderFunctions);
     }
+    if (fragment.find("layout(location = 1) out vec2 motionVector") == std::string::npos) {
+        const auto versionEnd = fragment.find('\n', fragment.find("#version"));
+        if (versionEnd == std::string::npos) {
+            throw std::runtime_error("Fragment shader is missing a version directive");
+        }
+        const std::string colorOutput = "out vec4 fragmentColor;";
+        const auto colorOutputPosition = fragment.find(colorOutput);
+        if (colorOutputPosition != std::string::npos) {
+            fragment.replace(colorOutputPosition, colorOutput.size(),
+                             "layout(location = 0) out vec4 fragmentColor;");
+        }
+        fragment.insert(versionEnd + 1, "layout(location = 1) out vec2 motionVector;\n"
+                                        "layout(location = 2) out float motionValidity;\n");
+        const std::string mainDeclaration = "void main() {";
+        const auto mainPosition = fragment.find(mainDeclaration);
+        if (mainPosition == std::string::npos) {
+            throw std::runtime_error("Fragment shader is missing its main function");
+        }
+        fragment.insert(mainPosition + mainDeclaration.size(), "\n    motionVector = vec2(0.0);\n"
+                                                               "    motionValidity = 0.0;");
+    }
     const GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragment.c_str());
     if (vertexShader == 0 || fragmentShader == 0) {
         if (vertexShader != 0) {
@@ -1674,6 +1905,10 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
     Uniforms uniforms;
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
+    uniforms.previousProjection = pglGetUniformLocation(program, "uPreviousProjection");
+    uniforms.previousModelView = pglGetUniformLocation(program, "uPreviousModelView");
+    uniforms.motionRenderSize = pglGetUniformLocation(program, "uMotionRenderSize");
+    uniforms.motionHistoryValid = pglGetUniformLocation(program, "uMotionHistoryValid");
     uniforms.fogDensity = pglGetUniformLocation(program, "uFogDensity");
     uniforms.fogColor = pglGetUniformLocation(program, "uFogColor");
     uniforms.weatherBrightness = pglGetUniformLocation(program, "uWeatherBrightness");
@@ -1784,6 +2019,10 @@ Uniforms materialUniformsFor(GLuint program) {
     findMapLightUniforms(program, uniforms);
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
+    uniforms.previousProjection = pglGetUniformLocation(program, "uPreviousProjection");
+    uniforms.previousModelView = pglGetUniformLocation(program, "uPreviousModelView");
+    uniforms.motionRenderSize = pglGetUniformLocation(program, "uMotionRenderSize");
+    uniforms.motionHistoryValid = pglGetUniformLocation(program, "uMotionHistoryValid");
     uniforms.fogDensity = pglGetUniformLocation(program, "uFogDensity");
     uniforms.fogColor = pglGetUniformLocation(program, "uFogColor");
     uniforms.visibilityFade = pglGetUniformLocation(program, "uVisibilityFade");
@@ -1830,6 +2069,37 @@ void uploadMatrices(const Uniforms& uniforms) {
     matrixProgram = currentProgram;
 }
 
+void uploadMotionMatrices(const Uniforms& uniforms, MotionObjectKey key,
+                          bool geometryHistoryValid) {
+    Matrix4 previousModelView = modelViewMatrix();
+    Matrix4 previousProjection = projectionMatrix();
+    bool historyValid = false;
+    int width = 1;
+    int height = 1;
+    if (motionFrameActive) {
+        const MotionDataFrame& frame = motionHistory.frame();
+        const MotionTransform transform =
+            motionHistory.previousModelView(modelViewMatrix(), key, geometryHistoryValid);
+        previousModelView = transform.previousModelView;
+        previousProjection = frame.previousProjection;
+        historyValid = transform.valid;
+        width = frame.width;
+        height = frame.height;
+    }
+
+    std::array<GLfloat, 16> projectionFloat = {};
+    std::array<GLfloat, 16> modelViewFloat = {};
+    for (std::size_t index = 0; index < previousProjection.size(); ++index) {
+        projectionFloat[index] = static_cast<GLfloat>(previousProjection[index]);
+        modelViewFloat[index] = static_cast<GLfloat>(previousModelView[index]);
+    }
+    pglUniformMatrix4fv(uniforms.previousProjection, 1, GL_FALSE, projectionFloat.data());
+    pglUniformMatrix4fv(uniforms.previousModelView, 1, GL_FALSE, modelViewFloat.data());
+    pglUniform1i(uniforms.motionHistoryValid, historyValid ? 1 : 0);
+    pglUniform2f(uniforms.motionRenderSize, static_cast<GLfloat>(width),
+                 static_cast<GLfloat>(height));
+}
+
 bool modelViewReversesWinding() {
     const Matrix4& m = modelViewMatrix();
     const double determinant = m[0] * (m[5] * m[10] - m[9] * m[6]) -
@@ -1858,11 +2128,10 @@ void bindModelVertexBuffer(GLuint buffer, GLuint vertexArray) {
 }
 
 void useProgram(GLuint program) {
-    if (currentProgram == program) {
-        return;
+    if (currentProgram != program) {
+        pglUseProgram(program);
+        currentProgram = program;
     }
-    pglUseProgram(program);
-    currentProgram = program;
 }
 
 void bindTexture(GLenum target, GLuint texture) {
@@ -2156,6 +2425,10 @@ bool initializeCoreRenderer() {
     textureQuadRect = pglGetUniformLocation(textureQuadProgram, "uRect");
     textureQuadTexture = pglGetUniformLocation(textureQuadProgram, "uTexture");
     textureQuadFlipTextureY = pglGetUniformLocation(textureQuadProgram, "uFlipTextureY");
+    textureQuadMotionValidity = pglGetUniformLocation(textureQuadProgram, "uMotionValidity");
+    textureQuadMotionDebugMode = pglGetUniformLocation(textureQuadProgram, "uMotionDebugMode");
+    textureQuadFxaaEnabled = pglGetUniformLocation(textureQuadProgram, "uFxaaEnabled");
+    textureQuadInverseResolution = pglGetUniformLocation(textureQuadProgram, "uInverseResolution");
     cloudView = pglGetUniformLocation(cloudProgram, "uView");
     cloudProjectionScale = pglGetUniformLocation(cloudProgram, "uProjectionScale");
     cloudOrigin = pglGetUniformLocation(cloudProgram, "uOrigin");
@@ -2293,6 +2566,10 @@ bool initializeCoreRenderer() {
         useProgram(primitiveProgram);
         useProgram(textureQuadProgram);
         pglUniform1i(textureQuadTexture, 0);
+        pglUniform1i(textureQuadMotionValidity, 1);
+        pglUniform1i(textureQuadMotionDebugMode, 0);
+        pglUniform1i(textureQuadFxaaEnabled, 0);
+        pglUniform2f(textureQuadInverseResolution, 1.0F, 1.0F);
         useProgram(0);
         setLightingViewMatrix(identityMatrix());
         setWeatherLighting(std::nullopt);
@@ -2326,6 +2603,12 @@ bool initializeCoreRenderer() {
 
 void shutdownCoreRenderer() {
     shutdownGpuTiming();
+    destroyMotionTarget();
+    motionHistory.invalidate();
+    motionFrameId = 0;
+    motionFrameActive = false;
+    failedMotionTargetWidth = 0;
+    failedMotionTargetHeight = 0;
     uploadedVehicleLights.clear();
     uploadedVehicleSpotlightTileMask.clear();
     uploadedMapLights.clear();
@@ -2440,6 +2723,159 @@ void shutdownCoreRenderer() {
         pglDeleteProgram(precipitationProgram);
         precipitationProgram = 0;
     }
+}
+
+bool beginMotionDataFrame(int width, int height, double timestampSeconds, double renderScale) {
+    if (motionFrameActive) {
+        throw std::logic_error("A motion-data frame is already active");
+    }
+    if (!std::isfinite(renderScale) || renderScale < 0.5 || renderScale > 1.0) {
+        throw std::invalid_argument("Render scale must be finite and between 0.5 and 1.0");
+    }
+    if (width <= 0 || height <= 0) {
+        motionHistory.invalidate();
+        publishedMotionData.available = false;
+        publishedMotionData.frame.historyValid = false;
+        return false;
+    }
+    const int renderWidth = std::max(1, static_cast<int>(std::lround(width * renderScale)));
+    const int renderHeight = std::max(1, static_cast<int>(std::lround(height * renderScale)));
+    if (!ensureMotionTarget(renderWidth, renderHeight)) {
+        motionHistory.invalidate();
+        return false;
+    }
+    if (motionFrameId == std::numeric_limits<std::uint64_t>::max()) {
+        motionHistory.invalidate();
+        motionFrameId = 0;
+    }
+    const std::uint64_t frameId = ++motionFrameId;
+    motionHistory.beginFrame(frameId, timestampSeconds, renderWidth, renderHeight,
+                             modelViewMatrix(), projectionMatrix(), width, height);
+
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &motionTarget.previousFramebuffer);
+    glGetIntegerv(GL_VIEWPORT, motionTarget.previousViewport);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &motionTarget.previousDepthMask);
+    glGetBooleanv(GL_COLOR_WRITEMASK, motionTarget.previousColorMask);
+    pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.framebuffer);
+    const GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+    pglDrawBuffers(3, drawBuffers);
+    glViewport(0, 0, renderWidth, renderHeight);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const GLfloat zero[] = {0.0F, 0.0F, 0.0F, 0.0F};
+    const GLfloat depth = 1.0F;
+    pglClearBufferfv(GL_COLOR, 1, zero);
+    pglClearBufferfv(GL_COLOR, 2, zero);
+    pglClearBufferfv(GL_DEPTH, 0, &depth);
+    motionFrameActive = true;
+    publishedMotionData.frame = motionHistory.frame();
+    return true;
+}
+
+void finishMotionDataFrame() {
+    if (!motionFrameActive) {
+        return;
+    }
+    const MotionDataFrame completedFrame = motionHistory.frame();
+    motionHistory.completeFrame();
+    const GLuint previousFramebuffer = static_cast<GLuint>(motionTarget.previousFramebuffer);
+    if (fxaaEnabled && textureQuadProgram != 0 && motionTarget.width > 0 &&
+        motionTarget.height > 0) {
+        pglBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+        glViewport(motionTarget.previousViewport[0], motionTarget.previousViewport[1],
+                   motionTarget.previousViewport[2], motionTarget.previousViewport[3]);
+        const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+        const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+        const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+        const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_SCISSOR_TEST);
+        glDepthMask(GL_FALSE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        drawTextureQuad(motionTarget.color, -1.0F, -1.0F, 2.0F, 2.0F, false, 0, 0, true,
+                        1.0F / static_cast<float>(motionTarget.width),
+                        1.0F / static_cast<float>(motionTarget.height));
+        if (depthTestEnabled == GL_TRUE)
+            glEnable(GL_DEPTH_TEST);
+        if (blendEnabled == GL_TRUE)
+            glEnable(GL_BLEND);
+        if (cullEnabled == GL_TRUE)
+            glEnable(GL_CULL_FACE);
+        if (scissorEnabled == GL_TRUE)
+            glEnable(GL_SCISSOR_TEST);
+    } else {
+        pglBindFramebuffer(GL_READ_FRAMEBUFFER, motionTarget.framebuffer);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        pglBindFramebuffer(GL_DRAW_FRAMEBUFFER, previousFramebuffer);
+        const GLint destinationWidth = std::max(motionTarget.previousViewport[2], 1);
+        const GLint destinationHeight = std::max(motionTarget.previousViewport[3], 1);
+        const GLenum filter =
+            motionTarget.width == destinationWidth && motionTarget.height == destinationHeight
+                ? GL_NEAREST
+                : GL_LINEAR;
+        pglBlitFramebuffer(
+            0, 0, motionTarget.width, motionTarget.height, motionTarget.previousViewport[0],
+            motionTarget.previousViewport[1], motionTarget.previousViewport[0] + destinationWidth,
+            motionTarget.previousViewport[1] + destinationHeight, GL_COLOR_BUFFER_BIT, filter);
+        pglBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+    }
+    glViewport(motionTarget.previousViewport[0], motionTarget.previousViewport[1],
+               motionTarget.previousViewport[2], motionTarget.previousViewport[3]);
+    glColorMask(motionTarget.previousColorMask[0], motionTarget.previousColorMask[1],
+                motionTarget.previousColorMask[2], motionTarget.previousColorMask[3]);
+    glDepthMask(motionTarget.previousDepthMask);
+    motionFrameActive = false;
+    publishedMotionData.frame = completedFrame;
+
+    static const int debugMode = [] {
+        const char* setting = openbus::getEnvironment("OPENBUS_MOTION_DEBUG");
+        if (setting == nullptr || *setting == '\0' || std::string_view(setting) == "0") {
+            return 0;
+        }
+        if (std::string_view(setting) == "vectors") {
+            return 1;
+        }
+        if (std::string_view(setting) == "magnitude") {
+            return 2;
+        }
+        gameLog.Warning("Invalid OPENBUS_MOTION_DEBUG; expected vectors or magnitude");
+        return 0;
+    }();
+    if (debugMode != 0) {
+        const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+        const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glDepthMask(GL_FALSE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        drawTextureQuad(motionTarget.motionVectors, -1.0F, -1.0F, 2.0F, 2.0F, false, debugMode,
+                        motionTarget.validity);
+        glDepthMask(motionTarget.previousDepthMask);
+        glColorMask(motionTarget.previousColorMask[0], motionTarget.previousColorMask[1],
+                    motionTarget.previousColorMask[2], motionTarget.previousColorMask[3]);
+        if (depthTestEnabled == GL_TRUE) {
+            glEnable(GL_DEPTH_TEST);
+        }
+        if (blendEnabled == GL_TRUE) {
+            glEnable(GL_BLEND);
+        }
+    }
+}
+
+void setFxaaEnabled(bool enabled) {
+    fxaaEnabled = enabled;
+}
+
+void invalidateMotionDataHistory() {
+    motionHistory.invalidate();
+    publishedMotionData.frame.historyValid = false;
+}
+
+MotionDataResources motionDataResources() {
+    return publishedMotionData;
 }
 
 void invalidateTextureBindings() {
@@ -3148,7 +3584,8 @@ void configureModelAlphaState(int alphaMode, bool noZwrite) {
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode,
                     bool cullBackFaces, std::optional<HumanGaitParameters> humanGait,
-                    double visibilityFade, const HumanSkinDraw* humanSkin) {
+                    double visibilityFade, const HumanSkinDraw* humanSkin,
+                    MotionObjectKey motionObject) {
     TraceScope trace("render", "CoreRenderer::drawModelBatch");
     if (modelProgram == 0 || buffer == 0 || vertexCount == 0) {
         return;
@@ -3173,6 +3610,8 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     }
     const bool animateHuman = !skinHuman && humanGait.has_value() && humanGait->heightMeters > 0.0;
     pglUniform1i(modelUniforms.humanGaitEnabled, animateHuman ? 1 : 0);
+    uploadMotionMatrices(modelUniforms, motionObject,
+                         !skinHuman && !animateHuman && alphaMode != 2 && alphaMode != 3);
     if (animateHuman) {
         pglUniform1f(modelUniforms.humanGaitPhase, static_cast<GLfloat>(humanGait->phaseRadians));
         pglUniform1f(modelUniforms.humanGaitWeight,
@@ -3276,7 +3715,8 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
 
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
-                           double alpha, int alphaMode, bool cullBackFaces, double visibilityFade) {
+                           double alpha, int alphaMode, bool cullBackFaces, double visibilityFade,
+                           MotionObjectKey motionObject) {
     TraceScope trace("render", "CoreRenderer::drawIndexedModelBatch");
     if (modelProgram == 0 || buffer == 0 || indexBuffer == 0 || indexCount == 0) {
         return;
@@ -3284,6 +3724,7 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode, visibilityFade);
+    uploadMotionMatrices(modelUniforms, motionObject, alphaMode != 2 && alphaMode != 3);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
     pglUniform1i(modelUniforms.humanGaitEnabled, GL_FALSE);
     pglUniform1i(modelUniforms.humanSkinEnabled, GL_FALSE);
@@ -3331,7 +3772,7 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
                        const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY,
                        GLuint indexBuffer, double visibilityFade, GLuint textTexture,
-                       bool useTextTexture) {
+                       bool useTextTexture, MotionObjectKey motionObject) {
     TraceScope trace("render", "CoreRenderer::drawMaterialBatch");
     if (materialProgram == 0 || buffer == 0 || vertexCount == 0 || colors.empty() ||
         textures.empty()) {
@@ -3339,6 +3780,7 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
     }
     useProgram(materialProgram);
     uploadMatrices(materialUniforms);
+    uploadMotionMatrices(materialUniforms, motionObject, glIsEnabled(GL_BLEND) == GL_FALSE);
     pglUniform1f(materialUniforms.visibilityFade,
                  static_cast<GLfloat>(std::clamp(visibilityFade, 0.0, 1.0)));
     for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
@@ -3499,8 +3941,9 @@ void releaseStaticPrimitiveBuffer(StaticPrimitiveBuffer& cache) {
     cache = {};
 }
 
-void drawTextureQuad(GLuint texture, float x, float y, float width, float height,
-                     bool flipTextureY) {
+void drawTextureQuad(GLuint texture, float x, float y, float width, float height, bool flipTextureY,
+                     int motionDebugMode, GLuint motionValidityTexture, bool fxaa,
+                     float inverseWidth, float inverseHeight) {
     if (textureQuadProgram == 0 || textureQuadVertexArray == 0 || textureQuadBuffer == 0 ||
         texture == 0) {
         return;
@@ -3519,6 +3962,11 @@ void drawTextureQuad(GLuint texture, float x, float y, float width, float height
                            reinterpret_cast<const void*>(2 * sizeof(float)));
     pglUniform4f(textureQuadRect, x, y, width, height);
     pglUniform1i(textureQuadFlipTextureY, flipTextureY ? 1 : 0);
+    pglUniform1i(textureQuadMotionDebugMode, motionDebugMode);
+    pglUniform1i(textureQuadFxaaEnabled, fxaa ? 1 : 0);
+    pglUniform2f(textureQuadInverseResolution, inverseWidth, inverseHeight);
+    selectTextureUnit(GL_TEXTURE0 + 1);
+    bindTexture(GL_TEXTURE_2D, motionValidityTexture);
     selectTextureUnit(GL_TEXTURE0);
     bindTexture(GL_TEXTURE_2D, texture);
     recordTriangleSubmission(trianglesForPrimitive(GL_TRIANGLE_STRIP, 4));

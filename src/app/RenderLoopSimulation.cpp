@@ -1512,6 +1512,7 @@ void RenderLoop::updatePlayerVariables(BusSimulation& simulation, double throttl
                                                                            *passenger.modelIndex);
                 }
                 if (handoff) {
+                    handoff->motionObjectId = openbus::rendering::allocateMotionObjectId();
                     alightedPassengers_.push_back(std::move(*handoff));
                 } else if (reportedPassengerHandoffStops_.insert(activeStop->second).second) {
                     gameLog.Warning("No passenger spline is within 3 m of a bus exit at stop " +

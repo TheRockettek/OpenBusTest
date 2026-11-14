@@ -15,6 +15,12 @@ using TransparentSortProfileKey = std::tuple<std::string, std::string, std::size
 std::map<TransparentSortProfileKey, Vehicle::DrawProfileStats::TransparentSortBatch>
     transparentSortBatchProfileStats;
 
+std::uint64_t motionSubObjectId(const Vehicle::Batch& batch) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&batch));
+    const auto buffer = static_cast<std::uint64_t>(batch.buffer);
+    return address ^ (buffer + 0x9e3779b97f4a7c15ULL + (address << 6U) + (address >> 2U));
+}
+
 } // namespace
 
 void Vehicle::setOneSidedFrontFaceConvention() {
@@ -80,6 +86,8 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     const std::array<double, 3>& color = overrideColor == nullptr ? batch.color : *overrideColor;
     TraceScope phase("render", "Vehicle::drawBatch.prepareAndSubmit");
     openbus::rendering::ModelMaterial material;
+    const openbus::rendering::MotionObjectKey motionObject{motionObjectId,
+                                                           motionSubObjectId(batch)};
     {
         TraceScope prepare("render", "Vehicle::drawBatch.prepareMaterial");
         for (std::size_t index = 0; index < 3; ++index) {
@@ -147,17 +155,19 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     {
         TraceScope submit("render", "Vehicle::drawBatch.submit");
         if (materialBatch) {
-            drawMaterialBatch(
-                batch.buffer, batch.vertexCount, batch.materialColors, *materialTextureIds,
-                batch.materialTextureFlips, transparentIndexBuffer, visibilityFade,
-                batch.textTextureIndex >= 0 ? batch.freeTexture : 0, batch.textTextureIndex >= 0);
+            drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
+                              *materialTextureIds, batch.materialTextureFlips,
+                              transparentIndexBuffer, visibilityFade,
+                              batch.textTextureIndex >= 0 ? batch.freeTexture : 0,
+                              batch.textTextureIndex >= 0, motionObject);
         } else if (transparentIndexBuffer != 0) {
             openbus::rendering::drawIndexedModelBatch(
                 batch.buffer, transparentIndexBuffer, batch.vertexCount, material, color, alpha,
-                forceUntextured ? 0 : alphaMode, true, visibilityFade);
+                forceUntextured ? 0 : alphaMode, true, visibilityFade, motionObject);
         } else {
             drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
-                           forceUntextured ? 0 : alphaMode, true, std::nullopt, visibilityFade);
+                           forceUntextured ? 0 : alphaMode, true, std::nullopt, visibilityFade,
+                           nullptr, motionObject);
         }
     }
     if (noZcheck) {

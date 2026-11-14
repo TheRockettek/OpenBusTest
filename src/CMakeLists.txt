@@ -56,6 +56,7 @@ openbus_add_module(openbus_core
     SOURCES
         core/ActiveMetarStations.cpp
         core/AtomicFile.cpp
+        core/GraphicsPreferences.cpp
         core/Logger.cpp
         core/Metar.cpp
         core/MetarNoaa.cpp
@@ -204,6 +205,7 @@ openbus_add_module(openbus_render
         render/CoreRenderer.cpp
         render/HumanSkinning.cpp
         render/MatrixMath.cpp
+        render/MotionData.cpp
         render/OpenGLFunctions.cpp
         render/RenderPrimitives.cpp
         render/RendererReflection.cpp

@@ -45,6 +45,7 @@ using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsize
                                           const void*);
 using CompressedTexImage3DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint,
                                           GLsizei, const void*);
+using GenerateMipmapProc = void(APIENTRY*)(GLenum);
 using GetStringiProc = const GLubyte*(APIENTRY*)(GLenum, GLuint);
 using ActiveTextureProc = void (*)(GLenum);
 using BlendFuncSeparateProc = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
@@ -83,6 +84,10 @@ using BindFramebufferProc = void (*)(GLenum, GLuint);
 using DeleteFramebuffersProc = void (*)(GLsizei, const GLuint*);
 using FramebufferTexture2DProc = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
 using CheckFramebufferStatusProc = GLenum (*)(GLenum);
+using DrawBuffersProc = void(APIENTRY*)(GLsizei, const GLenum*);
+using BlitFramebufferProc = void(APIENTRY*)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint,
+                                            GLbitfield, GLenum);
+using ClearBufferfvProc = void(APIENTRY*)(GLenum, GLint, const GLfloat*);
 using GenQueriesProc = void(APIENTRY*)(GLsizei, GLuint*);
 using DeleteQueriesProc = void(APIENTRY*)(GLsizei, const GLuint*);
 using BeginQueryProc = void(APIENTRY*)(GLenum, GLuint);
@@ -102,6 +107,7 @@ extern TexBufferProc pglTexBuffer;
 extern DeleteBuffersProc pglDeleteBuffers;
 extern CompressedTexImage2DProc pglCompressedTexImage2D;
 extern CompressedTexImage3DProc pglCompressedTexImage3D;
+extern GenerateMipmapProc pglGenerateMipmap;
 extern GetStringiProc pglGetStringi;
 extern ActiveTextureProc pglActiveTexture;
 extern BlendFuncSeparateProc pglBlendFuncSeparate;
@@ -140,6 +146,9 @@ extern BindFramebufferProc pglBindFramebuffer;
 extern DeleteFramebuffersProc pglDeleteFramebuffers;
 extern FramebufferTexture2DProc pglFramebufferTexture2D;
 extern CheckFramebufferStatusProc pglCheckFramebufferStatus;
+extern DrawBuffersProc pglDrawBuffers;
+extern BlitFramebufferProc pglBlitFramebuffer;
+extern ClearBufferfvProc pglClearBufferfv;
 extern GenQueriesProc pglGenQueries;
 extern DeleteQueriesProc pglDeleteQueries;
 extern BeginQueryProc pglBeginQuery;
@@ -152,6 +161,19 @@ extern DebugMessageCallbackProc pglDebugMessageCallback;
 
 bool loadOpenGLFunctions();
 [[nodiscard]] bool hasOpenGLExtension(std::string_view extension);
+
+struct TextureAnisotropyCapability {
+    bool supported = false;
+    float maximum = 1.0F;
+    float applied = 1.0F;
+};
+
+[[nodiscard]] TextureAnisotropyCapability configureMaterialTextureAnisotropy(float requested);
+void configureMaterialTextureMipmaps(bool enabled);
+[[nodiscard]] bool materialTextureMipmapsEnabled();
+void configureMapTextureScale(double scale);
+[[nodiscard]] double mapTextureScale() noexcept;
+void applyMaterialTextureAnisotropy(GLenum target);
 
 // Optional OpenGL 4.3 entry points; never part of the 3.3 renderer requirement.
 using DispatchComputeProc = void(APIENTRY*)(GLuint, GLuint, GLuint);

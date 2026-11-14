@@ -84,6 +84,26 @@ std::vector<std::uint8_t> rgb16Tiff() {
 
 int main(int argc, char** argv) {
     bool valid = true;
+    openbus::rendering::Image sourceImage;
+    sourceImage.width = 2;
+    sourceImage.height = 2;
+    sourceImage.rgba = {0, 10, 20, 255, 40, 20, 40, 255,
+                        80, 30, 60, 255, 120, 40, 80, 255};
+    openbus::rendering::Image scaledImage;
+    valid &= require(openbus::rendering::TextureLoader::scaleImage(sourceImage, 0.5, scaledImage),
+                     "area resampler reduces a decoded image");
+    valid &= require(scaledImage.width == 1 && scaledImage.height == 1 &&
+                         scaledImage.rgba == std::vector<std::uint8_t>({60, 25, 50, 255}),
+                     "area resampler averages all source texels");
+    valid &= require(!openbus::rendering::TextureLoader::scaleImage(sourceImage, 0.0, scaledImage),
+                     "area resampler rejects a zero scale");
+    valid &= require(openbus::rendering::preferredMipLevelForScale(0.5, 5) == 1 &&
+                         openbus::rendering::preferredMipLevelForScale(0.25, 5) == 2 &&
+                         openbus::rendering::preferredMipLevelForScale(0.75, 5) == 0 &&
+                         openbus::rendering::preferredMipLevelForScale(0.25, 2) == 1 &&
+                         openbus::rendering::preferredMipLevelForScale(0.25, 1) == 0,
+                     "compressed texture scaling selects a suitable authored mip");
+
     const auto signatureDirectory =
         openbus::probe::makeProbeDirectory("openbus_texture_signature");
     const std::filesystem::path texturePathDirectory =

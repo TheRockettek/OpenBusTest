@@ -82,22 +82,36 @@ GLuint loadTexture(const std::filesystem::path& path, bool repeat) {
 
 GLuint uploadTextureImage(const Image& image, bool repeat) {
     TraceScope trace("texture", "MapRenderer::uploadTextureImage");
-    if (image.width <= 0 || image.height <= 0 ||
-        image.rgba.size() <
-            static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U) {
+    Image scaledImage;
+    const Image* uploadImage = &image;
+    if (mapTextureScale() < 0.999) {
+        if (!TextureLoader::scaleImage(image, mapTextureScale(), scaledImage)) {
+            throw std::runtime_error("Could not scale decoded map texture");
+        }
+        uploadImage = &scaledImage;
+    }
+    if (uploadImage->width <= 0 || uploadImage->height <= 0 ||
+        uploadImage->rgba.size() < static_cast<std::size_t>(uploadImage->width) *
+                                       static_cast<std::size_t>(uploadImage->height) * 4U) {
         throw std::runtime_error("Texture image dimensions or pixel data are invalid");
     }
     GLuint texture = 0;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    const bool generateMipmaps = materialTextureMipmapsEnabled();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    generateMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     const GLint wrapMode = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 image.rgba.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uploadImage->width, uploadImage->height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, uploadImage->rgba.data());
+    if (generateMipmaps) {
+        pglGenerateMipmap(GL_TEXTURE_2D);
+        applyMaterialTextureAnisotropy(GL_TEXTURE_2D);
+    }
     openbus::rendering::invalidateTextureBindings();
     if (glGetError() != GL_NO_ERROR) {
         glDeleteTextures(1, &texture);

@@ -11,6 +11,7 @@ constexpr std::size_t MAX_TEXTURE_BUFFER_BYTES = 256U * 1024U * 1024U;
 
 bool checkedTextureBufferSize(std::size_t width, std::size_t height, std::size_t bytesPerPixel,
                               std::size_t& size);
+std::size_t preferredMipLevelForScale(double scale, std::size_t levelCount);
 
 struct Image {
     int width = 0;
@@ -40,6 +41,7 @@ class TextureLoader {
     static bool readImage(const std::filesystem::path& path, Image& image);
     static bool readImage(const std::filesystem::path& path, Image& image,
                           TextureFileFormat format);
+    static bool scaleImage(const Image& image, double scale, Image& scaledImage);
     static bool isSafeCompressedDds(const std::filesystem::path& path);
     static bool isDxt5Dds(const std::filesystem::path& path);
     static bool isDdsTextureArray(const std::filesystem::path& path);

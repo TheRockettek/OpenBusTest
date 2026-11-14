@@ -1444,10 +1444,154 @@ void RenderLoop::drawPlayerTimetableUi() {
     ImGui::End();
 }
 
-void RenderLoop::drawPauseMenuUi() {
-    if (!imguiEnabled_ || !pauseMenuOpen_ || renderingReflection_ || captureMode_) {
+void RenderLoop::previewDisplaySettings() {
+    if (displayPreviewPending_)
+        return;
+
+    int windowX = 0;
+    int windowY = 0;
+    glfwGetWindowPos(window_, &windowX, &windowY);
+    glfwGetWindowSize(window_, &displayPreviewPreviousWidth_, &displayPreviewPreviousHeight_);
+    displayPreviewPreviousX_ = windowX;
+    displayPreviewPreviousY_ = windowY;
+    displayPreviewPreviousDecorated_ = glfwGetWindowAttrib(window_, GLFW_DECORATED) == GLFW_TRUE;
+    displayPreviewPreviousMonitor_ = glfwGetWindowMonitor(window_);
+    displayPreviewPreviousRefreshRate_ = GLFW_DONT_CARE;
+    if (displayPreviewPreviousMonitor_ != nullptr) {
+        const GLFWvidmode* currentMode = glfwGetVideoMode(displayPreviewPreviousMonitor_);
+        if (currentMode != nullptr) {
+            displayPreviewPreviousRefreshRate_ = currentMode->refreshRate;
+        }
+    }
+    displayPreviewPreviousPreferences_ = activeGraphicsPreferences_;
+
+    GLFWmonitor* targetMonitor = nullptr;
+    int targetX = displayPreviewPreviousX_;
+    int targetY = displayPreviewPreviousY_;
+    int targetWidth = graphicsPreferences_.values.width;
+    int targetHeight = graphicsPreferences_.values.height;
+    int targetRefreshRate = GLFW_DONT_CARE;
+    const auto& preferences = graphicsPreferences_.values;
+    int monitorCount = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+    GLFWmonitor* selectedMonitor = nullptr;
+    if (monitors != nullptr && monitorCount > 0) {
+        const int monitorIndex =
+            preferences.monitor < monitorCount ? std::max(preferences.monitor, 0) : 0;
+        selectedMonitor = monitors[monitorIndex];
+    }
+
+    if (preferences.windowMode != "windowed") {
+        if (selectedMonitor == nullptr) {
+            displayPreviewError_ = "No display monitor is available for fullscreen modes.";
+            return;
+        }
+        if (preferences.windowMode == "borderless") {
+            const GLFWvidmode* desktopMode = glfwGetVideoMode(selectedMonitor);
+            if (desktopMode == nullptr) {
+                displayPreviewError_ = "The selected monitor has no available display mode.";
+                return;
+            }
+            targetWidth = desktopMode->width;
+            targetHeight = desktopMode->height;
+            glfwGetMonitorPos(selectedMonitor, &targetX, &targetY);
+        } else {
+            targetMonitor = selectedMonitor;
+            int modeCount = 0;
+            const GLFWvidmode* modes = glfwGetVideoModes(targetMonitor, &modeCount);
+            const GLFWvidmode* selectedMode = nullptr;
+            for (int index = 0; modes != nullptr && index < modeCount; ++index) {
+                if (modes[index].width == preferences.width &&
+                    modes[index].height == preferences.height &&
+                    modes[index].refreshRate == preferences.refreshRate) {
+                    selectedMode = &modes[index];
+                    break;
+                }
+            }
+            if (selectedMode == nullptr) {
+                displayPreviewError_ = "The selected resolution and refresh rate are not "
+                                       "available on this monitor.";
+                return;
+            }
+            targetWidth = selectedMode->width;
+            targetHeight = selectedMode->height;
+            targetRefreshRate = selectedMode->refreshRate;
+            targetX = 0;
+            targetY = 0;
+        }
+    } else if (selectedMonitor != nullptr) {
+        const GLFWvidmode* desktopMode = glfwGetVideoMode(selectedMonitor);
+        if (desktopMode != nullptr) {
+            int monitorX = 0;
+            int monitorY = 0;
+            glfwGetMonitorPos(selectedMonitor, &monitorX, &monitorY);
+            targetX = monitorX + (desktopMode->width - targetWidth) / 2;
+            targetY = monitorY + (desktopMode->height - targetHeight) / 2;
+        }
+    }
+
+    glfwSetWindowAttrib(window_, GLFW_DECORATED,
+                        preferences.windowMode == "borderless" ? GLFW_FALSE : GLFW_TRUE);
+    glfwSetWindowMonitor(window_, targetMonitor, targetX, targetY, targetWidth, targetHeight,
+                         targetRefreshRate);
+
+    int actualWidth = 0;
+    int actualHeight = 0;
+    glfwGetWindowSize(window_, &actualWidth, &actualHeight);
+    const bool isExclusive = preferences.windowMode == "exclusive";
+    if ((isExclusive && glfwGetWindowMonitor(window_) == nullptr) ||
+        (!isExclusive && glfwGetWindowMonitor(window_) != nullptr) || actualWidth != targetWidth ||
+        actualHeight != targetHeight) {
+        revertDisplaySettingsPreview();
+        displayPreviewError_ = "The display mode could not be applied; the previous mode was "
+                               "restored.";
         return;
     }
+
+    displayPreviewError_.clear();
+    displayPreviewDeadline_ = glfwGetTime() + 15.0;
+    displayPreviewPending_ = true;
+    ImGui::OpenPopup("Confirm display settings");
+}
+
+void RenderLoop::revertDisplaySettingsPreview() {
+    GLFWmonitor* restoreMonitor = displayPreviewPreviousMonitor_;
+    if (restoreMonitor != nullptr) {
+        int monitorCount = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+        const bool stillConnected =
+            monitors != nullptr &&
+            std::find(monitors, monitors + monitorCount, restoreMonitor) != monitors + monitorCount;
+        if (!stillConnected)
+            restoreMonitor = nullptr;
+    }
+    glfwSetWindowAttrib(window_, GLFW_DECORATED,
+                        displayPreviewPreviousDecorated_ ? GLFW_TRUE : GLFW_FALSE);
+    glfwSetWindowMonitor(
+        window_, restoreMonitor, displayPreviewPreviousX_, displayPreviewPreviousY_,
+        displayPreviewPreviousWidth_, displayPreviewPreviousHeight_,
+        restoreMonitor == nullptr ? GLFW_DONT_CARE : displayPreviewPreviousRefreshRate_);
+    auto& preferences = graphicsPreferences_.values;
+    preferences.windowMode = displayPreviewPreviousPreferences_.windowMode;
+    preferences.width = displayPreviewPreviousPreferences_.width;
+    preferences.height = displayPreviewPreviousPreferences_.height;
+    preferences.refreshRate = displayPreviewPreviousPreferences_.refreshRate;
+    preferences.monitor = displayPreviewPreviousPreferences_.monitor;
+    displayPreviewPending_ = false;
+}
+
+void RenderLoop::drawPauseMenuUi() {
+    if (displayPreviewPending_ && !pauseMenuOpen_) {
+        pauseMenuOpen_ = true;
+        setPausedState(true);
+    }
+    if (!imguiEnabled_ || renderingReflection_ || captureMode_ ||
+        (!pauseMenuOpen_ && !displayPreviewPending_)) {
+        return;
+    }
+
+    if (!pauseMenuOpen_)
+        return;
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5F,
@@ -1461,9 +1605,489 @@ void RenderLoop::drawPauseMenuUi() {
         return;
     }
 
+    if (displayPreviewPending_ && ImGui::BeginPopupModal("Confirm display settings", nullptr,
+                                                         ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (glfwGetTime() >= displayPreviewDeadline_) {
+            revertDisplaySettingsPreview();
+            displayPreviewError_ = "Display settings were reverted because they were not "
+                                   "confirmed in time.";
+            ImGui::CloseCurrentPopup();
+        } else {
+            const double secondsRemaining = std::max(0.0, displayPreviewDeadline_ - glfwGetTime());
+            ImGui::TextWrapped("Keep these display settings? They will revert automatically "
+                               "unless confirmed.");
+            ImGui::Text("Reverting in %.0f seconds.", secondsRemaining);
+            if (ImGui::Button("Keep settings")) {
+                activeGraphicsPreferences_.windowMode = graphicsPreferences_.values.windowMode;
+                activeGraphicsPreferences_.width = graphicsPreferences_.values.width;
+                activeGraphicsPreferences_.height = graphicsPreferences_.values.height;
+                activeGraphicsPreferences_.refreshRate = graphicsPreferences_.values.refreshRate;
+                activeGraphicsPreferences_.monitor = graphicsPreferences_.values.monitor;
+                displayPreviewPending_ = false;
+                displayPreviewError_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Revert now")) {
+                revertDisplaySettingsPreview();
+                displayPreviewError_ = "Display settings were reverted.";
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+
     if (ImGui::Button("Resume", ImVec2(260.0F, 36.0F))) {
         pauseMenuOpen_ = false;
         setPausedState(false);
+    }
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Graphics")) {
+        if (!graphicsPreferencesError_.empty()) {
+            ImGui::TextWrapped("Graphics settings error: %s", graphicsPreferencesError_.c_str());
+        }
+        if (!graphicsPreferencesLoaded_) {
+            ImGui::TextWrapped("Settings cannot be saved until the INI file can be loaded.");
+        } else {
+            auto& preferences = graphicsPreferences_.values;
+            struct QualityPreset {
+                const char* name;
+                int reflectionSize;
+                int reflectionInterval;
+                double reflectionMaxFps;
+                double mainCullPercent;
+                double mirrorCullPercent;
+                double renderScale;
+                double vehicleTextureScale;
+                double mapTextureScale;
+            };
+            constexpr std::array<QualityPreset, 3> qualityPresets = {{
+                {"Low", 256, 3, 30.0, 0.25, 0.5, 0.5, 0.5, 0.5},
+                {"Medium", 512, 2, 45.0, 0.1, 0.2, 0.75, 0.75, 0.75},
+                {"High", 1024, 1, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0},
+            }};
+            const auto matchesPreset = [&preferences](const QualityPreset& preset) {
+                return preferences.reflectionSize == preset.reflectionSize &&
+                       preferences.reflectionInterval == preset.reflectionInterval &&
+                       preferences.reflectionMaxFps == preset.reflectionMaxFps &&
+                       preferences.minimumObjectSizeMainPercent == preset.mainCullPercent &&
+                       preferences.minimumObjectSizeMirrorsPercent == preset.mirrorCullPercent &&
+                       preferences.renderScale == preset.renderScale &&
+                       preferences.vehicleTextureScale == preset.vehicleTextureScale &&
+                       preferences.mapTextureScale == preset.mapTextureScale;
+            };
+            const QualityPreset* matchedPreset = nullptr;
+            for (const auto& preset : qualityPresets) {
+                if (matchesPreset(preset)) {
+                    matchedPreset = &preset;
+                    break;
+                }
+            }
+            const char* presetLabel = matchedPreset == nullptr ? "Custom" : matchedPreset->name;
+            if (ImGui::BeginCombo("Quality preset", presetLabel)) {
+                for (const auto& preset : qualityPresets) {
+                    if (ImGui::Selectable(preset.name, matchedPreset == &preset)) {
+                        if (openbus::getEnvironment("OPENBUS_REFLECTION_SIZE") == nullptr)
+                            preferences.reflectionSize = preset.reflectionSize;
+                        if (openbus::getEnvironment("OPENBUS_REFLECTION_INTERVAL") == nullptr)
+                            preferences.reflectionInterval = preset.reflectionInterval;
+                        if (openbus::getEnvironment("OPENBUS_REFLECTION_MAX_FPS") == nullptr)
+                            preferences.reflectionMaxFps = preset.reflectionMaxFps;
+                        if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT") ==
+                            nullptr)
+                            preferences.minimumObjectSizeMainPercent = preset.mainCullPercent;
+                        if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT") ==
+                            nullptr)
+                            preferences.minimumObjectSizeMirrorsPercent = preset.mirrorCullPercent;
+                        preferences.renderScale = preset.renderScale;
+                        if (openbus::getEnvironment("OPENBUS_TEXTURE_SCALE") == nullptr)
+                            preferences.vehicleTextureScale = preset.vehicleTextureScale;
+                        preferences.mapTextureScale = preset.mapTextureScale;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::TextWrapped("Presets adjust implemented world render scale, reflection, and "
+                               "visibility settings. Edit individual values for a custom "
+                               "configuration.");
+            const auto beginOverride = [](const char* name) {
+                const bool overridden = openbus::getEnvironment(name) != nullptr;
+                ImGui::BeginDisabled(overridden);
+                return overridden;
+            };
+            const auto endOverride = [](bool overridden, const char* name) {
+                ImGui::EndDisabled();
+                if (overridden) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Overridden by %s", name);
+                }
+            };
+
+            ImGui::TextUnformatted("Display");
+            const char* modeLabel = preferences.windowMode == "borderless" ? "Borderless fullscreen"
+                                    : preferences.windowMode == "exclusive" ? "Exclusive fullscreen"
+                                                                            : "Windowed";
+            if (ImGui::BeginCombo("Window mode", modeLabel)) {
+                constexpr std::array<std::pair<const char*, const char*>, 3> modes = {{
+                    {"Windowed", "windowed"},
+                    {"Borderless fullscreen", "borderless"},
+                    {"Exclusive fullscreen", "exclusive"},
+                }};
+                for (const auto& [label, value] : modes) {
+                    if (ImGui::Selectable(label, preferences.windowMode == value)) {
+                        preferences.windowMode = value;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Preview");
+            int monitorCount = 0;
+            GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+            if (monitorCount > 0) {
+                const int maximumMonitorIndex = std::min(monitorCount - 1, 16);
+                preferences.monitor = std::clamp(preferences.monitor, 0, maximumMonitorIndex);
+                ImGui::SliderInt("Monitor", &preferences.monitor, 0, maximumMonitorIndex);
+            } else {
+                ImGui::TextDisabled("No display monitor detected");
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Preview");
+            if (preferences.windowMode == "windowed") {
+                ImGui::InputInt("Window width", &preferences.width, 16, 64);
+                preferences.width = std::clamp(preferences.width, 640, 16384);
+                ImGui::SameLine();
+                ImGui::TextDisabled("Preview");
+                ImGui::InputInt("Window height", &preferences.height, 16, 64);
+                preferences.height = std::clamp(preferences.height, 640, 16384);
+                ImGui::SameLine();
+                ImGui::TextDisabled("Preview");
+                ImGui::TextDisabled("Refresh rate selection applies to exclusive fullscreen.");
+            } else if (preferences.windowMode == "exclusive" && monitorCount > 0 &&
+                       monitors != nullptr) {
+                const int monitorIndex = std::clamp(preferences.monitor, 0, monitorCount - 1);
+                int modeCount = 0;
+                const GLFWvidmode* availableModes =
+                    glfwGetVideoModes(monitors[monitorIndex], &modeCount);
+                const bool currentModeAvailable =
+                    availableModes != nullptr &&
+                    std::any_of(availableModes, availableModes + modeCount,
+                                [&preferences](const GLFWvidmode& mode) {
+                                    return mode.width == preferences.width &&
+                                           mode.height == preferences.height &&
+                                           mode.refreshRate == preferences.refreshRate;
+                                });
+                bool hasSupportedMode = false;
+                for (int index = 0; availableModes != nullptr && index < modeCount; ++index) {
+                    const auto& mode = availableModes[index];
+                    if (mode.width >= 640 && mode.width <= 16384 && mode.height >= 640 &&
+                        mode.height <= 16384 && mode.refreshRate >= 24 &&
+                        mode.refreshRate <= 1000) {
+                        hasSupportedMode = true;
+                        break;
+                    }
+                }
+                const std::string selectedModeLabel =
+                    currentModeAvailable ? std::to_string(preferences.width) + " x " +
+                                               std::to_string(preferences.height) + " @ " +
+                                               std::to_string(preferences.refreshRate) + " Hz"
+                                         : "Choose a supported mode";
+                if (ImGui::BeginCombo("Fullscreen resolution / refresh",
+                                      selectedModeLabel.c_str())) {
+                    std::vector<GLFWvidmode> uniqueModes;
+                    for (int index = 0; availableModes != nullptr && index < modeCount; ++index) {
+                        const auto& mode = availableModes[index];
+                        if (mode.width < 640 || mode.width > 16384 || mode.height < 640 ||
+                            mode.height > 16384 || mode.refreshRate < 24 ||
+                            mode.refreshRate > 1000) {
+                            continue;
+                        }
+                        const bool alreadyListed =
+                            std::any_of(uniqueModes.begin(), uniqueModes.end(),
+                                        [&mode](const GLFWvidmode& listed) {
+                                            return listed.width == mode.width &&
+                                                   listed.height == mode.height &&
+                                                   listed.refreshRate == mode.refreshRate;
+                                        });
+                        if (alreadyListed)
+                            continue;
+                        uniqueModes.push_back(mode);
+                        const std::string label = std::to_string(mode.width) + " x " +
+                                                  std::to_string(mode.height) + " @ " +
+                                                  std::to_string(mode.refreshRate) + " Hz";
+                        const bool selected = mode.width == preferences.width &&
+                                              mode.height == preferences.height &&
+                                              mode.refreshRate == preferences.refreshRate;
+                        if (ImGui::Selectable(label.c_str(), selected)) {
+                            preferences.width = mode.width;
+                            preferences.height = mode.height;
+                            preferences.refreshRate = mode.refreshRate;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("Preview");
+                if (modeCount == 0 || availableModes == nullptr) {
+                    ImGui::TextDisabled("No exclusive display modes are available.");
+                } else if (!hasSupportedMode) {
+                    ImGui::TextDisabled("No supported exclusive display modes are available.");
+                }
+            } else if (preferences.windowMode == "borderless") {
+                ImGui::TextWrapped("Borderless fullscreen uses the selected monitor's desktop "
+                                   "resolution.");
+            } else {
+                ImGui::TextDisabled("No display monitor is available for fullscreen modes.");
+            }
+            const bool displayPreferencesChanged =
+                preferences.windowMode != activeGraphicsPreferences_.windowMode ||
+                preferences.width != activeGraphicsPreferences_.width ||
+                preferences.height != activeGraphicsPreferences_.height ||
+                preferences.refreshRate != activeGraphicsPreferences_.refreshRate ||
+                preferences.monitor != activeGraphicsPreferences_.monitor;
+            if (displayPreferencesChanged && !displayPreviewPending_) {
+                if (ImGui::Button("Preview display mode (15-second confirm)")) {
+                    previewDisplaySettings();
+                }
+                ImGui::TextWrapped("If you do not preview the saved display changes, they will "
+                                   "apply the next time OpenBus starts.");
+            } else if (displayPreviewPending_) {
+                ImGui::TextUnformatted("Display mode preview is active; confirm it in the "
+                                       "countdown dialog.");
+            }
+            if (!displayPreviewError_.empty()) {
+                ImGui::TextWrapped("Display preview: %s", displayPreviewError_.c_str());
+            }
+            bool overridden = beginOverride("OPENBUS_VSYNC");
+            ImGui::Checkbox("VSync", &preferences.vsync);
+            endOverride(overridden, "OPENBUS_VSYNC");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live");
+            overridden = beginOverride("OPENBUS_FPS_CAP");
+            ImGui::InputDouble("FPS cap (0 = unlimited)", &preferences.fpsCap, 1.0, 10.0, "%.2f");
+            endOverride(overridden, "OPENBUS_FPS_CAP");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Anti-aliasing");
+            const char* antiAliasingLabel = preferences.antiAliasingMode == "fxaa" ? "FXAA" : "Off";
+            if (ImGui::BeginCombo("Anti-aliasing mode", antiAliasingLabel)) {
+                if (ImGui::Selectable("Off", preferences.antiAliasingMode == "off")) {
+                    preferences.antiAliasingMode = "off";
+                }
+                if (ImGui::Selectable("FXAA", preferences.antiAliasingMode == "fxaa")) {
+                    preferences.antiAliasingMode = "fxaa";
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live on save");
+            ImGui::TextDisabled("MSAA is not available until motion and depth buffers can be "
+                                "resolved without mixing surfaces.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("World render scale");
+            float renderScalePercent = static_cast<float>(preferences.renderScale * 100.0);
+            if (ImGui::SliderFloat("Render resolution", &renderScalePercent, 50.0F, 100.0F,
+                                   "%.0f%%")) {
+                preferences.renderScale = static_cast<double>(renderScalePercent) / 100.0;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live on save");
+            ImGui::TextWrapped("The 3D world renders at this scale and is upscaled before the "
+                               "native-resolution interface. Motion and depth textures use the "
+                               "scaled render resolution.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Reflections (restart required)");
+            overridden = beginOverride("OPENBUS_REFLECTION_SIZE");
+            const char* sizeLabel = preferences.reflectionSize == 256   ? "256"
+                                    : preferences.reflectionSize == 512 ? "512"
+                                                                        : "1024";
+            if (ImGui::BeginCombo("Reflection resolution", sizeLabel)) {
+                for (const int size : {256, 512, 1024}) {
+                    const std::string label = std::to_string(size);
+                    if (ImGui::Selectable(label.c_str(), preferences.reflectionSize == size)) {
+                        preferences.reflectionSize = size;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            endOverride(overridden, "OPENBUS_REFLECTION_SIZE");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            overridden = beginOverride("OPENBUS_REFLECTION_INTERVAL");
+            ImGui::InputInt("Reflection update interval", &preferences.reflectionInterval);
+            endOverride(overridden, "OPENBUS_REFLECTION_INTERVAL");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            overridden = beginOverride("OPENBUS_REFLECTION_MAX_FPS");
+            ImGui::InputDouble("Reflection FPS cap (0 = unlimited)", &preferences.reflectionMaxFps,
+                               1.0, 10.0, "%.2f");
+            endOverride(overridden, "OPENBUS_REFLECTION_MAX_FPS");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Visibility");
+            overridden = beginOverride("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT");
+            ImGui::InputDouble("Main minimum object size (%)",
+                               &preferences.minimumObjectSizeMainPercent, 0.1, 1.0, "%.2f");
+            endOverride(overridden, "OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live");
+            overridden = beginOverride("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT");
+            ImGui::InputDouble("Mirror minimum object size (%)",
+                               &preferences.minimumObjectSizeMirrorsPercent, 0.1, 1.0, "%.2f");
+            endOverride(overridden, "OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Live");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Advanced rendering");
+            overridden = beginOverride("OPENBUS_FRUSTUM_CULLING");
+            ImGui::Checkbox("Vehicle part frustum culling", &preferences.vehicleFrustumCulling);
+            endOverride(overridden, "OPENBUS_FRUSTUM_CULLING");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            ImGui::TextWrapped("Disable only for troubleshooting missing vehicle parts; "
+                               "rendering parts outside the view can increase CPU and GPU work.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Texture filtering and quality");
+            overridden = beginOverride("OPENBUS_TEXTURE_SCALE");
+            float vehicleTextureScalePercent =
+                static_cast<float>(preferences.vehicleTextureScale * 100.0);
+            if (ImGui::SliderFloat("Vehicle texture resolution", &vehicleTextureScalePercent, 25.0F,
+                                   100.0F, "%.0f%%")) {
+                preferences.vehicleTextureScale =
+                    static_cast<double>(vehicleTextureScalePercent) / 100.0;
+            }
+            endOverride(overridden, "OPENBUS_TEXTURE_SCALE");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            ImGui::TextWrapped("Scales decoded textures and selects an authored mip for "
+                               "precompressed textures when available. Map textures and "
+                               "precompressed textures without mip chains are unchanged.");
+            float mapTextureScalePercent = static_cast<float>(preferences.mapTextureScale * 100.0);
+            if (ImGui::SliderFloat("Map texture resolution", &mapTextureScalePercent, 25.0F, 100.0F,
+                                   "%.0f%%")) {
+                preferences.mapTextureScale = static_cast<double>(mapTextureScalePercent) / 100.0;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            ImGui::TextWrapped("Scales decoded map textures at upload. GPU texture storage falls "
+                               "with pixel count, but decoded source images remain cached in CPU "
+                               "memory.");
+            ImGui::Checkbox("Generate mipmaps for decoded textures",
+                            &preferences.generateTextureMipmaps);
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            ImGui::TextWrapped("Adds smoother minification for decoded vehicle and map textures "
+                               "at roughly one-third more texture storage. Active anisotropic "
+                               "filtering enables mipmaps automatically.");
+            const std::string anisotropyLabel =
+                preferences.anisotropicFiltering == 1
+                    ? "Off"
+                    : std::to_string(preferences.anisotropicFiltering) + "x";
+            ImGui::BeginDisabled(!textureAnisotropySupported_);
+            if (ImGui::BeginCombo("Anisotropic filtering", anisotropyLabel.c_str())) {
+                for (const int factor : {1, 2, 4, 8, 16}) {
+                    const std::string label = factor == 1 ? "Off" : std::to_string(factor) + "x";
+                    if (ImGui::Selectable(label.c_str(),
+                                          preferences.anisotropicFiltering == factor)) {
+                        preferences.anisotropicFiltering = factor;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled("Restart required");
+            if (!textureAnisotropySupported_) {
+                ImGui::TextWrapped("Anisotropic filtering is not supported by this OpenGL "
+                                   "device; the requested setting will be ignored.");
+            } else {
+                ImGui::Text("Device maximum: %.0fx; active: %.0fx", maximumTextureAnisotropy_,
+                            appliedTextureAnisotropy_);
+                if (preferences.anisotropicFiltering > maximumTextureAnisotropy_) {
+                    ImGui::TextWrapped("The requested level exceeds this device's limit and will "
+                                       "be clamped.");
+                }
+            }
+
+            ImGui::BeginDisabled(displayPreferencesChanged || displayPreviewPending_);
+            if (ImGui::Button("Save graphics settings")) {
+                try {
+                    auto diskPreferences =
+                        openbus::core::loadGraphicsPreferences(graphicsPreferencesPath_);
+                    auto edited = preferences;
+                    if (openbus::getEnvironment("OPENBUS_VSYNC") != nullptr)
+                        edited.vsync = graphicsPreferencesBaseline_.vsync;
+                    if (openbus::getEnvironment("OPENBUS_FPS_CAP") != nullptr)
+                        edited.fpsCap = graphicsPreferencesBaseline_.fpsCap;
+                    if (openbus::getEnvironment("OPENBUS_REFLECTION_SIZE") != nullptr)
+                        edited.reflectionSize = graphicsPreferencesBaseline_.reflectionSize;
+                    if (openbus::getEnvironment("OPENBUS_REFLECTION_INTERVAL") != nullptr)
+                        edited.reflectionInterval = graphicsPreferencesBaseline_.reflectionInterval;
+                    if (openbus::getEnvironment("OPENBUS_REFLECTION_MAX_FPS") != nullptr)
+                        edited.reflectionMaxFps = graphicsPreferencesBaseline_.reflectionMaxFps;
+                    if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT") !=
+                        nullptr)
+                        edited.minimumObjectSizeMainPercent =
+                            graphicsPreferencesBaseline_.minimumObjectSizeMainPercent;
+                    if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT") !=
+                        nullptr)
+                        edited.minimumObjectSizeMirrorsPercent =
+                            graphicsPreferencesBaseline_.minimumObjectSizeMirrorsPercent;
+                    if (openbus::getEnvironment("OPENBUS_TEXTURE_SCALE") != nullptr)
+                        edited.vehicleTextureScale =
+                            graphicsPreferencesBaseline_.vehicleTextureScale;
+                    if (openbus::getEnvironment("OPENBUS_FRUSTUM_CULLING") != nullptr)
+                        edited.vehicleFrustumCulling =
+                            graphicsPreferencesBaseline_.vehicleFrustumCulling;
+                    diskPreferences.values = openbus::core::mergeGraphicsPreferences(
+                        graphicsPreferencesBaseline_, edited, diskPreferences.values);
+                    openbus::core::saveGraphicsPreferences(graphicsPreferencesPath_,
+                                                           diskPreferences);
+                    graphicsPreferences_.values = diskPreferences.values;
+                    graphicsPreferencesBaseline_ = diskPreferences.values;
+                    graphicsPreferences_.lines = std::move(diskPreferences.lines);
+                    if (openbus::getEnvironment("OPENBUS_VSYNC") == nullptr) {
+                        vsyncEnabled_ = preferences.vsync;
+                        glfwSwapInterval(vsyncEnabled_ ? 1 : 0);
+                    }
+                    if (openbus::getEnvironment("OPENBUS_FPS_CAP") == nullptr) {
+                        frameTiming_.setFrameRateCap(preferences.fpsCap);
+                    }
+                    openbus::rendering::setFxaaEnabled(preferences.antiAliasingMode == "fxaa");
+                    if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT") ==
+                        nullptr) {
+                        mainViewMinimumObjectViewportFraction_ =
+                            preferences.minimumObjectSizeMainPercent / 100.0;
+                    }
+                    if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT") ==
+                        nullptr) {
+                        reflectionMinimumObjectViewportFraction_ =
+                            preferences.minimumObjectSizeMirrorsPercent / 100.0;
+                    }
+                    graphicsPreferencesError_.clear();
+                } catch (const std::exception& error) {
+                    graphicsPreferencesError_ = error.what();
+                    gameLog.Error("Could not save graphics preferences: " +
+                                  graphicsPreferencesError_);
+                }
+            }
+            ImGui::EndDisabled();
+            if (displayPreferencesChanged || displayPreviewPending_) {
+                ImGui::TextDisabled("Preview and confirm or revert display changes before saving.");
+            }
+            ImGui::TextWrapped("Saved beside the OpenBus executable. Display changes use a "
+                               "15-second confirmation; reflection, anisotropic filtering, "
+                               "texture mipmaps, map and vehicle texture resolution, and "
+                               "vehicle frustum-culling changes require a restart.");
+        }
     }
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Weather")) {

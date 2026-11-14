@@ -23,6 +23,7 @@
 #include "core/Viewpoint.h"
 #include "core/Variables.h"
 #include "core/ActiveMetarStations.h"
+#include "core/GraphicsPreferences.h"
 #include "core/WeatherSelection.h"
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
@@ -42,6 +43,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+struct GLFWmonitor;
 
 struct GLFWwindow;
 struct GLFWcursor;
@@ -316,6 +319,8 @@ class RenderLoop {
     void drawPlayerTimetableUi();
     void drawPlayerTimetableSelectionUi();
     void drawPauseMenuUi();
+    void previewDisplaySettings();
+    void revertDisplaySettingsPreview();
     void drawDebugMenuUi();
     void setPausedState(bool paused);
     void applyPlayerTripAiPolicy(const openbus::map::MapAiTimetableCourseTrip& trip,
@@ -332,6 +337,26 @@ class RenderLoop {
     openbus::app::SteamPresence& steamPresence_;
     GLFWwindow* window_;
     bool vsyncEnabled_ = true;
+    openbus::core::GraphicsPreferencesFile graphicsPreferences_;
+    openbus::core::GraphicsPreferences graphicsPreferencesBaseline_;
+    openbus::core::GraphicsPreferences activeGraphicsPreferences_;
+    openbus::core::GraphicsPreferences displayPreviewPreviousPreferences_;
+    bool displayPreviewPending_ = false;
+    double displayPreviewDeadline_ = 0.0;
+    int displayPreviewPreviousX_ = 0;
+    int displayPreviewPreviousY_ = 0;
+    int displayPreviewPreviousWidth_ = 0;
+    int displayPreviewPreviousHeight_ = 0;
+    int displayPreviewPreviousRefreshRate_ = 0;
+    bool displayPreviewPreviousDecorated_ = true;
+    GLFWmonitor* displayPreviewPreviousMonitor_ = nullptr;
+    std::string displayPreviewError_;
+    std::filesystem::path graphicsPreferencesPath_;
+    std::string graphicsPreferencesError_;
+    bool graphicsPreferencesLoaded_ = false;
+    float maximumTextureAnisotropy_ = 1.0F;
+    float appliedTextureAnisotropy_ = 1.0F;
+    bool textureAnisotropySupported_ = false;
     std::unique_ptr<ImGuiLayer> imguiLayer_;
     bool imguiEnabled_ = false;
     bool spawnBusRequestPending_ = false;
@@ -658,6 +683,7 @@ class RenderLoop {
         bool populationEnabled = false;
         bool advanceWhileInactive = false;
         std::uint64_t workerGeneration = 0;
+        std::uint64_t motionObjectId = openbus::rendering::allocateMotionObjectId();
     };
     std::vector<HumanTrafficState> humanTrafficActors_;
     std::vector<openbus::app::PassengerPedestrianHandoff> alightedPassengers_;

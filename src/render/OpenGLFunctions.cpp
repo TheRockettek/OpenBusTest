@@ -7,6 +7,9 @@
 #endif
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cmath>
+
 GenBuffersProc pglGenBuffers = nullptr;
 BindBufferProc pglBindBuffer = nullptr;
 BufferDataProc pglBufferData = nullptr;
@@ -14,6 +17,7 @@ TexBufferProc pglTexBuffer = nullptr;
 DeleteBuffersProc pglDeleteBuffers = nullptr;
 CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
 CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
+GenerateMipmapProc pglGenerateMipmap = nullptr;
 GetStringiProc pglGetStringi = nullptr;
 ActiveTextureProc pglActiveTexture = nullptr;
 BlendFuncSeparateProc pglBlendFuncSeparate = nullptr;
@@ -52,6 +56,9 @@ BindFramebufferProc pglBindFramebuffer = nullptr;
 DeleteFramebuffersProc pglDeleteFramebuffers = nullptr;
 FramebufferTexture2DProc pglFramebufferTexture2D = nullptr;
 CheckFramebufferStatusProc pglCheckFramebufferStatus = nullptr;
+DrawBuffersProc pglDrawBuffers = nullptr;
+BlitFramebufferProc pglBlitFramebuffer = nullptr;
+ClearBufferfvProc pglClearBufferfv = nullptr;
 GenQueriesProc pglGenQueries = nullptr;
 DeleteQueriesProc pglDeleteQueries = nullptr;
 BeginQueryProc pglBeginQuery = nullptr;
@@ -68,6 +75,16 @@ GetBufferSubDataProc pglGetBufferSubData = nullptr;
 GetIntegeriProc pglGetIntegeri = nullptr;
 DrawArraysIndirectProc pglDrawArraysIndirect = nullptr;
 DrawElementsIndirectProc pglDrawElementsIndirect = nullptr;
+
+namespace {
+
+constexpr GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+constexpr GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+TextureAnisotropyCapability textureAnisotropy;
+bool textureMipmapsEnabled = false;
+double configuredMapTextureScale = 1.0;
+
+} // namespace
 
 bool loadOpenGLFunctions() {
     pglGetStringi = reinterpret_cast<GetStringiProc>(glfwGetProcAddress("glGetStringi"));
@@ -93,6 +110,8 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<CompressedTexImage2DProc>(glfwGetProcAddress("glCompressedTexImage2D"));
     pglCompressedTexImage3D =
         reinterpret_cast<CompressedTexImage3DProc>(glfwGetProcAddress("glCompressedTexImage3D"));
+    pglGenerateMipmap =
+        reinterpret_cast<GenerateMipmapProc>(glfwGetProcAddress("glGenerateMipmap"));
     pglActiveTexture = reinterpret_cast<ActiveTextureProc>(glfwGetProcAddress("glActiveTexture"));
     pglBlendFuncSeparate =
         reinterpret_cast<BlendFuncSeparateProc>(glfwGetProcAddress("glBlendFuncSeparate"));
@@ -149,6 +168,10 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<FramebufferTexture2DProc>(glfwGetProcAddress("glFramebufferTexture2D"));
     pglCheckFramebufferStatus = reinterpret_cast<CheckFramebufferStatusProc>(
         glfwGetProcAddress("glCheckFramebufferStatus"));
+    pglDrawBuffers = reinterpret_cast<DrawBuffersProc>(glfwGetProcAddress("glDrawBuffers"));
+    pglBlitFramebuffer =
+        reinterpret_cast<BlitFramebufferProc>(glfwGetProcAddress("glBlitFramebuffer"));
+    pglClearBufferfv = reinterpret_cast<ClearBufferfvProc>(glfwGetProcAddress("glClearBufferfv"));
     pglGenQueries = reinterpret_cast<GenQueriesProc>(glfwGetProcAddress("glGenQueries"));
     pglDeleteQueries = reinterpret_cast<DeleteQueriesProc>(glfwGetProcAddress("glDeleteQueries"));
     pglBeginQuery = reinterpret_cast<BeginQueryProc>(glfwGetProcAddress("glBeginQuery"));
@@ -179,7 +202,8 @@ bool loadOpenGLFunctions() {
         pglUniformBlockBinding && pglBindBufferBase && pglUniformMatrix4fv && pglUniform1i &&
         pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f && pglUniform4fv &&
         pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
-        pglFramebufferTexture2D && pglCheckFramebufferStatus;
+        pglFramebufferTexture2D && pglCheckFramebufferStatus && pglDrawBuffers &&
+        pglBlitFramebuffer && pglClearBufferfv;
     if (!available) {
         gameLog.Error("Failed to load required OpenGL VBO functions");
     }
@@ -191,6 +215,7 @@ bool hasOpenGLExtension(std::string_view extension) {
         pglGetStringi == nullptr) {
         return false;
     }
+
     GLint extensionCount = 0;
     glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
     if (extensionCount <= 0) {
@@ -203,4 +228,48 @@ bool hasOpenGLExtension(std::string_view extension) {
         }
     }
     return false;
+}
+
+TextureAnisotropyCapability configureMaterialTextureAnisotropy(float requested) {
+    textureAnisotropy = {};
+    if (!std::isfinite(requested) || requested < 1.0F) {
+        return textureAnisotropy;
+    }
+    if (!hasOpenGLExtension("GL_EXT_texture_filter_anisotropic") &&
+        !hasOpenGLExtension("GL_ARB_texture_filter_anisotropic")) {
+        return textureAnisotropy;
+    }
+    GLfloat maximum = 1.0F;
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
+    if (!std::isfinite(maximum) || maximum < 1.0F) {
+        return textureAnisotropy;
+    }
+    textureAnisotropy.supported = true;
+    textureAnisotropy.maximum = maximum;
+    textureAnisotropy.applied = std::clamp(requested, 1.0F, maximum);
+    return textureAnisotropy;
+}
+
+bool materialTextureMipmapsEnabled() {
+    return pglGenerateMipmap != nullptr &&
+           (textureMipmapsEnabled ||
+            (textureAnisotropy.supported && textureAnisotropy.applied > 1.0F));
+}
+
+void configureMaterialTextureMipmaps(bool enabled) {
+    textureMipmapsEnabled = enabled;
+}
+
+void configureMapTextureScale(double scale) {
+    configuredMapTextureScale = scale;
+}
+
+double mapTextureScale() noexcept {
+    return configuredMapTextureScale;
+}
+
+void applyMaterialTextureAnisotropy(GLenum target) {
+    if (textureAnisotropy.supported && textureAnisotropy.applied > 1.0F) {
+        glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY_EXT, textureAnisotropy.applied);
+    }
 }
