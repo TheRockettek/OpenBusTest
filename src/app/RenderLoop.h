@@ -332,10 +332,12 @@ class RenderLoop {
     void drawDebugMenuUi();
 #if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
     void initializeDiligentBackend();
+    void drawDiligentDebugOverlays(const World& world,
+                                   const openbus::rendering::Matrix4& viewProjection);
 #endif
     void shutdownRendererBackend();
     void prepareDiligentSceneAssets(const BusSimulation& simulation);
-    void drawDiligentScene(const BusSimulation& simulation);
+    void drawDiligentScene(const BusSimulation& simulation, const World& world);
     openbus::rendering::Matrix4 buildCameraViewMatrix(const BusSimulation& simulation,
                                                       const BodyPose& chassis) const;
     void setPausedState(bool paused);
@@ -546,6 +548,8 @@ class RenderLoop {
     std::uint64_t trafficSplineDebugRevision_ = 0;
     bool collisionWireframeBuilt_ = false;
     std::uint64_t collisionWireframeRevision_ = 0;
+    const World* collisionWireframeWorld_ = nullptr;
+    const void* debugOverlayMapRenderer_ = nullptr;
     double clickableHoverRefreshInterval_ = 0.075;
     bool clickableHoverCacheValid_ = false;
     bool clickableHoverCacheHit_ = false;

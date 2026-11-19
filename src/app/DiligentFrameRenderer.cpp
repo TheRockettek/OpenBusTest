@@ -7,6 +7,7 @@
 #include "app/vehicle/DiligentVehicleRuntimeTextures.h"
 #include "app/vehicle/DiligentVehicleSourceBridge.h"
 #include "assets/ScreenshotWriter.h"
+#include "core/AssetPath.h"
 #include "map/MapConfigLoader.h"
 #include "render/diligent/DiligentHumanAsset.h"
 #include "render/diligent/DiligentMapTileSet.h"
@@ -601,6 +602,7 @@ DiligentFrameRenderer::seasonalSceneryTexture(const std::filesystem::path& textu
 
 bool DiligentFrameRenderer::synchronizeMapSceneryRuntimeTextures(
     std::uint64_t motionObjectId, const DiligentSceneryAsset& asset, ScriptRuntime* scripts,
+    const Variables* variables, const std::filesystem::path& omsiRoot,
     std::vector<Diligent::ITextureView*>& dynamicBatchTextures,
     std::vector<Diligent::ITextureView*>& textBatchTextures) {
     impl_->requireActiveScene("Map scenery runtime texture update");
@@ -611,22 +613,32 @@ bool DiligentFrameRenderer::synchronizeMapSceneryRuntimeTextures(
     dynamicBatchTextures.clear();
     textBatchTextures.clear();
     const auto batches = asset.batches();
-    const bool usesRuntimeTextures =
+    const bool usesScriptTextures =
         std::any_of(batches.begin(), batches.end(), [](const DiligentSceneryBatch& batch) {
             return batch.source.batch.scriptTextureIndex >= 0 ||
                    batch.source.batch.textTextureIndex >= 0;
         });
+    const bool usesFreeTextureVariables =
+        std::any_of(batches.begin(), batches.end(), [](const DiligentSceneryBatch& batch) {
+            return !batch.source.batch.freeTextureVariable.empty();
+        });
+    const bool usesRuntimeTextures = usesScriptTextures || usesFreeTextureVariables;
     if (!usesRuntimeTextures) {
         return true;
     }
-    if (scripts == nullptr) {
+    if (usesScriptTextures && scripts == nullptr) {
         return false;
     }
 
-    Impl::MapSceneryRuntimeTextureRecord& record = impl_->mapSceneryRuntimeTextures[motionObjectId];
-    if (record.scriptRuntime != scripts) {
-        record.textures.clear();
-        record.scriptRuntime = scripts;
+    Impl::MapSceneryRuntimeTextureRecord* record = nullptr;
+    if (usesScriptTextures) {
+        Impl::MapSceneryRuntimeTextureRecord& runtimeRecord =
+            impl_->mapSceneryRuntimeTextures[motionObjectId];
+        if (runtimeRecord.scriptRuntime != scripts) {
+            runtimeRecord.textures.clear();
+            runtimeRecord.scriptRuntime = scripts;
+        }
+        record = &runtimeRecord;
     }
 
     std::vector<Diligent::ITextureView*> synchronizedDynamicTextures(batches.size(), nullptr);
@@ -635,9 +647,9 @@ bool DiligentFrameRenderer::synchronizeMapSceneryRuntimeTextures(
     bool hasTextTextures = false;
     const auto synchronizeSlot = [&](openbus::app::DiligentScriptTextureKind kind, int index) {
         const auto key = std::pair{kind, index};
-        auto texture = record.textures.find(key);
-        if (texture == record.textures.end()) {
-            texture = record.textures
+        auto texture = record->textures.find(key);
+        if (texture == record->textures.end()) {
+            texture = record->textures
                           .emplace(key, std::make_unique<openbus::app::DiligentScriptTexture>(
                                             impl_->frame.device(), kind, index))
                           .first;
@@ -657,6 +669,30 @@ bool DiligentFrameRenderer::synchronizeMapSceneryRuntimeTextures(
             hasDynamicTextures = true;
             synchronizedDynamicTextures[index] = synchronizeSlot(
                 openbus::app::DiligentScriptTextureKind::Script, source.scriptTextureIndex);
+            if (synchronizedDynamicTextures[index] == nullptr) {
+                return false;
+            }
+        } else if (!source.freeTextureVariable.empty()) {
+            hasDynamicTextures = true;
+            const std::string selectedTexture =
+                variables == nullptr ? std::string{}
+                                     : variables->getString(source.freeTextureVariable);
+            if (!selectedTexture.empty()) {
+                const std::filesystem::path texturePath = openbus::assets::findSceneryTexture(
+                    source.textureObjectRoot, source.textureModelRoot, omsiRoot, selectedTexture);
+                if (!texturePath.empty()) {
+                    const DiligentTexture2D* texture =
+                        impl_->sceneryAssets.seasonalTexture(texturePath);
+                    if (texture != nullptr) {
+                        synchronizedDynamicTextures[index] = &texture->shaderResourceView();
+                    }
+                }
+            }
+            if (synchronizedDynamicTextures[index] == nullptr &&
+                batches[index].textures.freeTexture != nullptr) {
+                synchronizedDynamicTextures[index] =
+                    &batches[index].textures.freeTexture->shaderResourceView();
+            }
             if (synchronizedDynamicTextures[index] == nullptr) {
                 return false;
             }

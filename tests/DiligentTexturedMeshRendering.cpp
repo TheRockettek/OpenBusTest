@@ -4073,6 +4073,9 @@ void verifyDiligentTexturedMeshRendering(Diligent::IRenderDevice& device,
     const auto waterTexturePath = waterDirectory / "water.tga";
     std::filesystem::copy_file(imagePath, waterTexturePath,
                                std::filesystem::copy_options::overwrite_existing);
+    const auto detailTexturePath = waterDirectory / "gras_det.tga";
+    std::filesystem::copy_file(imagePath, detailTexturePath,
+                               std::filesystem::copy_options::overwrite_existing);
     const auto waterFilePath = textureDirectory / "diligent-water.water";
     {
         std::ofstream output(waterFilePath, std::ios::binary);
@@ -4105,7 +4108,7 @@ void verifyDiligentTexturedMeshRendering(Diligent::IRenderDevice& device,
     }
     openbus::map::MapDefinition fileBackedMap;
     fileBackedMap.rootPath = textureDirectory;
-    fileBackedMap.groundTextures = {{"decoded-pattern.tga", "", {}},
+    fileBackedMap.groundTextures = {{"decoded-pattern.tga", "maps\\DBC\\texture\\gras_det.bmp", {}},
                                     {"decoded-pattern.tga", "", {}}};
     openbus::map::MapTileReference fileBackedTile;
     fileBackedTile.x = 7;
@@ -4137,6 +4140,7 @@ void verifyDiligentTexturedMeshRendering(Diligent::IRenderDevice& device,
     const auto fileBackedLayers = fileBackedTileSet.activeTiles()[0]->terrainLayers();
     require(fileBackedLayers.size() == 2 && fileBackedLayers[0].mesh == fileBackedLayers[1].mesh &&
                 fileBackedLayers[0].texture == fileBackedLayers[1].texture &&
+                fileBackedLayers[0].detailMapTexture != nullptr &&
                 fileBackedLayers[1].transMapTexture != nullptr &&
                 fileBackedLayers[1].material.flipTransmapY &&
                 fileBackedLayers[1].material.transMapScale[0] == 1.0F &&

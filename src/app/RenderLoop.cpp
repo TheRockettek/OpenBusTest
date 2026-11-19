@@ -1748,7 +1748,7 @@ void RenderLoop::prepareDiligentSceneAssets(const BusSimulation& simulation) {
 #endif
 }
 
-void RenderLoop::drawDiligentScene(const BusSimulation& simulation) {
+void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World& world) {
 #if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
     auto* diligentRenderer =
         dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
@@ -3016,6 +3016,7 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation) {
                     simulation.simulationTime(), sharedVariables.weatherWindDirectionDegrees(),
                     sharedVariables.weatherWindSpeedMetersPerSecond(), weatherBrightness));
             }
+            drawDiligentDebugOverlays(world, openbus::rendering::multiplyMatrix4(projection, view));
             if (imguiEnabled_) {
                 drawOnFootUi();
                 drawPlayerTimetableUi();

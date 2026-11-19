@@ -28,10 +28,25 @@ std::filesystem::path resolveMapTexturePath(const std::filesystem::path& mapRoot
                                             const std::string& configuredPath) {
     std::string normalized = configuredPath;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    const std::filesystem::path relative(normalized);
-    const std::array<std::filesystem::path, 2> candidates = {mapRoot / relative,
-                                                             omsiRoot / relative};
+    const std::filesystem::path relative = openbus::pathFromUtf8(normalized);
+    std::filesystem::path mapRelative;
+    auto component = relative.begin();
+    if (component != relative.end() && openbus::pathToUtf8(*component) == "maps") {
+        ++component;
+        if (component != relative.end()) {
+            ++component;
+        }
+        for (; component != relative.end(); ++component) {
+            mapRelative /= *component;
+        }
+    }
+    const std::array<std::filesystem::path, 3> candidates = {
+        mapRoot / relative, omsiRoot / relative,
+        mapRelative.empty() ? std::filesystem::path{} : mapRoot / mapRelative};
     for (const std::filesystem::path& candidate : candidates) {
+        if (candidate.empty()) {
+            continue;
+        }
         const std::filesystem::path resolved = openbus::assets::resolveTexturePath(candidate);
         if (std::filesystem::is_regular_file(resolved)) {
             return resolved;

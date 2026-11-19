@@ -337,7 +337,15 @@ if(OPENBUS_BUILD_DILIGENT_VULKAN_PROBE OR OPENBUS_BUILD_DILIGENT_RENDERER)
     )
     target_include_directories(openbus_diligent_render PUBLIC
         "${OPENBUS_SOURCE_ROOT}"
+    )
+    target_include_directories(openbus_diligent_render SYSTEM PUBLIC
         "${diligentcore_SOURCE_DIR}"
+        "${diligentcore_SOURCE_DIR}/Common/interface"
+        "${diligentcore_SOURCE_DIR}/Graphics/GraphicsEngine/interface"
+        "${diligentcore_SOURCE_DIR}/Platforms/interface"
+        "${diligentcore_SOURCE_DIR}/Platforms/Basic/interface"
+        "${diligentcore_SOURCE_DIR}/Platforms/Win32/interface"
+        "${diligentcore_SOURCE_DIR}/Primitives/interface"
     )
     target_include_directories(openbus_diligent_render PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated"

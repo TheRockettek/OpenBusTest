@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/DiligentFrameRenderer.h"
+#include "core/AssetPath.h"
 #include "map/MapSceneryPlacement.h"
 #include "render/CameraMath.h"
 #include "render/ComputeCulling.h"
@@ -227,6 +228,7 @@ updateDiligentMapScenery(openbus::rendering::DiligentFrameRenderer& frameRendere
     const auto activePlacements = mapSource.activeSceneryPlacements();
     std::vector<std::uint64_t> activeMotionObjectIds;
     activeMotionObjectIds.reserve(activePlacements.size());
+    std::vector<std::filesystem::path> retainedTexturePaths = sources.seasonalTextures;
     for (const auto& placement : activePlacements) {
         update.placements.push_back({placement.motionObjectId, placement.configPath,
                                      placement.worldTransform, placement.worldPosition,
@@ -234,15 +236,36 @@ updateDiligentMapScenery(openbus::rendering::DiligentFrameRenderer& frameRendere
                                      placement.sourceTileY, placement.variables, seasonIndex,
                                      mapSource.omsiRoot(), placement.scriptRuntime});
         activeMotionObjectIds.push_back(placement.motionObjectId);
+        const auto* asset = frameRenderer.sceneryAsset(placement.configPath, mapSource.omsiRoot());
+        if (asset == nullptr || placement.variables == nullptr) {
+            continue;
+        }
+        for (const auto& batch : asset->batches()) {
+            const auto& source = batch.source.batch;
+            if (source.freeTextureVariable.empty()) {
+                continue;
+            }
+            const std::string selectedTexture =
+                placement.variables->getString(source.freeTextureVariable);
+            if (selectedTexture.empty()) {
+                continue;
+            }
+            const std::filesystem::path texturePath = openbus::assets::findSceneryTexture(
+                source.textureObjectRoot, source.textureModelRoot, mapSource.omsiRoot(),
+                selectedTexture);
+            if (!texturePath.empty()) {
+                retainedTexturePaths.push_back(texturePath);
+            }
+        }
     }
     update.removedRuntimeTextureCaches =
         frameRenderer.retainMapSceneryRuntimeTextures(activeMotionObjectIds);
     update.removedResources =
-        frameRenderer.retainSceneryAssets(sources.assets, sources.seasonalTextures);
+        frameRenderer.retainSceneryAssets(sources.assets, retainedTexturePaths);
     for (const auto& [configPath, omsiRoot] : sources.assets) {
         update.requestedAssets += frameRenderer.requestSceneryAsset(configPath, omsiRoot) ? 1U : 0U;
     }
-    for (const std::filesystem::path& path : sources.seasonalTextures) {
+    for (const std::filesystem::path& path : retainedTexturePaths) {
         update.requestedSeasonalTextures +=
             frameRenderer.requestSeasonalSceneryTexture(path) ? 1U : 0U;
     }
@@ -831,9 +854,10 @@ inline std::vector<DiligentMapSceneryPlacementDrawResult> drawDiligentMapScenery
 
         std::vector<Diligent::ITextureView*> dynamicBatchTextures;
         std::vector<Diligent::ITextureView*> textBatchTextures;
-        if (runtimeStates.empty() && !frameRenderer.synchronizeMapSceneryRuntimeTextures(
-                                         placement.motionObjectId, *asset, placement.scriptRuntime,
-                                         dynamicBatchTextures, textBatchTextures)) {
+        if (runtimeStates.empty() &&
+            !frameRenderer.synchronizeMapSceneryRuntimeTextures(
+                placement.motionObjectId, *asset, placement.scriptRuntime, placement.variables,
+                placement.assetRoot, dynamicBatchTextures, textBatchTextures)) {
             results.push_back({placement.motionObjectId,
                                DiligentMapSceneryPlacementDrawResult::Status::RuntimeTexturePending,
                                std::nullopt});
@@ -951,9 +975,10 @@ inline std::vector<DiligentMapSceneryPlacementDrawResult> drawDiligentMapScenery
 
         std::vector<Diligent::ITextureView*> dynamicBatchTextures;
         std::vector<Diligent::ITextureView*> textBatchTextures;
-        if (runtimeStates.empty() && !frameRenderer.synchronizeMapSceneryRuntimeTextures(
-                                         placement.motionObjectId, *asset, placement.scriptRuntime,
-                                         dynamicBatchTextures, textBatchTextures)) {
+        if (runtimeStates.empty() &&
+            !frameRenderer.synchronizeMapSceneryRuntimeTextures(
+                placement.motionObjectId, *asset, placement.scriptRuntime, placement.variables,
+                placement.assetRoot, dynamicBatchTextures, textBatchTextures)) {
             results.push_back({placement.motionObjectId,
                                DiligentMapSceneryPlacementDrawResult::Status::RuntimeTexturePending,
                                std::nullopt});

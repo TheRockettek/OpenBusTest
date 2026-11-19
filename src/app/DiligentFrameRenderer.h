@@ -161,11 +161,11 @@ class DiligentFrameRenderer final : public RendererFramePresenter {
                  const std::filesystem::path& omsiRoot) const;
     [[nodiscard]] const DiligentTexture2D*
     seasonalSceneryTexture(const std::filesystem::path& texturePath) const;
-    bool
-    synchronizeMapSceneryRuntimeTextures(std::uint64_t motionObjectId,
-                                         const DiligentSceneryAsset& asset, ScriptRuntime* scripts,
-                                         std::vector<Diligent::ITextureView*>& dynamicBatchTextures,
-                                         std::vector<Diligent::ITextureView*>& textBatchTextures);
+    bool synchronizeMapSceneryRuntimeTextures(
+        std::uint64_t motionObjectId, const DiligentSceneryAsset& asset, ScriptRuntime* scripts,
+        const Variables* variables, const std::filesystem::path& omsiRoot,
+        std::vector<Diligent::ITextureView*>& dynamicBatchTextures,
+        std::vector<Diligent::ITextureView*>& textBatchTextures);
     std::size_t retainMapSceneryRuntimeTextures(std::span<const std::uint64_t> motionObjectIds);
     std::size_t publishReadySceneryAssets();
     // Evicts scenery assets/textures not needed by the next streamed scene window.
