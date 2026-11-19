@@ -1386,11 +1386,19 @@ void runSplineDependencyProbe(const std::filesystem::path& root, bool duplicateI
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         } while (std::chrono::steady_clock::now() < deadline);
+        std::string activeWindow;
+        for (const auto& [tileX, tileY] : renderer.activeTileCoordinates()) {
+            if (!activeWindow.empty()) {
+                activeWindow += ',';
+            }
+            activeWindow += std::to_string(tileX) + ':' + std::to_string(tileY);
+        }
         throw std::runtime_error(
             "Spline dependency window or traffic lanes did not settle: 101=" +
             std::to_string(renderer.lanesForTimetableEntry(101, 0).size()) +
             " 102=" + std::to_string(renderer.lanesForTimetableEntry(102, 0).size()) +
-            " 200=" + std::to_string(renderer.lanesForTimetableEntry(200, 0).size()));
+            " 200=" + std::to_string(renderer.lanesForTimetableEntry(200, 0).size()) +
+            " active=" + activeWindow);
     };
     const auto debugPaths = [&]() {
         const auto& segments = renderer.sceneryTrafficPathSegments();
@@ -1398,9 +1406,9 @@ void runSplineDependencyProbe(const std::filesystem::path& root, bool duplicateI
             return segment.mapObjectId == 101 || segment.mapObjectId == 102;
         });
     };
-    waitFor(-900, {}, duplicateId ? 0 : 3, 0);
+    waitFor(-900, {}, duplicateId ? 0 : 3, duplicateId ? 0 : 2);
     check(debugPaths() == 0, "Unloaded spline rows must not have prepared debug paths");
-    waitFor(-600, {{0, 0}}, 3, 0);
+    waitFor(-600, {{0, 0}}, 3, duplicateId ? 0 : 2);
     check(renderer.renderStats().activeSceneryObjects == (duplicateId ? 3U : 4U),
           "Duplicate spline parent IDs should prevent the child placement");
     check(debugPaths() == 3, "The regular rows should prepare three debug paths");
@@ -1536,7 +1544,8 @@ void runSplineHumanDependencyProbe(const std::filesystem::path& root, bool dupli
     const auto journey = [&]() {
         return renderer.passengerPedestrianJourneyBetween({0, 298, 0}, {0, 308, 0}, 0, 0.25, 50);
     };
-    const auto requireJourney = [&](bool expected, int expectedSegmentId) {
+    const auto requireJourney = [&](bool expected, int expectedSegmentId,
+                                    int expectedSegmentTileY = 0) {
         const auto result = journey();
         check(result.has_value() == expected,
               "Pedestrian journey did not match the available attachment paths");
@@ -1544,10 +1553,24 @@ void runSplineHumanDependencyProbe(const std::filesystem::path& root, bool dupli
             check(result->route && result->route->segments.size() >= 2,
                   "Pedestrian journey must cross from the spline to the attachment path");
             const auto& segment = result->route->segments[1];
-            check(segment.spline.placement.splineId == expectedSegmentId &&
-                      segment.spline.tileX == 0 && segment.spline.tileY == 0 &&
-                      !segment.points.empty() &&
-                      std::abs(segment.points.front()[1] - 300.0) < 0.001,
+            const bool expectedSegment =
+                segment.spline.placement.splineId == expectedSegmentId &&
+                segment.spline.tileX == 0 && segment.spline.tileY == expectedSegmentTileY &&
+                !segment.points.empty() &&
+                std::abs(segment.points.front()[1] - 300.0) < 0.001;
+            if (!expectedSegment) {
+                std::cerr << "Pedestrian segment expected spline=" << expectedSegmentId
+                          << " at tile=0:" << expectedSegmentTileY << " y=300; got spline="
+                          << segment.spline.placement.splineId << " tile=" << segment.spline.tileX
+                          << ':' << segment.spline.tileY << " y="
+                          << (segment.points.empty() ? -1.0 : segment.points.front()[1])
+                          << " in " << root.filename().string() << " with active tiles";
+                for (const auto& [tileX, tileY] : renderer.activeTileCoordinates()) {
+                    std::cerr << ' ' << tileX << ':' << tileY;
+                }
+                std::cerr << '\n';
+            }
+            check(expectedSegment,
                   "Pedestrian attachment segment has unexpected identity or position");
         }
         check(!renderer.passengerPedestrianJourneyBetween({0, 304, 0}, {0, 308, 0}, 0, 0.25, 50),
@@ -1561,11 +1584,11 @@ void runSplineHumanDependencyProbe(const std::filesystem::path& root, bool dupli
         });
     };
     activate(-900, {});
-    requireJourney(referenced && !duplicateId, 101);
+    requireJourney(!duplicateId, 101);
     check(debugRows() == 0, "Unloaded pedestrian rows must not have prepared debug paths");
     if (repeaterFirst) {
         activate(900, {{0, 1}});
-        requireJourney(true, 0);
+        requireJourney(true, 101, 1);
         check(debugRows() == 1, "Repeater tile must prepare its pedestrian debug path");
         const auto& segments = renderer.sceneryTrafficPathSegments();
         const auto repeater =
@@ -1577,11 +1600,11 @@ void runSplineHumanDependencyProbe(const std::filesystem::path& root, bool dupli
               "Repeater debug path must retain its actual source tile");
     } else {
         activate(-600, {{0, 0}});
-        requireJourney(true, referenced && !duplicateId ? 101 : 0);
+        requireJourney(true, 101);
         check(debugRows() == 1, "Regular tile must prepare its pedestrian debug path");
     }
     activate(0, {{0, 0}, {0, 1}});
-    requireJourney(true, referenced && !duplicateId ? 101 : 0);
+    requireJourney(true, 101, repeaterFirst ? 1 : 0);
     check(debugRows() == 2, "Both source tiles must prepare pedestrian debug paths");
     std::array<bool, 2> sourceTiles = {};
     for (const auto& segment : renderer.sceneryTrafficPathSegments()) {
@@ -1597,7 +1620,7 @@ void runSplineHumanDependencyProbe(const std::filesystem::path& root, bool dupli
     check(sourceTiles[0] && sourceTiles[1],
           "Each source tile must contribute a pedestrian debug path");
     activate(900, {{0, 1}});
-    requireJourney(true, referenced && !duplicateId ? 101 : 0);
+    requireJourney(true, 101, repeaterFirst ? 1 : 0);
 }
 
 void runItemLightmapProbe(const std::filesystem::path& root) {

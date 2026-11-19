@@ -1,6 +1,6 @@
 # bgfx GLSL lighting probe
 
-The existing `OpenBus` executable remains on its OpenGL renderer. This opt-in probe is a separate, small bgfx-owned rendering path that verifies the native GLFW window handoff, bgfx frame lifecycle, shader compilation, vertex buffers, transforms, and ambient-plus-directional GLSL lighting before model batches are migrated.
+The production `OpenBus` executable uses Diligent Vulkan. This opt-in probe remains a separate, small bgfx-owned OpenGL rendering path that verifies the native GLFW window handoff, bgfx frame lifecycle, shader compilation, vertex buffers, transforms, and ambient-plus-directional GLSL lighting; it is not part of the production renderer.
 
 ## Build prerequisites
 
@@ -8,7 +8,7 @@ The configured Windows vcpkg triplet must contain bgfx and the shader tools feat
 
 `C:\vcpkg\vcpkg.exe install "bgfx[tools]:x64-windows"`
 
-The `windows-clang-bgfx` CMake preset enables the probe in a separate `build-bgfx` directory, leaving the regular `build-ode` OpenGL build unchanged.
+The `windows-clang-bgfx` CMake preset enables the probe in a separate `build-bgfx` directory.
 
 ## Build and run
 
@@ -18,4 +18,4 @@ Run `build-bgfx/OpenBusBgfxLightingProbe.exe`. It opens a GLFW window with no cl
 
 ## Scope
 
-This probe deliberately renders a lit calibration cube, not bus geometry. The production OpenBus renderer, asset uploads, reflections, material variants, and capture still use OpenGL. The next migration slice is an opaque bus batch using its CPU-side position/UV/normal data, a base texture, and the same ambient/directional lighting. Do not mix direct OpenGL draws into the probe's bgfx-owned frame.
+This probe deliberately renders a lit calibration cube, not bus geometry. It is an isolated legacy experiment and does not participate in production scene rendering. Do not mix direct OpenGL draws into the probe's bgfx-owned frame.

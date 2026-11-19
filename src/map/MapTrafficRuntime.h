@@ -218,6 +218,10 @@ enum class MapTrafficTurnSignal {
 struct MapTrafficCameraView {
     std::array<double, 3> position = {};
     std::array<double, 16> viewProjection = {};
+    std::array<double, 16> view = {};
+    std::array<double, 16> projection = {};
+    int viewportWidth = 0;
+    int viewportHeight = 0;
 };
 
 struct MapTrafficSignalStopDebugInfo {

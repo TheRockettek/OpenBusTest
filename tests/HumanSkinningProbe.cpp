@@ -1,4 +1,5 @@
 #include "render/HumanRig.h"
+#include "render/HumanMeshGeometry.h"
 #include "render/MatrixMath.h"
 
 #include <cmath>
@@ -94,6 +95,99 @@ void runProbe() {
     const auto complete = resolveHumanSkinWeights(completeMesh, {{"root", -2}});
     require(hasCompleteHumanSkinWeights(complete),
             "complete skin weights remain eligible for bone animation");
+
+    ParsedObj geometryMesh;
+    geometryMesh.positions = {{1.0, 2.0, 3.0}, {3.0, 2.0, 5.0}, {1.0, 4.0, 5.0}};
+    geometryMesh.normals = {{0.0, 3.0, 4.0}};
+    geometryMesh.texCoords = {{0.25, 0.75}};
+    geometryMesh.vertexColors = {{0.2, 0.3, 0.4, 0.5}};
+    geometryMesh.materials["body"].materialIndex = 7;
+    geometryMesh.triangles = {
+        {{{{1, 1, 1}, {2, 0, 0}, {3, 0, 0}}}, "body"},
+        {{{{3, 0, 0}, {1, 1, 1}, {2, 0, 0}}}, "missing"},
+        {{{{0, 0, 0}, {4, 0, 0}, {-1, 0, 0}}}, "invalid"}};
+    ParsedObj boundsMesh = geometryMesh;
+    boundsMesh.positions.push_back({1000.0, -1000.0, 2000.0});
+    boundsMesh.triangles.back().indices[1].position = 5;
+    const auto renderableBounds = humanRenderablePositionBounds(boundsMesh);
+    require(renderableBounds.has_value(),
+            "human mesh bounds were absent for a mesh with renderable triangles");
+    require(near(renderableBounds->minimum[0], 1.0) &&
+                near(renderableBounds->minimum[1], 2.0) &&
+                near(renderableBounds->minimum[2], 3.0) &&
+                near(renderableBounds->maximum[0], 3.0) &&
+                near(renderableBounds->maximum[1], 4.0) &&
+                near(renderableBounds->maximum[2], 5.0),
+            "unused OBJ positions changed production human normalization bounds");
+    const double normalizationHeight = 1.75;
+    const double normalizationScale =
+        normalizationHeight / (renderableBounds->maximum[2] - renderableBounds->minimum[2]);
+    const auto normalizedBoundsGeometry = prepareHumanMeshGeometry(
+        boundsMesh, HumanSkinWeights{}, HumanJoints{}, false, normalizationHeight,
+        normalizationScale,
+        {(renderableBounds->minimum[0] + renderableBounds->maximum[0]) * 0.5,
+         (renderableBounds->minimum[1] + renderableBounds->maximum[1]) * 0.5},
+        renderableBounds->minimum[2]);
+    double normalizedMaximumZ = 0.0;
+    for (const auto& [materialIndex, vertices] : normalizedBoundsGeometry.verticesByMaterial) {
+        static_cast<void>(materialIndex);
+        for (const ModelVertex& vertex : vertices) {
+            normalizedMaximumZ = std::max(normalizedMaximumZ, static_cast<double>(vertex.z));
+        }
+    }
+    require(near(normalizedMaximumZ, normalizationHeight),
+            "production human normalization did not match configured height");
+    HumanSkinWeights geometrySkin;
+    geometrySkin.hasWeights = true;
+    geometrySkin.vertices.resize(3);
+    geometrySkin.vertices[0][0] = 1.0F;
+    geometrySkin.vertices[1][1] = 1.0F;
+    HumanGaitParameters geometryGait;
+    const auto geometry = prepareHumanMeshGeometry(
+        geometryMesh, geometrySkin, approximateHumanJoints(geometryGait), true, 2.0, 0.5,
+        {2.0, 3.0}, 3.0);
+    require(geometry.verticesByMaterial.size() == 2 &&
+                geometry.verticesByMaterial.at(7).size() == 3 &&
+                geometry.verticesByMaterial.at(0).size() == 3,
+            "human material grouping or invalid index handling changed");
+    const auto& first = geometry.verticesByMaterial.at(7)[0];
+    const auto& second = geometry.verticesByMaterial.at(7)[1];
+    require(near(first.x, -0.5) && near(first.y, -0.5) && near(first.z, 0.0) &&
+                near(first.u, 0.25) && near(first.v, 0.25) && near(first.ny, 0.6) &&
+                near(first.nz, 0.8) && near(first.r, 0.2) && near(first.a, 0.5) &&
+                near(second.r, 1.0) && near(second.nz, 1.0),
+            "human coordinates, texture coordinates, normals, or color defaults changed");
+    require(geometry.weightsByMaterial.at(7)[1][1] == 1.0F &&
+                geometry.weightsByMaterial.at(0)[1][0] == 1.0F &&
+                geometry.seatedWeightsByMaterial.at(7)[0][0] == 1.0F &&
+                geometry.seatedWeightsByMaterial.at(7)[2] ==
+                    inferHumanSkinWeights({-0.5, 0.5, 1.0}, approximateHumanJoints(geometryGait),
+                                          2.0),
+            "human expanded or inferred weights lost source-position alignment");
+    const auto unweightedGeometry = prepareHumanMeshGeometry(
+        geometryMesh, HumanSkinWeights{}, approximateHumanJoints(geometryGait), true, 2.0, 0.5,
+        {2.0, 3.0}, 3.0);
+    require(unweightedGeometry.weightsByMaterial.empty() &&
+                unweightedGeometry.seatedWeightsByMaterial.at(7).size() == 3 &&
+                unweightedGeometry.seatedWeightsByMaterial.at(7)[0] ==
+                    inferHumanSkinWeights({-0.5, -0.5, 0.0}, approximateHumanJoints(geometryGait),
+                                          2.0),
+            "human geometry did not infer seated weights for an unweighted mesh");
+    const auto authoredGeometry = prepareHumanMeshGeometry(
+        geometryMesh, geometrySkin, HumanJoints{}, false, 2.0, 0.5, {2.0, 3.0}, 3.0);
+    require(authoredGeometry.seatedWeightsByMaterial.empty() &&
+                authoredGeometry.weightsByMaterial.at(7).size() == 3,
+            "human geometry unnecessarily generated seated weights for authored geometry");
+    geometrySkin.vertices.pop_back();
+    bool mismatchedGeometryWeightsRejected = false;
+    try {
+        (void)prepareHumanMeshGeometry(geometryMesh, geometrySkin, HumanJoints{}, false, 2.0,
+                                       0.5, {2.0, 3.0}, 3.0);
+    } catch (const std::invalid_argument&) {
+        mismatchedGeometryWeightsRejected = true;
+    }
+    require(mismatchedGeometryWeightsRejected,
+            "human geometry accepted mismatched source-position weights");
 
     openbus::config::HumanConfig config;
     config.numericRecords.push_back({"links",

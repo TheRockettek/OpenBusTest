@@ -1,5 +1,7 @@
 #include "render/MatrixMath.h"
 
+#include "config/ModelConfigTypes.h"
+
 #include <cmath>
 
 namespace openbus::rendering {
@@ -229,6 +231,61 @@ Matrix4 makeMeshTransform(const std::array<double, 9>& meshRotation,
     result[13] = origin[1];
     result[14] = origin[2];
     return result;
+}
+
+Matrix4 modelAnimationOriginMatrix(const ModelAnimation& animation) {
+    Matrix4 origin = identityMatrix();
+    for (const ModelAnimationOrigin& operation : animation.originOperations) {
+        Matrix4 operationMatrix = identityMatrix();
+        switch (operation.type) {
+        case ModelAnimationOriginType::Translation:
+            operationMatrix = translationMatrix(operation.value);
+            break;
+        case ModelAnimationOriginType::RotationX:
+            // Model X maps to render -Y; OpenOMSI's negative rotation becomes positive about +Y.
+            operationMatrix = rotationMatrix(operation.value[0], 0.0, 1.0, 0.0);
+            break;
+        case ModelAnimationOriginType::RotationY:
+            // Model Y maps to render +X.
+            operationMatrix = rotationMatrix(-operation.value[0], 1.0, 0.0, 0.0);
+            break;
+        case ModelAnimationOriginType::RotationZ:
+            // Model Z maps directly to render +Z.
+            operationMatrix = rotationMatrix(-operation.value[0], 0.0, 0.0, 1.0);
+            break;
+        case ModelAnimationOriginType::FromMesh:
+            if (animation.hasMeshTransform) {
+                operationMatrix = animation.meshTransform;
+            }
+            break;
+        }
+        origin = multiplyMatrix4(origin, operationMatrix);
+    }
+    if (animation.originOperations.empty() && animation.hasOrigin) {
+        origin = translationMatrix(animation.origin);
+    }
+    return origin;
+}
+
+Matrix4 modelAnimationTransform(const ModelAnimation& animation, double amount) {
+    const Matrix4 origin = modelAnimationOriginMatrix(animation);
+    Matrix4 inverseOrigin = identityMatrix();
+    static_cast<void>(invertAffineMatrix(origin, inverseOrigin));
+    // Both animation types use model X, which maps to render -Y.
+    const Matrix4 local = animation.type == "anim_rot"     ? rotationMatrix(amount, 0.0, 1.0, 0.0)
+                          : animation.type == "anim_trans" ? translationMatrix({0.0, -amount, 0.0})
+                                                           : identityMatrix();
+    return multiplyMatrix4(multiplyMatrix4(origin, local), inverseOrigin);
+}
+
+ModelAnimationTransformBuilder::ModelAnimationTransformBuilder() : matrix_(identityMatrix()) {}
+
+void ModelAnimationTransformBuilder::append(const ModelAnimation& animation, double amount) {
+    matrix_ = multiplyMatrix4(modelAnimationTransform(animation, amount), matrix_);
+}
+
+const Matrix4& ModelAnimationTransformBuilder::matrix() const noexcept {
+    return matrix_;
 }
 
 } // namespace openbus::rendering

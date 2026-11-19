@@ -178,43 +178,10 @@ std::uint64_t tileKey(int x, int y) {
            static_cast<std::uint32_t>(y);
 }
 
-double vertexBoundingRadius(const std::vector<ModelVertex>& vertices) {
-    double radiusSquared = 0.0;
-    for (const ModelVertex& vertex : vertices) {
-        const double x = vertex.x;
-        const double y = vertex.y;
-        const double z = vertex.z;
-        radiusSquared = std::max(radiusSquared, x * x + y * y + z * z);
-    }
-    return std::sqrt(radiusSquared);
-}
-
 bool outsideMapFrustum(const ViewFrustum& frustum, const Matrix4& modelView,
                        const std::array<double, 3>& center, double radius) {
     return sphereOutsideFrustum(
         frustum, transformPoint(modelView, {center[0], center[1], center[2], 1.0}), radius);
-}
-
-std::vector<ModelVertex> makeTreePreview(double height, double width) {
-    // OMSI's SCO supplies a texture and height/ratio ranges; this preview uses
-    // crossed cutout planes because its editor-only helper mesh is often .x.
-    const float halfWidth = static_cast<float>(width * 0.5);
-    const float top = static_cast<float>(height);
-    constexpr float low = 0.0F;
-    constexpr float high = 1.0F;
-    const auto vertex = [](float x, float y, float z, float u, float v) {
-        return ModelVertex{x, y, z, u, v, 0.0F, 0.0F, 0.0F, 1.0F};
-    };
-    const ModelVertex xLow = vertex(-halfWidth, 0.0F, low, 0.0F, 0.0F);
-    const ModelVertex xHigh = vertex(halfWidth, 0.0F, low, 1.0F, 0.0F);
-    const ModelVertex xTopHigh = vertex(halfWidth, 0.0F, top, 1.0F, high);
-    const ModelVertex xTopLow = vertex(-halfWidth, 0.0F, top, 0.0F, high);
-    const ModelVertex yLow = vertex(0.0F, -halfWidth, low, 0.0F, 0.0F);
-    const ModelVertex yHigh = vertex(0.0F, halfWidth, low, 1.0F, 0.0F);
-    const ModelVertex yTopHigh = vertex(0.0F, halfWidth, top, 1.0F, high);
-    const ModelVertex yTopLow = vertex(0.0F, -halfWidth, top, 0.0F, high);
-    return {xLow, xHigh, xTopHigh, xLow, xTopHigh, xTopLow,
-            yLow, yHigh, yTopHigh, yLow, yTopHigh, yTopLow};
 }
 
 std::filesystem::path resolveSplineProfile(const openbus::map::MapDefinition& map,
@@ -229,68 +196,6 @@ std::filesystem::path resolveSplineProfile(const openbus::map::MapDefinition& ma
         }
     }
     return {};
-}
-
-std::filesystem::path findSplineTexture(const std::filesystem::path& profilePath,
-                                        const std::filesystem::path& omsiRoot,
-                                        const std::string& textureName) {
-    const std::filesystem::path relative = normalizedAssetPath(textureName);
-    const std::filesystem::path profileRoot = profilePath.parent_path();
-    const std::array<std::filesystem::path, 6> candidates = {
-        profileRoot / "texture" / relative,
-        profileRoot / relative,
-        openbus::assets::textureSubdirectoryPath(profileRoot, relative),
-        omsiRoot / "Texture" / relative,
-        omsiRoot / "texture" / relative,
-        omsiRoot / relative};
-    for (const std::filesystem::path& candidate : candidates) {
-        if (candidate.empty()) {
-            continue;
-        }
-        if (std::filesystem::is_regular_file(candidate)) {
-            return candidate;
-        }
-    }
-    return {};
-}
-
-void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlacement& spline,
-                       const std::vector<openbus::map::MapSplineSample>& centerline,
-                       const openbus::map::MapSplineProfileSection& section,
-                       const openbus::map::MapRoadSplineJoins& joins,
-                       std::optional<double> cantHalfWidth,
-                       const openbus::map::MapCoordinates& coordinates) {
-    const openbus::map::MapRoadSectionGeometry geometry =
-        openbus::map::buildMapRoadSectionGeometry(spline, centerline, section, joins, cantHalfWidth,
-                                                  coordinates.tile(road.tileX, road.tileY));
-    const std::vector<std::array<double, 3>> normals =
-        openbus::map::computeMapRoadVertexNormals(geometry);
-    const std::uint32_t baseVertex = static_cast<std::uint32_t>(road.vertices.size());
-    const double tileOriginX = static_cast<double>(road.tileX) * coordinates.tileSize;
-    const double tileOriginY = static_cast<double>(road.tileY) * coordinates.tileSize;
-    for (std::size_t vertexIndex = 0; vertexIndex < geometry.vertices.size(); ++vertexIndex) {
-        const openbus::map::MapRoadVertex& vertex = geometry.vertices[vertexIndex];
-        const std::array<double, 3>& normal = normals[vertexIndex];
-        const ModelVertex generated{static_cast<float>(vertex.x - tileOriginX),
-                                    static_cast<float>(vertex.y - tileOriginY),
-                                    static_cast<float>(vertex.z),
-                                    static_cast<float>(vertex.textureU),
-                                    static_cast<float>(vertex.textureV),
-                                    0.0F,
-                                    static_cast<float>(normal[0]),
-                                    static_cast<float>(normal[1]),
-                                    static_cast<float>(normal[2])};
-        road.minX = std::min(road.minX, vertex.x);
-        road.minY = std::min(road.minY, vertex.y);
-        road.maxX = std::max(road.maxX, vertex.x);
-        road.maxY = std::max(road.maxY, vertex.y);
-        road.minZ = std::min(road.minZ, vertex.z);
-        road.maxZ = std::max(road.maxZ, vertex.z);
-        road.vertices.push_back(generated);
-    }
-    for (const int index : geometry.indices) {
-        road.indices.push_back(baseVertex + static_cast<std::uint32_t>(index));
-    }
 }
 
 Matrix4 makeSceneryInstanceTransform(double x, double y, double z,

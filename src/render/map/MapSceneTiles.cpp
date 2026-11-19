@@ -671,34 +671,40 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         } else if (!preparedRoads.waterError.empty()) {
             recordSkipped(skipped, "invalid .map.water sidecars",
                           tileName + ": " + preparedRoads.waterError);
-        } else if (!preparedRoads.waterVertices.empty()) {
+        } else if (!preparedRoads.waterGeometry.vertices.empty()) {
             Impl::WaterBatch batch;
-            batch.indexCount = preparedRoads.waterIndices.size();
+            batch.indexCount = preparedRoads.waterGeometry.indices.size();
             batch.tileX = tileX;
             batch.tileY = tileY;
-            batch.minZ = preparedRoads.waterMinimumHeight;
-            batch.maxZ = preparedRoads.waterMaximumHeight;
-            batch.meanZ = preparedRoads.waterMeanHeight;
-            pglGenBuffers(1, &batch.buffer);
-            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(preparedRoads.waterVertices.size() *
-                                                      sizeof(ModelVertex)),
-                          preparedRoads.waterVertices.data(), GL_STATIC_DRAW);
-            pglGenBuffers(1, &batch.indexBuffer);
-            pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(preparedRoads.waterIndices.size() *
-                                                      sizeof(std::uint32_t)),
-                          preparedRoads.waterIndices.data(), GL_STATIC_DRAW);
-            if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
-                if (batch.buffer != 0) {
-                    deleteRendererBuffers(1, &batch.buffer);
+            batch.minZ = preparedRoads.waterGeometry.minimumHeight;
+            batch.maxZ = preparedRoads.waterGeometry.maximumHeight;
+            batch.meanZ = preparedRoads.waterGeometry.meanHeight;
+            if (impl_->openGLResourcesEnabled) {
+                pglGenBuffers(1, &batch.buffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                pglBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<std::ptrdiff_t>(preparedRoads.waterGeometry.vertices.size() *
+                                                sizeof(ModelVertex)),
+                    preparedRoads.waterGeometry.vertices.data(), GL_STATIC_DRAW);
+                pglGenBuffers(1, &batch.indexBuffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
+                pglBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<std::ptrdiff_t>(preparedRoads.waterGeometry.indices.size() *
+                                                sizeof(std::uint32_t)),
+                    preparedRoads.waterGeometry.indices.data(), GL_STATIC_DRAW);
+                if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
+                    if (batch.buffer != 0) {
+                        deleteRendererBuffers(1, &batch.buffer);
+                    }
+                    if (batch.indexBuffer != 0) {
+                        deleteRendererBuffers(1, &batch.indexBuffer);
+                    }
+                    recordSkipped(skipped, "water surfaces rejected by OpenGL upload", tileName);
+                } else {
+                    impl_->waterBatches.push_back(batch);
                 }
-                if (batch.indexBuffer != 0) {
-                    deleteRendererBuffers(1, &batch.indexBuffer);
-                }
-                recordSkipped(skipped, "water surfaces rejected by OpenGL upload", tileName);
             } else {
                 impl_->waterBatches.push_back(batch);
             }
@@ -1050,6 +1056,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             ++impl_->sceneryObjectCount;
             ++impl_->sceneryObjectsByTile[tileKey(tileX, tileY)];
         }
+        const std::uint64_t placementMotionObjectId = allocateMotionObjectId();
         for (const std::size_t batchIndex : batchIndexes) {
             if (batchIndex >= impl_->sceneryBatches.size()) {
                 continue;
@@ -1057,6 +1064,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             const double radius = impl_->sceneryBatches[batchIndex].boundingRadius *
                                   impl_->sceneryProjectionRadiusScale;
             Impl::SceneryInstance instance;
+            instance.motionObjectId = placementMotionObjectId;
             instance.batchIndex = batchIndex;
             instance.mapObjectId = mapObjectId;
             instance.x = worldX;

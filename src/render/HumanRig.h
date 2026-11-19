@@ -1,7 +1,6 @@
 #pragma once
 
 #include "config/HumanConfigLoader.h"
-#include "render/CoreRenderer.h"
 #include "render/HumanSkinning.h"
 
 #include <algorithm>

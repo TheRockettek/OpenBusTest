@@ -14,6 +14,11 @@ function(openbus_add_probe name source)
     endif()
 endfunction()
 
+if(OPENBUS_BUILD_VULKAN_PROBE)
+    openbus_add_probe(OpenBusVulkanBackendProbe VulkanBackendProbe.cpp
+        LIBS openbus_vulkan_backend)
+endif()
+
 # PerfTrace is compiled directly so both instrumentation modes can be tested
 # regardless of the OPENBUS_ENABLE_PERF_TRACE setting used for the modules.
 foreach(variant IN ITEMS Enabled Disabled)
@@ -80,8 +85,40 @@ openbus_add_probe(OpenBusVehicleControlCableProbe VehicleControlCableProbe.cpp
 openbus_add_probe(OpenBusVehicleCatalogProbe VehicleCatalogProbe.cpp LIBS openbus_config)
 openbus_add_probe(OpenBusAiSpotlightSchedulerProbe AiSpotlightSchedulerProbe.cpp)
 target_include_directories(OpenBusAiSpotlightSchedulerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+openbus_add_probe(OpenBusSpotlightShadowSchedulingProbe SpotlightShadowSchedulingProbe.cpp)
+target_include_directories(OpenBusSpotlightShadowSchedulingProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 openbus_add_probe(OpenBusVehicleSpotlightTileMaskProbe VehicleSpotlightTileMaskProbe.cpp)
 target_include_directories(OpenBusVehicleSpotlightTileMaskProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+openbus_add_probe(OpenBusMapLightTileBoundsProbe MapLightTileBoundsProbe.cpp)
+target_include_directories(OpenBusMapLightTileBoundsProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-map-tile-image
+    COMMAND OpenBusMaterialRenderingProbe --gpu-map-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-map-tile-image PROPERTIES
+    ENVIRONMENT "OPENBUS_MAP_LIGHT_GPU_CULLING=1" SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-map-and-spotlight
+    COMMAND OpenBusMaterialRenderingProbe --gpu-map-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-map-and-spotlight PROPERTIES
+    ENVIRONMENT "OPENBUS_MAP_LIGHT_GPU_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=1"
+    SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-map-occupancy
+    COMMAND OpenBusMaterialRenderingProbe --gpu-map-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-map-occupancy PROPERTIES
+    ENVIRONMENT "OPENBUS_MAP_LIGHT_GPU_CULLING=1;OPENBUS_GPU_TIMING=1"
+    SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-map-tile-fallback
+    COMMAND OpenBusMaterialRenderingProbe --gpu-map-tile-fallback)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-map-tile-fallback PROPERTIES
+    ENVIRONMENT "OPENBUS_MAP_LIGHT_GPU_CULLING=1" SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-map-tile-vertex-fallback
+    COMMAND OpenBusMaterialRenderingProbe --gpu-map-tile-vertex-fallback)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-map-tile-vertex-fallback PROPERTIES
+    ENVIRONMENT "OPENBUS_MAP_LIGHT_GPU_CULLING=1;OPENBUS_MAP_LIGHT_VERTEX_EVALUATION=1"
+    SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusSpotlightShadowAtlasProbe SpotlightShadowAtlasProbe.cpp
+    LIBS openbus_render_legacy_gl OpenBus::GLFW)
+set_tests_properties(OpenBusSpotlightShadowAtlasProbe PROPERTIES SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusSpotlightShadowCameraProbe SpotlightShadowCameraProbe.cpp
+    LIBS openbus_render_legacy_gl)
 add_executable(OpenBusVehiclePreferencesProbe VehiclePreferencesProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehiclePreferences.cpp")
 target_include_directories(OpenBusVehiclePreferencesProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
@@ -91,12 +128,12 @@ add_executable(OpenBusVehicleDefinitionProbe VehicleDefinitionProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleDefinition.cpp")
 target_include_directories(OpenBusVehicleDefinitionProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 target_link_libraries(OpenBusVehicleDefinitionProbe PRIVATE openbus_config openbus_core
-    openbus_render)
+    openbus_render_legacy_gl)
 add_test(NAME OpenBusVehicleDefinitionProbe COMMAND OpenBusVehicleDefinitionProbe)
 openbus_add_probe(OpenBusHumanConfigProbe HumanConfigLoaderProbe.cpp
     LIBS openbus_config
     ARGS "${OPENBUS_FIXTURES}/human_driver.hum")
-openbus_add_probe(OpenBusHumanSkinningProbe HumanSkinningProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusHumanSkinningProbe HumanSkinningProbe.cpp LIBS openbus_human_geometry)
 
 # Input
 openbus_add_probe(OpenBusScopedSwapIntervalProbe ScopedSwapIntervalProbe.cpp LIBS openbus_core)
@@ -124,7 +161,7 @@ openbus_add_probe(OpenBusOnFootMovementProbe OnFootMovementProbe.cpp LIBS openbu
 openbus_add_probe(OpenBusPhysicsProbe BusSimulationSteeringProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusStabilityProbe BusSimulationStabilityProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusPhysicsStressProbe BusSimulationStressProbe.cpp
-    LIBS openbus_physics openbus_render)
+    LIBS openbus_physics openbus_render_legacy_gl)
 openbus_add_probe(OpenBusPhysicsContactProbe BusSimulationContactProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusRoadFeaturesProbe RoadFeaturesProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusBusConfigurationCollisionProbe BusConfigurationCollisionProbe.cpp
@@ -152,7 +189,10 @@ openbus_add_probe(OpenBusMapSplineGeometryProbe MapSplineGeometryProbe.cpp LIBS 
 openbus_add_probe(OpenBusMapRoadGeometryProbe MapRoadGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapCoordinatesProbe MapCoordinatesProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapWaterGeometryProbe MapWaterGeometryProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapSurfaceGeometryProbe MapSurfaceGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapSceneryPlacementProbe MapSceneryPlacementProbe.cpp
+    LIBS openbus_map)
+openbus_add_probe(OpenBusSceneryMaterialRuntimeProbe SceneryMaterialRuntimeProbe.cpp
     LIBS openbus_map)
 openbus_add_probe(OpenBusMapCollisionBuilderProbe MapCollisionBuilderProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapCollisionStreamerProbe MapCollisionStreamerProbe.cpp
@@ -266,37 +306,43 @@ target_include_directories(OpenBusSurfaceWeatherUiProbe PRIVATE "${OPENBUS_SOURC
 openbus_add_probe(OpenBusMetarStationUiProbe MetarStationUiProbe.cpp LIBS openbus_imgui)
 target_sources(OpenBusMetarStationUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/MetarStationUi.cpp")
 target_include_directories(OpenBusMetarStationUiProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
-openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusGraphicsPreferencesProbe GraphicsPreferencesProbe.cpp LIBS openbus_core)
-openbus_add_probe(OpenBusMotionDataProbe MotionDataProbe.cpp LIBS openbus_render)
-openbus_add_probe(OpenBusMotionDataGpuProbe MotionDataGpuProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusMotionDataProbe MotionDataProbe.cpp LIBS openbus_motion_data)
+openbus_add_probe(OpenBusMotionDataGpuProbe MotionDataGpuProbe.cpp LIBS openbus_render_legacy_gl)
 set_tests_properties(OpenBusMotionDataGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
-openbus_add_probe(OpenBusHumanGaitProbe HumanGaitProbe.cpp LIBS openbus_render)
-openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusHumanGaitProbe HumanGaitProbe.cpp LIBS openbus_render_legacy_gl)
+openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp
+    LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusReflectionSettingsProbe ReflectionSettingsProbe.cpp
-    LIBS openbus_render NO_TEST)
+    LIBS openbus_render_legacy_gl NO_TEST)
 foreach(mode IN ITEMS default enabled disabled)
     add_test(NAME OpenBusReflectionSettingsProbe.${mode}
         COMMAND OpenBusReflectionSettingsProbe ${mode})
 endforeach()
-openbus_add_probe(OpenBusComputeCullingProbe ComputeCullingProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusComputeCullingProbe ComputeCullingProbe.cpp
+    LIBS openbus_render_legacy_gl)
 add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe --gpu)
 set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusViewpointProbe ViewpointProbe.cpp LIBS openbus_core)
-openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp LIBS openbus_render)
-openbus_add_probe(OpenBusCloudRenderingProbe CloudRenderingProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp
+    LIBS openbus_render_legacy_gl)
+openbus_add_probe(OpenBusCloudRenderingProbe CloudRenderingProbe.cpp
+    LIBS openbus_render_legacy_gl)
 set_tests_properties(OpenBusCloudRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
-openbus_add_probe(OpenBusPrecipitationRenderingProbe PrecipitationRenderingProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusPrecipitationRenderingProbe PrecipitationRenderingProbe.cpp
+    LIBS openbus_render_legacy_gl)
 set_tests_properties(OpenBusPrecipitationRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
-openbus_add_probe(OpenBusMapTextureScaleProbe MapTextureScaleProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusMapTextureScaleProbe MapTextureScaleProbe.cpp
+    LIBS openbus_render_legacy_gl)
 set_tests_properties(OpenBusMapTextureScaleProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusMapOcclusionRenderingProbe MapOcclusionRenderingProbe.cpp
-    LIBS openbus_render)
+    LIBS openbus_render_legacy_gl)
 set_tests_properties(OpenBusMapOcclusionRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusMapTrafficLightRenderingProbe MapTrafficLightRenderingProbe.cpp
-    LIBS openbus_render)
+    LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusMapSceneryTexcoordRenderingProbe MapSceneryTexcoordRenderingProbe.cpp
-    LIBS openbus_render NO_TEST)
+    LIBS openbus_render_legacy_gl NO_TEST)
 add_test(NAME OpenBusHumanSkinningRenderingProbe
     COMMAND OpenBusMapSceneryTexcoordRenderingProbe --human-skinning)
 set_tests_properties(OpenBusHumanSkinningRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
@@ -402,13 +448,50 @@ set_tests_properties(OpenBusMaterialRenderingProbe.vertex-map-lighting PROPERTIE
     ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_MAP_LIGHT_LIMIT=250;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250;OPENBUS_REFLECTION_AMBIENT_FLOOR=0.25;OPENBUS_MAP_LIGHT_VERTEX_EVALUATION=1")
 add_test(NAME OpenBusMaterialRenderingProbe.spotlight-tile-image
     COMMAND OpenBusMaterialRenderingProbe --spotlight-tile-image)
+add_test(NAME OpenBusMaterialRenderingProbe.spotlight-shadow-image
+    COMMAND OpenBusMaterialRenderingProbe --spotlight-shadow-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.spotlight-shadow-image PROPERTIES
+    SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusMaterialRenderingProbe.spotlight-shadow-tiled-image
+    COMMAND OpenBusMaterialRenderingProbe --spotlight-shadow-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.spotlight-shadow-tiled-image PROPERTIES
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1" SKIP_RETURN_CODE 77)
 set_tests_properties(OpenBusMaterialRenderingProbe.spotlight-tile-image PROPERTIES
     SKIP_RETURN_CODE 77
-    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250")
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=0;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250")
+add_test(NAME OpenBusMaterialRenderingProbe.large-spotlight-tile-image
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENBUS_VEHICLE_SPOTLIGHT_LIMIT
+        $<TARGET_FILE:OpenBusMaterialRenderingProbe> --large-spotlight-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.large-spotlight-tile-image PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=0")
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-spotlight-tile-image
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENBUS_VEHICLE_SPOTLIGHT_LIMIT
+        $<TARGET_FILE:OpenBusMaterialRenderingProbe> --gpu-spotlight-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-spotlight-tile-image PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=1;OPENBUS_GPU_TIMING=1;OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES=1")
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-spotlight-indirect-image
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENBUS_VEHICLE_SPOTLIGHT_LIMIT
+        $<TARGET_FILE:OpenBusMaterialRenderingProbe> --gpu-spotlight-tile-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-spotlight-indirect-image PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=1;OPENBUS_GPU_TIMING=1;OPENBUS_GPU_TIMING_SAMPLE_EVERY_N_FRAMES=1;OPENBUS_CULLING_BACKEND=compute-indirect")
+add_test(NAME OpenBusMaterialRenderingProbe.gpu-spotlight-fallback-image
+    COMMAND OpenBusMaterialRenderingProbe --gpu-spotlight-fallback-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.gpu-spotlight-fallback-image PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=1;OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=250")
 add_test(NAME OpenBusMaterialRenderingProbe.unlimited
     COMMAND ${CMAKE_COMMAND} -E env --unset=OPENBUS_MAP_LIGHT_LIMIT
         --unset=OPENBUS_VEHICLE_SPOTLIGHT_LIMIT
         $<TARGET_FILE:OpenBusMaterialRenderingProbe>)
+add_test(NAME OpenBusMaterialRenderingProbe.large-light-image
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENBUS_MAP_LIGHT_LIMIT
+        --unset=OPENBUS_VEHICLE_SPOTLIGHT_LIMIT
+        $<TARGET_FILE:OpenBusMaterialRenderingProbe> --large-light-image)
+set_tests_properties(OpenBusMaterialRenderingProbe.large-light-image
+    PROPERTIES SKIP_RETURN_CODE 77)
 set_tests_properties(OpenBusMaterialRenderingProbe.unlimited PROPERTIES
     SKIP_RETURN_CODE 77
     ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0")
@@ -424,9 +507,10 @@ foreach(limit IN ITEMS zero one)
         SKIP_RETURN_CODE 77 ENVIRONMENT "OPENBUS_VEHICLE_SPOTLIGHT_LIMIT=${value}")
 endforeach()
 openbus_add_probe(OpenBusVehicleDrawSortingProbe VehicleDrawSortingProbe.cpp
-    LIBS openbus_render)
+    LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusVehicleIndirectReuseProbe VehicleIndirectReuseProbe.cpp
-    LIBS openbus_audio openbus_input openbus_map openbus_physics openbus_render openbus_scripting)
+    LIBS openbus_audio openbus_input openbus_map openbus_physics openbus_render_legacy_gl
+    openbus_scripting)
 target_sources(OpenBusVehicleIndirectReuseProbe PRIVATE
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/Vehicle.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleAnimation.cpp"
@@ -465,13 +549,13 @@ add_test(NAME OpenBusVehicleCompressedMipmapsProbe
     COMMAND OpenBusVehicleIndirectReuseProbe --compressed-mipmaps)
 set_tests_properties(OpenBusVehicleCompressedMipmapsProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp
-    LIBS openbus_render)
+    LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusVehiclePassengerRequestProbe VehiclePassengerRequestProbe.cpp
     LIBS openbus_core)
 openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp
-    LIBS openbus_render)
+    LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusTextureAddressModeProbe TextureAddressModeProbe.cpp
-    LIBS openbus_render)
+    LIBS openbus_render_legacy_gl)
 openbus_add_probe(OpenBusStaticPrimitiveBufferProbe StaticPrimitiveBufferProbe.cpp)
 target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 

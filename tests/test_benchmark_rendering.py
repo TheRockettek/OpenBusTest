@@ -266,7 +266,20 @@ class TraceSummaryTests(unittest.TestCase):
                     "GPU_TIMING interval_s=2.000 "
                     "main_view_samples=4 main_view_avg_ms=3.250 main_view_max_ms=5.000 "
                     "main_view_dropped=1 reflection_samples=2 reflection_avg_ms=1.500 "
-                    "reflection_max_ms=2.000 reflection_dropped=0\n"
+                    "reflection_max_ms=2.000 reflection_dropped=0 "
+                    "spotlight_shadow_samples=2 spotlight_shadow_avg_ms=1.250 "
+                    "spotlight_shadow_max_ms=1.500 spotlight_shadow_dropped=1 "
+                    "spotlight_cull_samples=3 spotlight_cull_avg_ms=0.030 "
+                    "spotlight_cull_max_ms=0.040 spotlight_cull_dropped=2 "
+                    "map_light_cull_samples=2 map_light_cull_avg_ms=0.050 "
+                    "map_light_cull_max_ms=0.060 map_light_cull_dropped=1\n"
+                    "LIGHTING_UPLOAD interval_s=2.1 vehicle_selection_views=7 "
+                    "player_spotlight_candidates_total=7 ai_spotlight_candidates_total=40 "
+                    "spotlight_shadow_frames=6 spotlight_shadow_selected_total=17 "
+                    "spotlight_shadow_selected_max=4 spotlight_shadow_updates=11 "
+                    "map_registered_max=345 map_gpu_tile_fallback_sets=5 "
+                    "map_gpu_tile_fallback_density=5\n"
+                    "LIGHTING_UPLOAD interval_s=1.9 vehicle_sets=2 map_registered_max=3\n"
                 )
                 Path(kwargs["env"]["OPENBUS_TRACE_FILE"]).write_text(
                     json.dumps({"traceEvents": events}), encoding="utf-8"
@@ -299,8 +312,34 @@ class TraceSummaryTests(unittest.TestCase):
             self.assertEqual(gpu_rows[0]["ReflectionSamples"], "2")
             self.assertEqual(gpu_rows[0]["ReflectionMaxMs"], "2.0")
             self.assertEqual(gpu_rows[0]["ReflectionDropped"], "0")
+            self.assertEqual(gpu_rows[0]["SpotlightShadowSamples"], "2")
+            self.assertEqual(gpu_rows[0]["SpotlightShadowAverageMs"], "1.25")
+            self.assertEqual(gpu_rows[0]["SpotlightShadowMaxMs"], "1.5")
+            self.assertEqual(gpu_rows[0]["SpotlightShadowDropped"], "1")
+            self.assertEqual(gpu_rows[0]["SpotlightCullSamples"], "3")
+            self.assertEqual(gpu_rows[0]["SpotlightCullAverageMs"], "0.03")
+            self.assertEqual(gpu_rows[0]["SpotlightCullMaxMs"], "0.04")
+            self.assertEqual(gpu_rows[0]["SpotlightCullDropped"], "2")
+            self.assertEqual(gpu_rows[0]["MapLightCullSamples"], "2")
+            self.assertEqual(gpu_rows[0]["MapLightCullAverageMs"], "0.05")
+            self.assertEqual(gpu_rows[0]["MapLightCullMaxMs"], "0.06")
+            self.assertEqual(gpu_rows[0]["MapLightCullDropped"], "1")
             self.assertEqual(gpu_rows[0]["ForceVehicleSpotlights"], "False")
             self.assertEqual(gpu_rows[0]["TraceMinDurationUs"], "1")
+            with (output / "render_benchmark_lighting_upload.csv").open(
+                newline="", encoding="utf-8-sig"
+            ) as result_file:
+                lighting_rows = list(csv.DictReader(result_file))
+            self.assertEqual(len(lighting_rows), 2)
+            self.assertEqual(lighting_rows[0]["IntervalIndex"], "1")
+            self.assertEqual(lighting_rows[0]["IntervalSeconds"], "2.1")
+            self.assertEqual(lighting_rows[0]["vehicle_selection_views"], "7")
+            self.assertEqual(lighting_rows[0]["ai_spotlight_candidates_total"], "40")
+            self.assertEqual(lighting_rows[0]["spotlight_shadow_selected_max"], "4")
+            self.assertEqual(lighting_rows[0]["spotlight_shadow_updates"], "11")
+            self.assertEqual(lighting_rows[0]["map_gpu_tile_fallback_density"], "5")
+            self.assertEqual(lighting_rows[1]["IntervalIndex"], "2")
+            self.assertEqual(lighting_rows[1]["map_gpu_tile_fallback_density"], "")
             self.assertEqual(gpu_rows[0]["ConfiguredAiVehicleCount"], "0")
             self.assertEqual(gpu_rows[0]["AiSpotlightNearMeters"], "60")
             self.assertEqual(gpu_rows[0]["AiSpotlightFarFrames"], "20")
@@ -483,6 +522,26 @@ class TraceSummaryTests(unittest.TestCase):
             {"GpuTimingStatus": "disabled", "GpuTimingSampleEveryNFrames": ""},
         )
 
+    def test_lighting_upload_parser_handles_old_and_invalid_logs(self):
+        samples = benchmark_rendering.parse_lighting_upload_summaries(
+            "LIGHTING_UPLOAD interval_s=1.5 vehicle_sets=2 map_lights_max=9\n"
+            "LIGHTING_UPLOAD interval_s=2 map_gpu_tile_fallback_density=4\n"
+        )
+        self.assertEqual(len(samples), 2)
+        self.assertEqual(samples[0]["vehicle_sets"], 2)
+        self.assertEqual(samples[0]["map_gpu_tile_fallback_density"], "")
+        self.assertEqual(samples[1]["map_gpu_tile_fallback_density"], 4)
+        for line in (
+            "LIGHTING_UPLOAD vehicle_sets=1",
+            "LIGHTING_UPLOAD interval_s=nan vehicle_sets=1",
+            "LIGHTING_UPLOAD interval_s=-1 vehicle_sets=1",
+            "LIGHTING_UPLOAD interval_s=1 vehicle_sets=-1",
+            "LIGHTING_UPLOAD interval_s=1 vehicle_sets=broken",
+            "LIGHTING_UPLOAD interval_s=1 vehicle_sets=1 vehicle_sets=2",
+        ):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                benchmark_rendering.parse_lighting_upload_summaries(line)
+
     def test_gpu_timing_summary_parser_reads_samples_and_dropped_counts(self):
         log_text = (
             "[INFO] Game GPU_TIMING interval_s=2.000 "
@@ -507,6 +566,18 @@ class TraceSummaryTests(unittest.TestCase):
                     "ReflectionAverageMs": 1.5,
                     "ReflectionMaxMs": 2.0,
                     "ReflectionDropped": 0,
+                    "SpotlightShadowSamples": "",
+                    "SpotlightShadowAverageMs": "",
+                    "SpotlightShadowMaxMs": "",
+                    "SpotlightShadowDropped": "",
+                    "SpotlightCullSamples": "",
+                    "SpotlightCullAverageMs": "",
+                    "SpotlightCullMaxMs": "",
+                    "SpotlightCullDropped": "",
+                    "MapLightCullSamples": "",
+                    "MapLightCullAverageMs": "",
+                    "MapLightCullMaxMs": "",
+                    "MapLightCullDropped": "",
                 },
                 {
                     "IntervalSeconds": 2.1,
@@ -518,6 +589,18 @@ class TraceSummaryTests(unittest.TestCase):
                     "ReflectionAverageMs": "",
                     "ReflectionMaxMs": "",
                     "ReflectionDropped": 2,
+                    "SpotlightShadowSamples": "",
+                    "SpotlightShadowAverageMs": "",
+                    "SpotlightShadowMaxMs": "",
+                    "SpotlightShadowDropped": "",
+                    "SpotlightCullSamples": "",
+                    "SpotlightCullAverageMs": "",
+                    "SpotlightCullMaxMs": "",
+                    "SpotlightCullDropped": "",
+                    "MapLightCullSamples": "",
+                    "MapLightCullAverageMs": "",
+                    "MapLightCullMaxMs": "",
+                    "MapLightCullDropped": "",
                 },
             ],
         )
@@ -527,6 +610,94 @@ class TraceSummaryTests(unittest.TestCase):
             benchmark_rendering.parse_gpu_timing_summaries(
                 "GPU_TIMING interval_s=2.000 main_view_samples=broken"
             )
+        base = (
+            "GPU_TIMING interval_s=2 main_view_samples=0 main_view_dropped=0 "
+            "reflection_samples=0 reflection_dropped=0 "
+        )
+        for suffix in (
+            "spotlight_shadow_samples=1",
+            "spotlight_shadow_samples=1 spotlight_shadow_dropped=0",
+            "spotlight_shadow_samples=bad spotlight_shadow_dropped=0",
+        ):
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(
+                ValueError, "Malformed GPU timing summary"
+            ):
+                benchmark_rendering.parse_gpu_timing_summaries(base + suffix)
+        with self.assertRaisesRegex(ValueError, "Invalid GPU timing values"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                base + "spotlight_shadow_samples=0 spotlight_shadow_dropped=-1"
+            )
+        with self.assertRaisesRegex(ValueError, "Invalid GPU timing values"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                base + "spotlight_shadow_samples=1 spotlight_shadow_dropped=0 "
+                "spotlight_shadow_avg_ms=nan spotlight_shadow_max_ms=1"
+            )
+        for suffix in (
+            "spotlight_cull_samples=1",
+            "spotlight_cull_samples=1 spotlight_cull_dropped=0",
+            "spotlight_cull_samples=bad spotlight_cull_dropped=0",
+        ):
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(
+                ValueError, "Malformed GPU timing summary"
+            ):
+                benchmark_rendering.parse_gpu_timing_summaries(base + suffix)
+        with self.assertRaisesRegex(ValueError, "Invalid GPU timing values"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                base + "spotlight_cull_samples=0 spotlight_cull_dropped=-1"
+            )
+        with self.assertRaisesRegex(ValueError, "Invalid GPU timing values"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                base
+                + "spotlight_cull_samples=1 spotlight_cull_dropped=0 "
+                "spotlight_cull_avg_ms=nan spotlight_cull_max_ms=1"
+            )
+        for suffix in (
+            "map_light_cull_samples=1",
+            "map_light_cull_samples=1 map_light_cull_dropped=0",
+            "map_light_cull_samples=bad map_light_cull_dropped=0",
+        ):
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(
+                ValueError, "Malformed GPU timing summary"
+            ):
+                benchmark_rendering.parse_gpu_timing_summaries(base + suffix)
+        with self.assertRaisesRegex(ValueError, "Invalid GPU timing values"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                base + "map_light_cull_samples=0 map_light_cull_dropped=-1"
+            )
+        with self.assertRaisesRegex(ValueError, "Invalid GPU timing values"):
+            benchmark_rendering.parse_gpu_timing_summaries(
+                base + "map_light_cull_samples=1 map_light_cull_dropped=0 "
+                "map_light_cull_avg_ms=nan map_light_cull_max_ms=1"
+            )
+
+    def test_gpu_spotlight_timing_with_no_samples(self):
+        shadow_summary = benchmark_rendering.parse_gpu_timing_summaries(
+            "GPU_TIMING interval_s=2 main_view_samples=0 main_view_dropped=0 "
+            "reflection_samples=0 reflection_dropped=0 "
+            "spotlight_shadow_samples=0 spotlight_shadow_dropped=4"
+        )[0]
+        self.assertEqual(shadow_summary["SpotlightShadowSamples"], 0)
+        self.assertEqual(shadow_summary["SpotlightShadowAverageMs"], "")
+        self.assertEqual(shadow_summary["SpotlightShadowMaxMs"], "")
+        self.assertEqual(shadow_summary["SpotlightShadowDropped"], 4)
+        summary = benchmark_rendering.parse_gpu_timing_summaries(
+            "GPU_TIMING interval_s=2 main_view_samples=0 main_view_dropped=0 "
+            "reflection_samples=0 reflection_dropped=0 "
+            "spotlight_cull_samples=0 spotlight_cull_dropped=7"
+        )[0]
+        self.assertEqual(summary["SpotlightCullSamples"], 0)
+        self.assertEqual(summary["SpotlightCullAverageMs"], "")
+        self.assertEqual(summary["SpotlightCullMaxMs"], "")
+        self.assertEqual(summary["SpotlightCullDropped"], 7)
+        summary = benchmark_rendering.parse_gpu_timing_summaries(
+            "GPU_TIMING interval_s=2 main_view_samples=0 main_view_dropped=0 "
+            "reflection_samples=0 reflection_dropped=0 "
+            "map_light_cull_samples=0 map_light_cull_dropped=3"
+        )[0]
+        self.assertEqual(summary["MapLightCullSamples"], 0)
+        self.assertEqual(summary["MapLightCullAverageMs"], "")
+        self.assertEqual(summary["MapLightCullMaxMs"], "")
+        self.assertEqual(summary["MapLightCullDropped"], 3)
 
 
 if __name__ == "__main__":

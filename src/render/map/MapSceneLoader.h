@@ -5,13 +5,18 @@
 
 #include "render/map/MapRendererInternal.h"
 #include "render/map/PreparedMapTextures.h"
+#include "render/map/PreparedMapScenery.h"
 #include "render/map/PreparedTerrainTexturePaths.h"
 #include "render/map/SharedMapTextureImages.h"
 #include "render/AssetRequestManager.h"
 #include "config/SceneryObjectConfigLoader.h"
+#include "map/MapRoadGeometry.h"
+#include "map/MapSurfaceGeometry.h"
 
+#include <atomic>
 #include <exception>
 #include <future>
+#include <memory>
 #include <tuple>
 
 namespace openbus::rendering {
@@ -32,6 +37,8 @@ class MapSceneLoader {
     // Loads map-wide indexes and shared textures.
     void load();
     bool finishLoad(bool waitForCompletion);
+    [[nodiscard]] std::shared_ptr<const openbus::map::MapRoadConnectionIndex>
+    roadConnectionIndex() const noexcept;
     bool roadTrafficLaneNetworkReady() const noexcept {
         return loadFinished_ && !roadTrafficLaneNetworkDirty &&
                !pendingRoadTrafficLaneNetworkFinalization_.valid();
@@ -55,76 +62,10 @@ class MapSceneLoader {
 
     struct PreparedTerrainTile {
         openbus::map::TerrainGrid grid;
-        std::vector<TerrainVertex> vertices;
-        std::vector<std::uint32_t> indices;
+        openbus::map::MapTerrainMesh geometry;
         std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
         std::unordered_map<std::string, std::string> textureErrors;
         PreparedTerrainTexturePaths texturePaths;
-        float minimumHeight = 0.0F;
-        float maximumHeight = 0.0F;
-    };
-
-    struct PreparedSceneryMesh {
-        std::shared_ptr<ParsedObj> parsed;
-        std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
-        std::size_t invalidPositionIndices = 0;
-        std::exception_ptr preparationError;
-    };
-
-    struct PreparedSceneryAuxTexture {
-        std::string name;
-        std::filesystem::path path;
-        std::string preparationError;
-    };
-
-    struct PreparedSceneryBatch {
-        std::string meshKey;
-        int materialIndex = 0;
-        Impl::ModelBatch batch;
-        std::string textureName;
-        std::string transmapTextureName;
-        std::string freeTextureName;
-        std::filesystem::path texturePath;
-        std::shared_ptr<const SharedMapTextureImages::SeasonalPaths> seasonTexturePaths;
-        std::filesystem::path transmapTexturePath;
-        PreparedSceneryAuxTexture lightmap;
-        PreparedSceneryAuxTexture nightmap;
-        std::vector<PreparedSceneryAuxTexture> itemLightmaps;
-        std::vector<PreparedSceneryAuxTexture> itemNightmaps;
-        PreparedSceneryAuxTexture bumpmap;
-        PreparedSceneryAuxTexture environment;
-        std::filesystem::path freeTexturePath;
-        bool hasMaterialState = false;
-        int stateAlphaMode = 0;
-    };
-
-    struct PreparedSceneryTreeBatch {
-        std::vector<ModelVertex> vertices;
-        std::string textureName;
-        std::filesystem::path texturePath;
-        std::shared_ptr<const SharedMapTextureImages::SeasonalPaths> seasonTexturePaths;
-        Impl::ModelBatch batch;
-    };
-
-    struct PreparedSceneryAsset {
-        SceneryObjectConfig objectConfiguration;
-        ModelConfig modelConfiguration;
-        openbus::scripting::SceneryObject variables;
-        std::unordered_map<std::string, PreparedSceneryMesh> meshes;
-        std::vector<PreparedSceneryBatch> batches;
-        std::vector<PreparedSceneryTreeBatch> treeBatches;
-        std::unordered_map<std::string, std::filesystem::path> resolvedTexturePaths;
-        std::unordered_map<std::string, std::string> auxiliaryTexturePreparationErrors;
-        std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
-        std::size_t textureLookups = 0;
-        std::size_t textureResolutions = 0;
-        std::filesystem::path modelConfigPath;
-        std::filesystem::path modelRoot;
-        std::filesystem::path externalModelConfigPath;
-        bool usesExternalModelConfig = false;
-        bool externalModelConfigMissing = false;
-        bool hasModelConfiguration = false;
-        std::exception_ptr preparationError;
     };
 
     struct PendingSceneryAsset {
@@ -146,11 +87,7 @@ class MapSceneLoader {
         std::unordered_set<std::string> editorOnlyProfileKeys;
         std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
         std::unordered_map<std::string, std::string> textureErrors;
-        std::vector<ModelVertex> waterVertices;
-        std::vector<std::uint32_t> waterIndices;
-        double waterMinimumHeight = 0.0;
-        double waterMaximumHeight = 0.0;
-        double waterMeanHeight = 0.0;
+        openbus::map::MapWaterMesh waterGeometry;
         std::string waterError;
         std::optional<openbus::map::WaterData> waterData;
     };
@@ -231,10 +168,7 @@ class MapSceneLoader {
     void recordTilePreparationFailure(std::uint64_t tileKeyValue, bool terrainPreparation,
                                       const std::string& stage, const std::filesystem::path& path,
                                       std::exception_ptr error, bool waitForCompletion);
-    static PreparedSceneryAsset prepareSceneryAsset(const std::filesystem::path& configPath,
-                                                    const std::filesystem::path& omsiRoot,
-                                                    SharedMapTextureImages& textureImages);
-    static PreparedSceneryMesh prepareSceneryMesh(const std::filesystem::path& meshPath);
+    static Impl::ModelBatch makeOpenGLSceneryBatch(const openbus::map::MapSceneryBatch& source);
     void resolveTrafficLightVariableParents();
     bool uploadRoadBatches(bool waitForCompletion);
 
@@ -381,7 +315,8 @@ class MapSceneLoader {
     std::unordered_map<int, int> mapObjectVariableParentsById;
     std::unordered_map<int, openbus::map::MapSplinePlacementReference> mapSplinesById;
     std::unordered_set<int> ambiguousMapSplineIds;
-    openbus::map::MapRoadConnectionIndex roadConnections;
+    std::shared_ptr<openbus::map::MapRoadConnectionIndex> roadConnections;
+    std::atomic<bool> roadConnectionIndexReady_{false};
     openbus::map::MapSplineChainResolver mapSplineResolver;
     std::unordered_map<int, ResolvedSceneryPlacement> resolvedPlacements;
     std::unordered_set<int> indexedSceneryLightObjects_;

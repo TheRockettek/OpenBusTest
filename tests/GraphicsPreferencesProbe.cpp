@@ -55,7 +55,8 @@ int main() {
                     "[lighting]\nscenery_light_limit = 128\n"
                     "[antialiasing]\nmode = smaa\n"
                     "[rendering]\nscale = 0.75\n"
-                    "[advanced]\nvehicle_frustum_culling = false\n");
+                    "[advanced]\nvehicle_frustum_culling = false\n"
+                    "[debug]\ntemporal_view = motion_magnitude\n");
         auto file = loadGraphicsPreferences(path);
         require(file.values.windowMode == "exclusive" && file.values.width == 2560 &&
                     file.values.height == 1440 && file.values.refreshRate == 144 &&
@@ -67,7 +68,8 @@ int main() {
                     file.values.antiAliasingMode == "smaa" &&
                     file.values.renderScale == 0.75 &&
                     !file.values.vehicleFrustumCulling &&
-                    !file.values.vsync && file.values.fpsCap == 60.0,
+                    !file.values.vsync && file.values.fpsCap == 60.0 &&
+                    file.values.temporalDebugView == "motion_magnitude",
                 "known settings were not loaded");
         file.values.reflectionSize = 512;
         file.values.reflectionInterval = 2;
@@ -100,11 +102,13 @@ int main() {
         externalValues.antiAliasingMode = "off";
         externalValues.renderScale = 0.5;
         externalValues.vehicleFrustumCulling = false;
+        externalValues.temporalDebugView = "linear_depth";
         editedValues.width = 1280;
         editedValues.fpsCap = 75.0;
         editedValues.vehicleTextureScale = 0.75;
         editedValues.renderScale = 0.85;
         editedValues.vehicleFrustumCulling = true;
+        editedValues.temporalDebugView = "motion_vectors";
         const auto merged = mergeGraphicsPreferences(file.values, editedValues, externalValues);
         require(merged.reflectionSize == 256 && merged.windowMode == "borderless" &&
                     merged.anisotropicFiltering == 4 && !merged.generateTextureMipmaps &&
@@ -113,7 +117,8 @@ int main() {
                     merged.width == 1280 &&
                     merged.vehicleTextureScale == 0.75 &&
                     merged.antiAliasingMode == "off" && merged.fpsCap == 75.0 &&
-                    merged.renderScale == 0.85 && merged.vehicleFrustumCulling,
+                    merged.renderScale == 0.85 && merged.vehicleFrustumCulling &&
+                    merged.temporalDebugView == "motion_vectors",
                 "saving an edit must retain unrelated external changes");
         auto changedValues = file.values;
         changedValues.generateTextureMipmaps = false;
@@ -151,6 +156,7 @@ int main() {
                                           "[rendering]\nscale = 1.5\n",
                                           "[display]\nvsync = true\nvsync = false\n",
                                           "[reflections]\nsize = 400\n",
+                                          "[debug]\ntemporal_view = unknown\n",
                                           "[visibility]\nmain_minimum_object_percent = 101\n",
                                           "[display\nfps_cap = 60\n"}) {
             write(path, invalid);

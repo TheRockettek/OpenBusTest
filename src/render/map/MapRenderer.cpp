@@ -4,6 +4,7 @@
 #include "render/map/MapRendererInternal.h"
 #include "render/map/MapSceneLoader.h"
 #include "render/AssetRequestManager.h"
+#include "render/HumanMeshGeometry.h"
 #include "render/HumanRig.h"
 #include "config/HumanConfigLoader.h"
 #include "core/Utf8Path.h"
@@ -60,9 +61,11 @@ Matrix4 bentPoleTransform(const Matrix4& baseTransform, const MapPoleState& stat
 } // namespace map_detail
 
 MapRenderer::Impl::~Impl() {
-    releaseStaticPrimitiveBuffer(occlusionProxyBuffer);
-    releaseStaticMapLights(sceneryMapLightBuffer);
-    if (!occlusionQueries.empty() && pglDeleteQueries != nullptr) {
+    if (openGLResourcesEnabled) {
+        releaseStaticPrimitiveBuffer(occlusionProxyBuffer);
+        releaseStaticMapLights(sceneryMapLightBuffer);
+    }
+    if (openGLResourcesEnabled && !occlusionQueries.empty() && pglDeleteQueries != nullptr) {
         pglDeleteQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
     }
     const auto deleteBuffer = [](GLuint buffer) {
@@ -76,35 +79,40 @@ MapRenderer::Impl::~Impl() {
             deleteBuffer(batch.indexBuffer);
         }
     };
-    deleteBatchBuffers(terrainBuffers);
-    deleteBatchBuffers(waterBatches);
-    deleteBatchBuffers(sceneryBatches);
-    deleteBatchBuffers(roadBatches);
-    for (const auto& batch : sceneryBatches) {
-        deleteBuffer(batch.skinWeightBuffer);
-        deleteBuffer(batch.seatedSkinWeightBuffer);
-    }
-    for (const GLuint ownedTexture : ownedTextures) {
-        if (ownedTexture != 0) {
-            glDeleteTextures(1, &ownedTexture);
+    if (openGLResourcesEnabled) {
+        deleteBatchBuffers(terrainBuffers);
+        deleteBatchBuffers(waterBatches);
+        deleteBatchBuffers(sceneryBatches);
+        deleteBatchBuffers(roadBatches);
+        for (const auto& batch : sceneryBatches) {
+            deleteBuffer(batch.skinWeightBuffer);
+            deleteBuffer(batch.seatedSkinWeightBuffer);
+        }
+        for (const GLuint ownedTexture : ownedTextures) {
+            if (ownedTexture != 0) {
+                glDeleteTextures(1, &ownedTexture);
+            }
+        }
+        if (texture != 0) {
+            glDeleteTextures(1, &texture);
+        }
+        if (!ownedTextures.empty() || texture != 0) {
+            invalidateTextureBindings();
         }
     }
-    if (texture != 0) {
-        glDeleteTextures(1, &texture);
-    }
-    if (!ownedTextures.empty() || texture != 0)
-        invalidateTextureBindings();
 }
 
 MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
                          double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
                          const std::filesystem::path& omsiRoot, SimulationState& simulationState,
-                         AssetRequestManager& assetRequests, bool prepareInitialWindowAsync)
-    : mapDefinition_(map), impl_(std::make_unique<Impl>()),
+                         AssetRequestManager& assetRequests, bool prepareInitialWindowAsync,
+                         bool enableOpenGLUploads)
+    : mapDefinition_(map), groundTextureIndex_(groundTextureIndex), impl_(std::make_unique<Impl>()),
       scriptsEnabled_(!prepareInitialWindowAsync), asyncInitialLoad_(prepareInitialWindowAsync) {
     TraceScope trace("map", "MapRenderer::MapRenderer");
     assetRequests_ = &assetRequests;
     impl_->simulationState = &simulationState;
+    impl_->openGLResourcesEnabled = enableOpenGLUploads;
     for (const auto& definition : mapDefinition_.metadata.seasons) {
         const auto period = parseTreeSeason(definition);
         if (period) {
@@ -141,6 +149,147 @@ bool MapRenderer::leftHandTraffic() const noexcept {
 
 double MapRenderer::tileSize() const noexcept {
     return impl_->coordinates.tileSize;
+}
+
+int MapRenderer::activeTileRadius() const noexcept {
+    return MAP_ACTIVE_TILE_RADIUS;
+}
+
+MapSceneryAssetSources MapRenderer::activeSceneryAssetSources() const {
+    MapSceneryAssetSources sources;
+    if (!initialWindowReady()) {
+        return sources;
+    }
+
+    std::unordered_set<std::string> assetKeys;
+    std::unordered_set<std::string> seasonalTextureKeys;
+    const auto normalizeKey = [](const std::filesystem::path& path) {
+        std::string key = openbus::pathToUtf8(path.lexically_normal());
+#if defined(_WIN32) || defined(WIN32)
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+#endif
+        return key;
+    };
+    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+        const auto references = impl_->sceneryInstancesBySourceTile.find(tileKey(tileX, tileY));
+        if (references == impl_->sceneryInstancesBySourceTile.end()) {
+            continue;
+        }
+        for (const Impl::SceneryInstanceReference& reference : references->second) {
+            const auto chunk = impl_->sceneryChunks.find(reference.chunkKey);
+            if (chunk == impl_->sceneryChunks.end() ||
+                reference.instanceIndex >= chunk->second.instances.size()) {
+                continue;
+            }
+            const Impl::SceneryInstance& instance =
+                chunk->second.instances[reference.instanceIndex];
+            if (instance.batchIndex >= impl_->sceneryBatches.size()) {
+                continue;
+            }
+            const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
+            if (batch.sourceConfigPath.empty()) {
+                throw std::logic_error("Active scenery batch has no source configuration path");
+            }
+            const std::filesystem::path configPath = batch.sourceConfigPath.lexically_normal();
+            if (assetKeys.insert(normalizeKey(configPath)).second) {
+                sources.assets.emplace_back(configPath, impl_->omsiRoot);
+            }
+            if (!batch.seasonalSceneryTextures) {
+                continue;
+            }
+            for (const std::filesystem::path& path : batch.seasonalSceneryTextures->paths) {
+                if (!path.empty() && seasonalTextureKeys.insert(normalizeKey(path)).second) {
+                    sources.seasonalTextures.push_back(path.lexically_normal());
+                }
+            }
+        }
+    }
+    return sources;
+}
+
+std::vector<MapSceneryPlacementSnapshot> MapRenderer::activeSceneryPlacements() const {
+    std::vector<MapSceneryPlacementSnapshot> placements;
+    if (!initialWindowReady()) {
+        return placements;
+    }
+
+    std::unordered_map<std::uint64_t, std::size_t> placementByMotionId;
+    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+        const auto references = impl_->sceneryInstancesBySourceTile.find(tileKey(tileX, tileY));
+        if (references == impl_->sceneryInstancesBySourceTile.end()) {
+            continue;
+        }
+        for (const Impl::SceneryInstanceReference& reference : references->second) {
+            const auto chunk = impl_->sceneryChunks.find(reference.chunkKey);
+            if (chunk == impl_->sceneryChunks.end() ||
+                reference.instanceIndex >= chunk->second.instances.size()) {
+                continue;
+            }
+            const Impl::SceneryInstance& instance =
+                chunk->second.instances[reference.instanceIndex];
+            if (instance.batchIndex >= impl_->sceneryBatches.size()) {
+                continue;
+            }
+            if (instance.motionObjectId == 0) {
+                throw std::logic_error("Active scenery placement has no motion identifier");
+            }
+            const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
+            if (batch.sourceConfigPath.empty()) {
+                throw std::logic_error("Active scenery batch has no source configuration path");
+            }
+            const ::Variables* variables = nullptr;
+            ::ScriptRuntime* scriptRuntime = nullptr;
+            if (instance.scriptStateIndex < impl_->sceneryScriptStates.size() &&
+                impl_->sceneryScriptStates[instance.scriptStateIndex]) {
+                variables = &impl_->sceneryScriptStates[instance.scriptStateIndex]->variables;
+                scriptRuntime =
+                    impl_->sceneryScriptStates[instance.scriptStateIndex]->runtime.get();
+            }
+            const auto existing = placementByMotionId.find(instance.motionObjectId);
+            if (existing != placementByMotionId.end()) {
+                MapSceneryPlacementSnapshot& placement = placements[existing->second];
+                if (placement.configPath != batch.sourceConfigPath.lexically_normal() ||
+                    placement.worldTransform != instance.transform ||
+                    placement.variables != variables || placement.scriptRuntime != scriptRuntime) {
+                    throw std::logic_error(
+                        "Scenery material batches disagree on their shared placement state");
+                }
+                placement.boundingRadius =
+                    std::max(placement.boundingRadius, instance.boundingRadius);
+                continue;
+            }
+            placementByMotionId.emplace(instance.motionObjectId, placements.size());
+            placements.push_back({instance.motionObjectId,
+                                  batch.sourceConfigPath.lexically_normal(),
+                                  instance.transform,
+                                  {instance.x, instance.y, instance.z},
+                                  instance.boundingRadius,
+                                  instance.sourceTileX,
+                                  instance.sourceTileY,
+                                  variables,
+                                  scriptRuntime});
+        }
+    }
+    return placements;
+}
+
+const openbus::map::MapDefinition& MapRenderer::mapDefinition() const noexcept {
+    return mapDefinition_;
+}
+
+const std::filesystem::path& MapRenderer::omsiRoot() const noexcept {
+    return impl_->omsiRoot;
+}
+
+std::size_t MapRenderer::baseGroundTextureIndex() const noexcept {
+    return groundTextureIndex_;
+}
+
+std::shared_ptr<const openbus::map::MapRoadConnectionIndex>
+MapRenderer::roadConnectionIndex() const noexcept {
+    return sceneLoader_ != nullptr ? sceneLoader_->roadConnectionIndex() : nullptr;
 }
 
 void MapRenderer::enableScripts() {
@@ -402,6 +551,20 @@ std::vector<std::array<double, 3>> MapRenderer::sceneryLightDebugPositions() con
         positions.push_back(light.position);
     }
     return positions;
+}
+
+std::vector<MapPointLight> MapRenderer::activeSceneryLights() const {
+    std::vector<MapPointLight> lights;
+    if (!initialWindowReady() || impl_->activeTileKeys.empty()) {
+        return lights;
+    }
+
+    const auto& activeIndices = impl_->sceneryMapLightIndex.activeIndices(impl_->activeTileKeys);
+    lights.reserve(activeIndices.size());
+    for (const std::size_t index : activeIndices) {
+        lights.push_back(impl_->sceneryMapLights.at(index));
+    }
+    return lights;
 }
 
 std::vector<std::array<double, 3>> MapRenderer::sceneryObjectDebugPositions(int objectId) const {
@@ -739,7 +902,9 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
 
-bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const {
+bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey,
+                                              bool uploadOpenGl) const {
+    uploadOpenGl = uploadOpenGl && impl_->openGLResourcesEnabled;
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return true;
     }
@@ -779,7 +944,7 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
     impl_->pendingHumanTrafficModels.erase(pending);
     loadHumanTrafficModelNow(humanConfigPath, configuration.modelConfigPath,
                              configuration.configuration, configuration.gait, configuration.joints,
-                             configuration.seatHeight);
+                             configuration.seatHeight, uploadOpenGl);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
@@ -788,7 +953,9 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                            const ModelConfig& configuration,
                                            const HumanGaitParameters& gait,
                                            const std::optional<HumanJoints>& joints,
-                                           const std::optional<double>& seatHeight) const {
+                                           const std::optional<double>& seatHeight,
+                                           bool uploadOpenGl) const {
+    uploadOpenGl = uploadOpenGl && impl_->openGLResourcesEnabled;
     const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -840,12 +1007,15 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                 openbus::pathToUtf8(part.objPath));
                 continue;
             }
-            for (const ObjPosition& position : mesh->positions) {
-                const std::array<double, 3> values = {position.x, position.y, position.z};
-                for (std::size_t axis = 0; axis < values.size(); ++axis) {
-                    minimum[axis] = std::min(minimum[axis], values[axis]);
-                    maximum[axis] = std::max(maximum[axis], values[axis]);
-                }
+            const std::optional<HumanMeshBounds> bounds = humanRenderablePositionBounds(*mesh);
+            if (!bounds.has_value()) {
+                gameLog.Warning("Skipping human model mesh with no renderable triangles: " +
+                                openbus::pathToUtf8(part.objPath));
+                continue;
+            }
+            for (std::size_t axis = 0; axis < bounds->minimum.size(); ++axis) {
+                minimum[axis] = std::min(minimum[axis], bounds->minimum[axis]);
+                maximum[axis] = std::max(maximum[axis], bounds->maximum[axis]);
             }
             parsedParts.push_back({&part, std::move(mesh)});
         } catch (const std::exception& error) {
@@ -858,7 +1028,8 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
         throw std::runtime_error("Human traffic model has no loadable mesh: " +
                                  openbus::pathToUtf8(modelConfigPath));
     }
-    if (pglGenBuffers == nullptr || pglBindBuffer == nullptr || pglBufferData == nullptr) {
+    if (uploadOpenGl &&
+        (pglGenBuffers == nullptr || pglBindBuffer == nullptr || pglBufferData == nullptr)) {
         throw std::runtime_error("OpenGL buffer functions are unavailable for human models");
     }
 
@@ -874,6 +1045,9 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     std::vector<Impl::ModelBatch> batches;
     std::vector<std::filesystem::path> texturePaths;
     std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
+    std::vector<HumanMeshGeometry> preparedGeometry;
+    std::vector<std::size_t> geometryIndexByBatch;
+    std::vector<int> materialIndexByBatch;
     const auto drainGlErrors = [] {
         GLenum firstError = GL_NO_ERROR;
         for (;;) {
@@ -891,9 +1065,6 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     const HumanJoints seatedJoints = joints.value_or(approximateHumanJoints(gait));
     for (const ParsedHumanPart& parsedPart : parsedParts) {
         const ModelPart& part = *parsedPart.part;
-        std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
-        std::unordered_map<int, std::vector<HumanVertexWeights>> weightsByMaterial;
-        std::unordered_map<int, std::vector<HumanVertexWeights>> seatedWeightsByMaterial;
         HumanSkinWeights skin;
         if (joints && !parsedPart.mesh->bones.empty() && !part.boneBindings.empty()) {
             skin = resolveHumanSkinWeights(*parsedPart.mesh, part.boneBindings);
@@ -920,74 +1091,13 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
             gameLog.Warning("Using approximate seated skin weights for human mesh: " +
                             openbus::pathToUtf8(part.objPath));
         }
-        for (const ObjTriangle& triangle : parsedPart.mesh->triangles) {
-            const auto sourceMaterial = parsedPart.mesh->materials.find(triangle.material);
-            const int materialIndex = sourceMaterial == parsedPart.mesh->materials.end()
-                                          ? 0
-                                          : sourceMaterial->second.materialIndex;
-            const auto validIndex = [](int index, std::size_t count) {
-                return index > 0 && static_cast<std::size_t>(index) <= count;
-            };
-            for (const ObjIndex& index : triangle.indices) {
-                if (!validIndex(index.position, parsedPart.mesh->positions.size())) {
-                    continue;
-                }
-                const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
-                const ObjPosition& sourcePosition = parsedPart.mesh->positions[positionIndex];
-                const std::array<double, 4> vertexColor =
-                    positionIndex < parsedPart.mesh->vertexColors.size()
-                        ? parsedPart.mesh->vertexColors[positionIndex]
-                        : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
-                std::array<double, 3> normal = {0.0, 0.0, 1.0};
-                if (validIndex(index.normal, parsedPart.mesh->normals.size())) {
-                    const ObjNormal& sourceNormal =
-                        parsedPart.mesh->normals[static_cast<std::size_t>(index.normal - 1)];
-                    normal = {sourceNormal.x, sourceNormal.y, sourceNormal.z};
-                    const double normalLength = std::hypot(normal[0], normal[1], normal[2]);
-                    if (normalLength > 1.0e-8) {
-                        for (double& component : normal) {
-                            component /= normalLength;
-                        }
-                    }
-                }
-                float u = 0.0F;
-                float v = 0.0F;
-                if (validIndex(index.texCoord, parsedPart.mesh->texCoords.size())) {
-                    const ObjTexCoord& coordinate =
-                        parsedPart.mesh->texCoords[static_cast<std::size_t>(index.texCoord - 1)];
-                    u = static_cast<float>(coordinate.u);
-                    v = static_cast<float>(1.0 - coordinate.v);
-                }
-                verticesByMaterial[materialIndex].push_back(
-                    {static_cast<float>((sourcePosition.x - horizontalCenter[0]) * modelScale),
-                     static_cast<float>((sourcePosition.y - horizontalCenter[1]) * modelScale),
-                     static_cast<float>((sourcePosition.z - minimum[2]) * modelScale), u, v, 0.0F,
-                     static_cast<float>(normal[0]), static_cast<float>(normal[1]),
-                     static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
-                     static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
-                     static_cast<float>(vertexColor[3])});
-                if (skin.hasWeights) {
-                    weightsByMaterial[materialIndex].push_back(skin.vertices[positionIndex]);
-                }
-                if (inferSeatedWeights) {
-                    HumanVertexWeights seatedWeights = {};
-                    if (skin.hasWeights) {
-                        seatedWeights = skin.vertices[positionIndex];
-                    }
-                    const bool weighted =
-                        std::any_of(seatedWeights.begin(), seatedWeights.begin() + HUMAN_BONE_COUNT,
-                                    [](float weight) { return weight > 0.0F; });
-                    if (!weighted) {
-                        seatedWeights = inferHumanSkinWeights(
-                            {(sourcePosition.x - horizontalCenter[0]) * modelScale,
-                             (sourcePosition.y - horizontalCenter[1]) * modelScale,
-                             (sourcePosition.z - minimum[2]) * modelScale},
-                            seatedJoints, gait.heightMeters);
-                    }
-                    seatedWeightsByMaterial[materialIndex].push_back(seatedWeights);
-                }
-            }
-        }
+        auto geometry =
+            prepareHumanMeshGeometry(*parsedPart.mesh, skin, seatedJoints, inferSeatedWeights,
+                                     gait.heightMeters, modelScale, horizontalCenter, minimum[2]);
+        const std::size_t geometryIndex = preparedGeometry.size();
+        auto& verticesByMaterial = geometry.verticesByMaterial;
+        auto& weightsByMaterial = geometry.weightsByMaterial;
+        auto& seatedWeightsByMaterial = geometry.seatedWeightsByMaterial;
         for (auto& [materialIndex, vertices] : verticesByMaterial) {
             if (vertices.empty()) {
                 continue;
@@ -1028,6 +1138,8 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
             }
             batch.cullBackFaces = parsedPart.mesh->backFaceCulling;
             if (materialState != nullptr) {
+                batch.textureAddressS = materialState->textureAddressS;
+                batch.textureAddressT = materialState->textureAddressT;
                 batch.material.textureWrapS =
                     textureAddressModeToGl(materialState->textureAddressS);
                 batch.material.textureWrapT =
@@ -1077,60 +1189,66 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
             } else if (!textureName.empty()) {
                 gameLog.Warning("Human model texture was not found: " + textureName);
             }
-            const GLenum priorGlError = drainGlErrors();
-            if (priorGlError != GL_NO_ERROR && !loggedPriorUploadError) {
-                gameLog.Warning("OpenGL error predates human mesh upload; error=" +
-                                std::to_string(priorGlError));
-                loggedPriorUploadError = true;
-            }
-            pglGenBuffers(1, &batch.buffer);
-            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
-                          vertices.data(), GL_STATIC_DRAW);
-            const GLenum uploadError = drainGlErrors();
-            if (batch.buffer == 0 || uploadError != GL_NO_ERROR) {
-                if (batch.buffer != 0) {
-                    deleteRendererBuffers(1, &batch.buffer);
+            if (uploadOpenGl) {
+                const GLenum priorGlError = drainGlErrors();
+                if (priorGlError != GL_NO_ERROR && !loggedPriorUploadError) {
+                    gameLog.Warning("OpenGL error predates human mesh upload; error=" +
+                                    std::to_string(priorGlError));
+                    loggedPriorUploadError = true;
                 }
-                gameLog.Warning("Could not upload human model mesh '" +
-                                openbus::pathToUtf8(part.objPath) +
-                                "', material=" + std::to_string(materialIndex) +
-                                ", OpenGL error=" + std::to_string(uploadError));
-                continue;
-            }
-            const auto uploadWeights = [&](GLuint& buffer,
-                                           const std::vector<HumanVertexWeights>& weights) {
-                pglGenBuffers(1, &buffer);
-                pglBindBuffer(GL_ARRAY_BUFFER, buffer);
-                pglBufferData(
-                    GL_ARRAY_BUFFER,
-                    static_cast<std::ptrdiff_t>(weights.size() * sizeof(HumanVertexWeights)),
-                    weights.data(), GL_STATIC_DRAW);
-                const GLenum skinUploadError = drainGlErrors();
-                if (buffer == 0 || skinUploadError != GL_NO_ERROR) {
-                    if (buffer != 0) {
-                        deleteRendererBuffers(1, &buffer);
-                        buffer = 0;
+                pglGenBuffers(1, &batch.buffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
+                              vertices.data(), GL_STATIC_DRAW);
+                const GLenum uploadError = drainGlErrors();
+                if (batch.buffer == 0 || uploadError != GL_NO_ERROR) {
+                    if (batch.buffer != 0) {
+                        deleteRendererBuffers(1, &batch.buffer);
                     }
-                    gameLog.Warning("Could not upload human skin weights for " +
+                    gameLog.Warning("Could not upload human model mesh '" +
                                     openbus::pathToUtf8(part.objPath) +
-                                    ", OpenGL error=" + std::to_string(skinUploadError));
+                                    "', material=" + std::to_string(materialIndex) +
+                                    ", OpenGL error=" + std::to_string(uploadError));
+                    continue;
                 }
-            };
-            if (skin.hasWeights) {
-                uploadWeights(batch.skinWeightBuffer, weightsByMaterial.at(materialIndex));
-            } else if (inferSeatedWeights) {
-                uploadWeights(batch.skinWeightBuffer, seatedWeightsByMaterial.at(materialIndex));
-            }
-            if (inferSeatedWeights) {
-                uploadWeights(batch.seatedSkinWeightBuffer,
-                              seatedWeightsByMaterial.at(materialIndex));
+                const auto uploadWeights = [&](GLuint& buffer,
+                                               const std::vector<HumanVertexWeights>& weights) {
+                    pglGenBuffers(1, &buffer);
+                    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+                    pglBufferData(
+                        GL_ARRAY_BUFFER,
+                        static_cast<std::ptrdiff_t>(weights.size() * sizeof(HumanVertexWeights)),
+                        weights.data(), GL_STATIC_DRAW);
+                    const GLenum skinUploadError = drainGlErrors();
+                    if (buffer == 0 || skinUploadError != GL_NO_ERROR) {
+                        if (buffer != 0) {
+                            deleteRendererBuffers(1, &buffer);
+                            buffer = 0;
+                        }
+                        gameLog.Warning("Could not upload human skin weights for " +
+                                        openbus::pathToUtf8(part.objPath) +
+                                        ", OpenGL error=" + std::to_string(skinUploadError));
+                    }
+                };
+                if (skin.hasWeights) {
+                    uploadWeights(batch.skinWeightBuffer, weightsByMaterial.at(materialIndex));
+                } else if (inferSeatedWeights) {
+                    uploadWeights(batch.skinWeightBuffer,
+                                  seatedWeightsByMaterial.at(materialIndex));
+                }
+                if (inferSeatedWeights) {
+                    uploadWeights(batch.seatedSkinWeightBuffer,
+                                  seatedWeightsByMaterial.at(materialIndex));
+                }
             }
             texturePaths.push_back(texturePath);
             textureImages.push_back(std::move(textureImage));
+            geometryIndexByBatch.push_back(geometryIndex);
+            materialIndexByBatch.push_back(materialIndex);
             batches.push_back(std::move(batch));
         }
+        preparedGeometry.push_back(std::move(geometry));
     }
     if (batches.empty()) {
         throw std::runtime_error("Human traffic model contains no renderable mesh: " +
@@ -1141,6 +1259,10 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     asset.batchIndexes.reserve(batches.size());
     asset.texturePaths = std::move(texturePaths);
     asset.textureImages = std::move(textureImages);
+    asset.preparedGeometry = std::move(preparedGeometry);
+    asset.geometryIndexByBatch = std::move(geometryIndexByBatch);
+    asset.materialIndexByBatch = std::move(materialIndexByBatch);
+    asset.openGlReady = uploadOpenGl;
     asset.gait = gait;
     asset.joints = joints;
     asset.seatHeight = seatHeight;
@@ -1150,6 +1272,124 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
         impl_->sceneryBatches.push_back(std::move(batch));
     }
     impl_->humanTrafficModels.emplace(cacheKey, std::move(asset));
+}
+
+std::optional<HumanTrafficRenderSource>
+MapRenderer::humanTrafficRenderSource(const std::filesystem::path& humanConfigPath) {
+    const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
+    loadHumanTrafficModel(humanConfigPath);
+    if (!impl_->humanTrafficModels.contains(cacheKey) &&
+        !finishHumanTrafficModelLoad(cacheKey, false)) {
+        if (impl_->failedHumanTrafficModels.contains(cacheKey)) {
+            throw std::runtime_error("Human traffic model failed to load: " +
+                                     openbus::pathToUtf8(humanConfigPath));
+        }
+        return std::nullopt;
+    }
+
+    Impl::HumanModelAsset& model = impl_->humanTrafficModels.at(cacheKey);
+    if (model.batchIndexes.size() != model.texturePaths.size() ||
+        model.batchIndexes.size() != model.textureImages.size() ||
+        model.batchIndexes.size() != model.geometryIndexByBatch.size() ||
+        model.batchIndexes.size() != model.materialIndexByBatch.size()) {
+        throw std::logic_error("Human traffic model source metadata is inconsistent");
+    }
+
+    std::vector<std::shared_ptr<const Image>> decodedTextures(model.batchIndexes.size());
+    for (std::size_t index = 0; index < model.batchIndexes.size(); ++index) {
+        const std::filesystem::path& texturePath = model.texturePaths[index];
+        if (texturePath.empty()) {
+            continue;
+        }
+
+        std::shared_future<std::shared_ptr<Image>>& imageRequest = model.textureImages[index];
+        if (!imageRequest.valid()) {
+            const std::string textureKey = openbus::pathToUtf8(texturePath.lexically_normal());
+            const auto existingRequest = impl_->humanTextureRequests.find(textureKey);
+            if (existingRequest != impl_->humanTextureRequests.end()) {
+                imageRequest = existingRequest->second;
+            } else {
+                imageRequest =
+                    assetRequests_
+                        ->submit([texturePath] {
+                            auto image = std::make_shared<Image>();
+                            if (!TextureLoader::readImage(texturePath, *image)) {
+                                throw std::runtime_error("Could not decode human model texture: " +
+                                                         openbus::pathToUtf8(texturePath));
+                            }
+                            return image;
+                        })
+                        .share();
+                impl_->humanTextureRequests.emplace(textureKey, imageRequest);
+            }
+        }
+        if (imageRequest.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return std::nullopt;
+        }
+        decodedTextures[index] = imageRequest.get();
+        if (!decodedTextures[index]) {
+            throw std::runtime_error("Human traffic texture decoder returned no image: " +
+                                     openbus::pathToUtf8(texturePath));
+        }
+    }
+
+    HumanTrafficRenderSource source;
+    source.gait = model.gait;
+    source.joints = model.joints.value_or(approximateHumanJoints(model.gait));
+    source.seatHeight = model.seatHeight;
+    for (std::size_t index = 0; index < model.batchIndexes.size(); ++index) {
+        if (index > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            throw std::length_error("Human traffic model has too many material batches");
+        }
+        const int materialIndex = static_cast<int>(index);
+        const std::size_t geometryIndex = model.geometryIndexByBatch[index];
+        if (geometryIndex >= model.preparedGeometry.size() ||
+            model.batchIndexes[index] >= impl_->sceneryBatches.size()) {
+            throw std::logic_error("Human traffic model source references invalid batch data");
+        }
+        const HumanMeshGeometry& prepared = model.preparedGeometry[geometryIndex];
+        const int sourceMaterialIndex = model.materialIndexByBatch[index];
+        const auto vertices = prepared.verticesByMaterial.find(sourceMaterialIndex);
+        if (vertices == prepared.verticesByMaterial.end()) {
+            throw std::logic_error("Human traffic model source has no prepared vertices");
+        }
+        source.geometry.verticesByMaterial.emplace(materialIndex, vertices->second);
+        if (const auto weights = prepared.weightsByMaterial.find(sourceMaterialIndex);
+            weights != prepared.weightsByMaterial.end()) {
+            source.geometry.weightsByMaterial.emplace(materialIndex, weights->second);
+        }
+        if (const auto seatedWeights = prepared.seatedWeightsByMaterial.find(sourceMaterialIndex);
+            seatedWeights != prepared.seatedWeightsByMaterial.end()) {
+            source.geometry.seatedWeightsByMaterial.emplace(materialIndex, seatedWeights->second);
+        }
+
+        const Impl::ModelBatch& batch = impl_->sceneryBatches[model.batchIndexes[index]];
+        HumanTrafficMaterialSource material;
+        material.color = batch.color;
+        material.alpha = batch.alpha;
+        material.alphaMode = batch.alphaMode;
+        material.specularColor = batch.material.specularColor;
+        material.emissionColor = batch.material.emissionColor;
+        material.specularPower = batch.material.specularPower;
+        material.textureAddressS = batch.textureAddressS;
+        material.textureAddressT = batch.textureAddressT;
+        material.noZwrite = batch.noZwrite;
+        material.noZcheck = batch.noZcheck;
+        material.cullBackFaces = batch.cullBackFaces;
+        source.materials.emplace(materialIndex, material);
+        if (decodedTextures[index]) {
+            source.textures.emplace(materialIndex, std::move(decodedTextures[index]));
+        }
+    }
+    for (std::size_t index = 0; index < model.texturePaths.size(); ++index) {
+        if (model.texturePaths[index].empty()) {
+            continue;
+        }
+        impl_->humanTextureRequests.erase(
+            openbus::pathToUtf8(model.texturePaths[index].lexically_normal()));
+        model.textureImages[index] = {};
+    }
+    return source;
 }
 
 std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>

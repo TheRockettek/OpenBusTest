@@ -801,7 +801,7 @@ int main() {
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 1920;
         const int windowHeight =
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
-        applicationLog.Log("Loading: initializing renderer and OpenGL window.");
+        applicationLog.Log("Loading: initializing Diligent renderer and no-API window.");
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus", steamPresence);
 
         const std::filesystem::path omsiRoot = omsiRootPath();
@@ -2414,6 +2414,7 @@ int main() {
                                 previousSimulation.reset();
                                 updateArticulatedRearPlacement();
                                 rebaseMapClockAfterSimulationReplacement(previousSimulationTime);
+                                renderer.invalidateTemporalHistory();
                                 reportedCollisionTileCount = collisionStreamer->loadedTileCount();
                                 applicationLog.Log("Player bus teleported to " +
                                                    formatPlacement(*teleportRequest) + ".");

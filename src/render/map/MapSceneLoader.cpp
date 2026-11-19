@@ -4,6 +4,8 @@
 
 #include "config/TextureSurfaceConfigLoader.h"
 #include "core/Utf8Path.h"
+#include "map/MapRoadRenderGeometry.h"
+#include "map/MapSceneryGeometry.h"
 
 #include <algorithm>
 #include <cctype>
@@ -55,7 +57,8 @@ MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
       terrainByCoordinate(impl.terrainByCoordinate),
       verboseAlphaMaterials(
           parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"))),
-      roadConnections(mapDefinition.coordinates) {
+      roadConnections(
+          std::make_shared<openbus::map::MapRoadConnectionIndex>(mapDefinition.coordinates)) {
     carParkChancePercent_ = carParkChancePercent();
     gameLog.Log("Car-park vehicle occupancy chance: " + std::to_string(carParkChancePercent_) +
                 "%.");
@@ -455,378 +458,6 @@ void MapSceneLoader::recordTilePreparationFailure(std::uint64_t tileKeyValue,
                        " ms (attempt " + std::to_string(failure.attempts) + " of 3)."));
 }
 
-MapSceneLoader::PreparedSceneryAsset
-MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
-                                    const std::filesystem::path& omsiRootPath,
-                                    SharedMapTextureImages& textureImages) {
-    PreparedSceneryAsset prepared;
-    prepared.objectConfiguration = loadSceneryObjectFile(configPath);
-    prepared.modelConfigPath = resolveSceneryObjectModelConfigPath(prepared.objectConfiguration);
-    prepared.usesExternalModelConfig = !prepared.objectConfiguration.modelPath.empty();
-    prepared.externalModelConfigPath = prepared.modelConfigPath;
-    if (prepared.usesExternalModelConfig &&
-        !std::filesystem::is_regular_file(prepared.modelConfigPath)) {
-        prepared.externalModelConfigMissing = true;
-        prepared.modelConfigPath = configPath;
-        prepared.usesExternalModelConfig = false;
-    }
-    prepared.modelRoot = prepared.usesExternalModelConfig ? prepared.modelConfigPath.parent_path()
-                                                          : configPath.parent_path() / "model";
-    if (!prepared.objectConfiguration.onlyEditor || !prepared.objectConfiguration.trees.empty()) {
-        if (prepared.objectConfiguration.trees.empty()) {
-            prepared.modelConfiguration =
-                loadModelConfig(prepared.modelConfigPath, prepared.modelRoot,
-                                ModelConfigKind::SceneryObject, prepared.variables);
-            prepared.hasModelConfiguration = true;
-            for (const ModelPart& part : prepared.modelConfiguration.parts) {
-                if (part.objPath.empty()) {
-                    continue;
-                }
-                std::string extension = part.objPath.extension().string();
-                std::transform(
-                    extension.begin(), extension.end(), extension.begin(),
-                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-                if (extension == ".o3d" || extension == ".x") {
-                    const std::string meshKey =
-                        openbus::pathToUtf8(part.objPath.lexically_normal());
-                    if (!prepared.meshes.contains(meshKey)) {
-                        PreparedSceneryMesh mesh;
-                        try {
-                            mesh = prepareSceneryMesh(part.objPath);
-                        } catch (...) {
-                            mesh.preparationError = std::current_exception();
-                        }
-                        prepared.meshes.emplace(meshKey, std::move(mesh));
-                    }
-                }
-            }
-        }
-    }
-    const auto decodeTexture = [&](const std::string& textureName) {
-        if (textureName.empty()) {
-            return;
-        }
-        ++prepared.textureLookups;
-        if (prepared.resolvedTexturePaths.contains(textureName)) {
-            return;
-        }
-        ++prepared.textureResolutions;
-        const std::filesystem::path texturePath = map_detail::findSceneryTexture(
-            configPath.parent_path(), prepared.modelRoot, omsiRootPath, textureName);
-        if (texturePath.empty()) {
-            prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
-            return;
-        }
-        const std::string key = openbus::pathToUtf8(texturePath.lexically_normal());
-        if (prepared.decodedTextures.contains(key)) {
-            prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
-            return;
-        }
-        auto image = textureImages.getOrDecode(key, [&texturePath] {
-            auto decoded = std::make_shared<Image>();
-            if (!TextureLoader::readImage(texturePath, *decoded)) {
-                throw std::runtime_error("Could not decode scenery texture: " +
-                                         openbus::pathToUtf8(texturePath));
-            }
-            return decoded;
-        });
-        prepared.decodedTextures.emplace(key, std::move(image));
-        prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
-    };
-    const auto decodeOptionalTexture = [&](const std::string& textureName) {
-        if (prepared.auxiliaryTexturePreparationErrors.contains(textureName)) {
-            return;
-        }
-        try {
-            decodeTexture(textureName);
-        } catch (const std::runtime_error& error) {
-            prepared.auxiliaryTexturePreparationErrors.try_emplace(textureName, error.what());
-        }
-    };
-    for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
-        decodeTexture(tree.texturePath);
-    }
-    for (const auto& [meshKey, mesh] : prepared.meshes) {
-        static_cast<void>(meshKey);
-        if (!mesh.parsed) {
-            continue;
-        }
-        for (const auto& [materialName, material] : mesh.parsed->materials) {
-            static_cast<void>(materialName);
-            decodeTexture(material.textureName);
-        }
-    }
-    for (const ModelPart& part : prepared.modelConfiguration.parts) {
-        for (const ModelMaterialState& state : part.materialStatesInOrder) {
-            decodeTexture(state.textureName);
-            decodeTexture(state.transmapTextureName);
-            decodeOptionalTexture(state.lightmapTextureName);
-            decodeOptionalTexture(state.nightmapTextureName);
-            for (const auto& change : state.textureChanges) {
-                for (const auto& item : change.items) {
-                    if (item) {
-                        decodeOptionalTexture(item->lightmapTextureName);
-                        decodeOptionalTexture(item->nightmapTextureName);
-                    }
-                }
-            }
-            decodeOptionalTexture(state.bumpmapTextureName);
-            if (state.environmentStrength > 0.0) {
-                decodeOptionalTexture(state.environmentTextureName);
-            }
-            decodeTexture(state.freeTextureName);
-        }
-    }
-    const auto resolvedTexture = [&prepared](const std::string& textureName) {
-        if (textureName.empty()) {
-            return std::filesystem::path{};
-        }
-        const auto texture = prepared.resolvedTexturePaths.find(textureName);
-        if (texture == prepared.resolvedTexturePaths.end()) {
-            throw std::logic_error("Scenery texture path was not prepared: " + textureName);
-        }
-        return texture->second;
-    };
-    const auto preparedAuxTexture = [&](const std::string& textureName) {
-        PreparedSceneryAuxTexture result;
-        result.name = textureName;
-        const auto error = prepared.auxiliaryTexturePreparationErrors.find(textureName);
-        if (error != prepared.auxiliaryTexturePreparationErrors.end()) {
-            result.preparationError = error->second;
-        } else {
-            result.path = resolvedTexture(textureName);
-        }
-        return result;
-    };
-    for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
-        const std::filesystem::path texturePath = resolvedTexture(tree.texturePath);
-        if (texturePath.empty()) {
-            PreparedSceneryTreeBatch batch;
-            batch.textureName = tree.texturePath;
-            prepared.treeBatches.push_back(std::move(batch));
-            continue;
-        }
-        const double height = (tree.minimumHeight + tree.maximumHeight) * 0.5;
-        const double ratio = (tree.minimumRatio + tree.maximumRatio) * 0.5;
-        PreparedSceneryTreeBatch batch;
-        batch.vertices = makeTreePreview(height, height * 0.55 * ratio);
-        batch.textureName = tree.texturePath;
-        batch.texturePath = texturePath;
-        batch.seasonTexturePaths = textureImages.seasonalPaths(texturePath);
-        batch.batch.vertexCount = batch.vertices.size();
-        batch.batch.boundingRadius = vertexBoundingRadius(batch.vertices);
-        batch.batch.renderType = prepared.objectConfiguration.renderType;
-        batch.batch.material.textured = true;
-        batch.batch.material.flipTextureY = true;
-        batch.batch.alphaMode = 1;
-        prepared.treeBatches.push_back(std::move(batch));
-    }
-    for (const ModelPart& part : prepared.modelConfiguration.parts) {
-        if (part.objPath.empty()) {
-            continue;
-        }
-        std::string meshExtension = part.objPath.extension().string();
-        std::transform(meshExtension.begin(), meshExtension.end(), meshExtension.begin(),
-                       [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-        if (meshExtension != ".o3d" && meshExtension != ".x") {
-            continue;
-        }
-        const std::string meshKey = openbus::pathToUtf8(part.objPath.lexically_normal());
-        const auto preparedMesh = prepared.meshes.find(meshKey);
-        if (preparedMesh == prepared.meshes.end() || !preparedMesh->second.parsed ||
-            preparedMesh->second.preparationError) {
-            continue;
-        }
-        const PreparedSceneryMesh& mesh = preparedMesh->second;
-        const ParsedObj& parsed = *mesh.parsed;
-        const auto statesByMaterial = openbus::map::resolveSceneryMaterialStates(parsed, part);
-        for (const auto& [materialIndex, vertices] : mesh.verticesByMaterial) {
-            if (vertices.empty()) {
-                continue;
-            }
-            const auto sourceMaterial =
-                parsed.materials.find("matl_" + std::to_string(materialIndex));
-            const auto stateFound = statesByMaterial.find(materialIndex);
-            const ModelMaterialState* state =
-                stateFound == statesByMaterial.end() ? nullptr : stateFound->second;
-            std::string textureName = sourceMaterial == parsed.materials.end()
-                                          ? std::string{}
-                                          : sourceMaterial->second.textureName;
-            std::array<double, 3> color = sourceMaterial == parsed.materials.end()
-                                              ? std::array<double, 3>{1.0, 1.0, 1.0}
-                                              : sourceMaterial->second.color;
-            if (state != nullptr && !state->textureName.empty()) {
-                textureName = state->textureName;
-                const std::string stateTexture =
-                    openbus::pathToUtf8(std::filesystem::path(state->textureName).filename());
-                const auto materialForTexture = std::find_if(
-                    parsed.materials.begin(), parsed.materials.end(), [&](const auto& entry) {
-                        return std::filesystem::path(entry.second.textureName).filename() ==
-                               stateTexture;
-                    });
-                if (materialForTexture != parsed.materials.end()) {
-                    color = materialForTexture->second.color;
-                }
-            }
-            PreparedSceneryBatch preparedBatch;
-            preparedBatch.meshKey = meshKey;
-            preparedBatch.materialIndex = materialIndex;
-            preparedBatch.textureName = textureName;
-            preparedBatch.texturePath = resolvedTexture(textureName);
-            preparedBatch.seasonTexturePaths =
-                textureImages.seasonalPaths(preparedBatch.texturePath);
-            if (state != nullptr) {
-                preparedBatch.transmapTextureName = state->transmapTextureName;
-                preparedBatch.transmapTexturePath = resolvedTexture(state->transmapTextureName);
-                preparedBatch.lightmap = preparedAuxTexture(state->lightmapTextureName);
-                preparedBatch.nightmap = preparedAuxTexture(state->nightmapTextureName);
-                for (const auto& change : state->textureChanges) {
-                    for (const auto& item : change.items) {
-                        if (item) {
-                            if (!item->lightmapTextureName.empty()) {
-                                preparedBatch.itemLightmaps.push_back(
-                                    preparedAuxTexture(item->lightmapTextureName));
-                            }
-                            if (!item->nightmapTextureName.empty()) {
-                                preparedBatch.itemNightmaps.push_back(
-                                    preparedAuxTexture(item->nightmapTextureName));
-                            }
-                        }
-                    }
-                }
-                preparedBatch.bumpmap = preparedAuxTexture(state->bumpmapTextureName);
-                if (state->environmentStrength > 0.0) {
-                    preparedBatch.environment = preparedAuxTexture(state->environmentTextureName);
-                }
-                preparedBatch.freeTextureName = state->freeTextureName;
-                preparedBatch.freeTexturePath = resolvedTexture(state->freeTextureName);
-                preparedBatch.hasMaterialState = true;
-                preparedBatch.stateAlphaMode = state->alphaMode;
-            }
-            Impl::ModelBatch& batch = preparedBatch.batch;
-            batch.material.weatherLitDynamicTexture = true;
-            batch.material.whiteAmbient = !part.isShadow;
-            batch.cullBackFaces = true;
-            batch.vertexCount = vertices.size();
-            batch.boundingRadius = vertexBoundingRadius(vertices);
-            batch.sceneryLodIndex =
-                part.lodIndex < 0 ? 0U : static_cast<std::size_t>(part.lodIndex);
-            if (sourceMaterial != parsed.materials.end()) {
-                for (std::size_t index = 0; index < 3; ++index) {
-                    batch.material.specularColor[index] =
-                        static_cast<float>(sourceMaterial->second.specular[index]);
-                    batch.material.emissionColor[index] =
-                        static_cast<float>(sourceMaterial->second.emission[index]);
-                }
-                batch.material.specularPower =
-                    static_cast<float>(sourceMaterial->second.specularPower);
-                batch.alpha = std::clamp(sourceMaterial->second.alpha, 0.0, 1.0);
-            }
-            batch.color = color;
-            batch.renderType =
-                resolveSceneryRenderType(part, prepared.objectConfiguration.renderType);
-            batch.visibilityVariable = part.visibleVariable;
-            batch.visibilityValue = part.visibleValue;
-            if (state != nullptr) {
-                batch.scriptTextureIndex = state->scriptTextureIndex;
-                batch.textTextureIndex = state->textTextureIndex;
-                batch.freeTextureName = state->freeTextureName;
-                batch.freeTextureVariable = state->freeTextureVariable;
-                batch.texcoordTransXVariable = state->texcoordTransXVariable;
-                batch.texcoordTransYVariable = state->texcoordTransYVariable;
-                batch.lightmapStrengthVariable = state->lightmapStrengthVariable;
-                batch.alphaScaleVariable = state->alphaScaleVariable;
-                if (!preparedBatch.itemLightmaps.empty() || !preparedBatch.itemNightmaps.empty()) {
-                    batch.auxiliaryMaterialSelection = *state;
-                }
-                batch.material.lightmapStrength =
-                    state->lightmapStrengthVariable.empty() ? 1.0F : 0.0F;
-                batch.material.bumpmapStrength =
-                    static_cast<float>(std::clamp(state->bumpmapStrength, 0.0, 1.0));
-                batch.material.environmentStrength = static_cast<float>(
-                    std::clamp(state->environmentStrength * ENVIRONMENT_MAP_OPACITY, 0.0, 1.0));
-                batch.textureObjectRoot = configPath.parent_path();
-                batch.textureModelRoot = prepared.modelRoot;
-                batch.material.textureWrapS = textureAddressModeToGl(state->textureAddressS);
-                batch.material.textureWrapT = textureAddressModeToGl(state->textureAddressT);
-                batch.alphaMode = state->alphaMode;
-                batch.noZwrite = state->noZwrite;
-                batch.noZcheck = state->noZcheck;
-            }
-            if (batch.alphaMode == 1 && batch.alpha == 0.0) {
-                batch.alpha = 1.0;
-            }
-            if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
-                batch.alphaMode = 2;
-            }
-            prepared.batches.push_back(std::move(preparedBatch));
-        }
-    }
-    return prepared;
-}
-
-MapSceneLoader::PreparedSceneryMesh
-MapSceneLoader::prepareSceneryMesh(const std::filesystem::path& meshPath) {
-    PreparedSceneryMesh prepared;
-    std::string extension = meshPath.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-    prepared.parsed = extension == ".x" ? XLoader::parse(meshPath) : O3DLoader::parse(meshPath);
-    if (!prepared.parsed) {
-        return prepared;
-    }
-    for (const ObjTriangle& triangle : prepared.parsed->triangles) {
-        const auto sourceMaterial = prepared.parsed->materials.find(triangle.material);
-        const int materialIndex = sourceMaterial == prepared.parsed->materials.end()
-                                      ? 0
-                                      : sourceMaterial->second.materialIndex;
-        for (const ObjIndex& index : triangle.indices) {
-            const auto validIndex = [](int value, std::size_t count) {
-                return value > 0 && static_cast<std::size_t>(value) <= count;
-            };
-            if (!validIndex(index.position, prepared.parsed->positions.size())) {
-                ++prepared.invalidPositionIndices;
-                continue;
-            }
-            const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
-            const ObjPosition& sourcePosition = prepared.parsed->positions[positionIndex];
-            const std::array<double, 4> vertexColor =
-                positionIndex < prepared.parsed->vertexColors.size()
-                    ? prepared.parsed->vertexColors[positionIndex]
-                    : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
-            std::array<double, 3> normal = {0.0, 0.0, 1.0};
-            if (validIndex(index.normal, prepared.parsed->normals.size())) {
-                const ObjNormal& sourceNormal =
-                    prepared.parsed->normals[static_cast<std::size_t>(index.normal - 1)];
-                // O3DLoader already converts axes and handedness for map scenery.
-                normal = {sourceNormal.x, sourceNormal.y, sourceNormal.z};
-                const double length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
-                                                normal[2] * normal[2]);
-                if (length > 1.0e-8) {
-                    for (double& component : normal) {
-                        component /= length;
-                    }
-                }
-            }
-            float u = 0.0F;
-            float v = 0.0F;
-            if (validIndex(index.texCoord, prepared.parsed->texCoords.size())) {
-                const ObjTexCoord& coordinate =
-                    prepared.parsed->texCoords[static_cast<std::size_t>(index.texCoord - 1)];
-                u = static_cast<float>(coordinate.u);
-                v = static_cast<float>(1.0 - coordinate.v);
-            }
-            prepared.verticesByMaterial[materialIndex].push_back(
-                {static_cast<float>(sourcePosition.x), static_cast<float>(sourcePosition.y),
-                 static_cast<float>(sourcePosition.z), u, v, 0.0F, static_cast<float>(normal[0]),
-                 static_cast<float>(normal[1]), static_cast<float>(normal[2]),
-                 static_cast<float>(vertexColor[0]), static_cast<float>(vertexColor[1]),
-                 static_cast<float>(vertexColor[2]), static_cast<float>(vertexColor[3])});
-        }
-    }
-    return prepared;
-}
-
 bool MapSceneLoader::requestTileRoadPreparation(const openbus::map::MapTileData& tile,
                                                 const openbus::map::MapTileReference& tileReference,
                                                 std::uint64_t tileKeyValue) {
@@ -843,7 +474,7 @@ bool MapSceneLoader::requestTileRoadPreparation(const openbus::map::MapTileData&
     for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
         RoadSplineInput input;
         input.spline = spline;
-        input.joins = roadConnections.joinsFor(spline, tile.reference.x, tile.reference.y);
+        input.joins = roadConnections->joinsFor(spline, tile.reference.x, tile.reference.y);
         input.profilePath = resolveSplineProfile(map, omsiRoot, spline.assetPath);
         const std::string profileKey = openbus::pathToUtf8(input.profilePath.lexically_normal());
         const auto profile = splineProfiles.find(profileKey);
@@ -870,12 +501,19 @@ bool MapSceneLoader::requestTileRoadPreparation(const openbus::map::MapTileData&
     return true;
 }
 
+std::shared_ptr<const openbus::map::MapRoadConnectionIndex>
+MapSceneLoader::roadConnectionIndex() const noexcept {
+    return roadConnectionIndexReady_.load(std::memory_order_acquire) ? roadConnections : nullptr;
+}
+
 MapSceneLoader::PreparedRoadTile
 MapSceneLoader::prepareRoadTile(const std::vector<RoadSplineInput>& splines,
                                 const std::filesystem::path& omsiRootPath, int tileX, int tileY,
                                 const openbus::map::MapCoordinates& coordinates, bool loadWater,
                                 const std::filesystem::path& waterPath) {
     PreparedRoadTile prepared;
+    std::vector<openbus::map::MapRoadSplineRenderInput> renderInputs;
+    renderInputs.reserve(splines.size());
     for (const RoadSplineInput& input : splines) {
         const openbus::map::MapSplinePlacement& spline = input.spline;
         const std::string description =
@@ -915,8 +553,6 @@ MapSceneLoader::prepareRoadTile(const std::vector<RoadSplineInput>& splines,
                                           description, 1);
             continue;
         }
-        const std::optional<double> cantHalfWidth =
-            openbus::map::mapSplineProfileCantHalfWidth(profile);
         for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
             if (section.points.size() < 2) {
                 prepared.skipped.emplace_back("spline profile strips with fewer than two points",
@@ -931,106 +567,51 @@ MapSceneLoader::prepareRoadTile(const std::vector<RoadSplineInput>& splines,
                                               1);
                 continue;
             }
-            const std::string& textureName =
-                profile.textures[static_cast<std::size_t>(section.textureIndex)];
-            const std::filesystem::path texturePath =
-                map_detail::findSplineTexture(profilePath, omsiRootPath, textureName);
-            const int alphaMode =
-                static_cast<std::size_t>(section.textureIndex) < profile.textureAlphaModes.size()
-                    ? profile.textureAlphaModes[static_cast<std::size_t>(section.textureIndex)]
-                    : 0;
-            const bool textured = !texturePath.empty();
-            if (!textured) {
-                prepared.skipped.emplace_back(
-                    "spline profile textures not found (geometry rendered untextured)",
-                    openbus::pathToUtf8(profilePath.filename()) + " texture=" + textureName, 1);
-            } else {
-                const std::string textureKey = openbus::pathToUtf8(texturePath.lexically_normal());
-                if (!prepared.decodedTextures.contains(textureKey) &&
-                    !prepared.textureErrors.contains(textureKey)) {
-                    Image image;
-                    try {
-                        if (!TextureLoader::readImage(texturePath, image)) {
-                            prepared.textureErrors.emplace(textureKey, "image decode failed");
-                        } else {
-                            prepared.decodedTextures.emplace(
-                                textureKey, std::make_shared<Image>(std::move(image)));
-                        }
-                    } catch (const std::exception& error) {
-                        prepared.textureErrors.emplace(textureKey, error.what());
-                    } catch (...) {
-                        prepared.textureErrors.emplace(textureKey, "unknown error");
-                    }
+        }
+        renderInputs.push_back({spline, input.joins, profilePath, &profile});
+    }
+
+    prepared.geometryByBatch = openbus::map::prepareMapRoadRenderBatches(
+        tileX, tileY, coordinates, omsiRootPath, renderInputs);
+    for (auto& [batchKey, road] : prepared.geometryByBatch) {
+        if (!road.textured) {
+            prepared.skipped.emplace_back(
+                "spline profile textures not found (geometry rendered untextured)", batchKey, 1);
+            continue;
+        }
+        const std::string textureKey = openbus::pathToUtf8(road.texturePath.lexically_normal());
+        if (!prepared.decodedTextures.contains(textureKey) &&
+            !prepared.textureErrors.contains(textureKey)) {
+            Image image;
+            try {
+                if (!TextureLoader::readImage(road.texturePath, image)) {
+                    prepared.textureErrors.emplace(textureKey, "image decode failed");
+                } else {
+                    prepared.decodedTextures.emplace(textureKey,
+                                                     std::make_shared<Image>(std::move(image)));
                 }
+            } catch (const std::exception& error) {
+                prepared.textureErrors.emplace(textureKey, error.what());
+            } catch (...) {
+                prepared.textureErrors.emplace(textureKey, "unknown error");
             }
-            const std::string batchKey =
-                std::to_string(tileX) + "," + std::to_string(tileY) + "|" +
-                (textured
-                     ? openbus::pathToUtf8(texturePath.lexically_normal())
-                     : "untextured:" + profileKey + "#" + std::to_string(section.textureIndex)) +
-                "|alpha:" + std::to_string(alphaMode);
-            RoadMeshGeometry& road = prepared.geometryByBatch[batchKey];
-            if (road.vertices.empty()) {
-                road.texturePath = texturePath;
-                road.textured = textured;
-                road.tileX = tileX;
-                road.tileY = tileY;
-                road.alphaMode = alphaMode;
-                if (textured) {
-                    const auto surface =
-                        openbus::config::loadTextureSurfaceConfiguration(texturePath);
-                    for (const auto& diagnostic : surface.diagnostics.entries) {
-                        gameLog.Warning("Road texture surface " + openbus::pathToUtf8(texturePath) +
-                                        ":" + std::to_string(diagnostic.line) + ": " +
-                                        diagnostic.message);
-                    }
-                    if (!surface.diagnostics.hasErrors()) {
-                        road.supportsMoisture = surface.supportsMoisture;
-                        road.weatherClassified = surface.configFound;
-                    }
-                }
-            }
-            map_detail::appendRoadProfile(road, spline, centerline, section, input.joins,
-                                          cantHalfWidth, coordinates);
+        }
+        const auto surface = openbus::config::loadTextureSurfaceConfiguration(road.texturePath);
+        for (const auto& diagnostic : surface.diagnostics.entries) {
+            gameLog.Warning("Road texture surface " + openbus::pathToUtf8(road.texturePath) + ":" +
+                            std::to_string(diagnostic.line) + ": " + diagnostic.message);
+        }
+        if (!surface.diagnostics.hasErrors()) {
+            road.supportsMoisture = surface.supportsMoisture;
+            road.weatherClassified = surface.configFound;
         }
     }
     if (loadWater) {
         try {
-            prepared.waterData = openbus::map::loadWaterData(waterPath);
-            const openbus::map::WaterData& water = *prepared.waterData;
-            prepared.waterVertices.reserve(water.surfaces.size() * 4);
-            prepared.waterIndices.reserve(water.surfaces.size() * 6);
-            double minimumHeight = std::numeric_limits<double>::infinity();
-            double maximumHeight = -std::numeric_limits<double>::infinity();
-            double heightSum = 0.0;
-            std::size_t heightCount = 0;
-            const double tileOriginX = static_cast<double>(tileX) * coordinates.tileSize;
-            const double tileOriginY = static_cast<double>(tileY) * coordinates.tileSize;
-            for (const openbus::map::WaterSurface& surface : water.surfaces) {
-                const auto corners = openbus::map::buildMapWaterSurfaceVertices(
-                    tileX, tileY, surface, coordinates.tileSize);
-                const std::uint32_t base =
-                    static_cast<std::uint32_t>(prepared.waterVertices.size());
-                for (std::size_t corner = 0; corner < corners.size(); ++corner) {
-                    const openbus::map::MapWaterVertex& vertex = corners[corner];
-                    prepared.waterVertices.push_back(
-                        {static_cast<float>(vertex.x - tileOriginX),
-                         static_cast<float>(vertex.y - tileOriginY), static_cast<float>(vertex.z),
-                         corner == 1 || corner == 2 ? 1.0F : 0.0F, corner >= 2 ? 1.0F : 0.0F, 0.0F,
-                         0.0F, 0.0F, 1.0F});
-                    minimumHeight = (std::min)(minimumHeight, vertex.z);
-                    maximumHeight = (std::max)(maximumHeight, vertex.z);
-                    heightSum += vertex.z;
-                    ++heightCount;
-                }
-                prepared.waterIndices.insert(prepared.waterIndices.end(),
-                                             {base, base + 1, base + 2, base, base + 2, base + 3});
-            }
-            if (heightCount > 0) {
-                prepared.waterMinimumHeight = minimumHeight;
-                prepared.waterMaximumHeight = maximumHeight;
-                prepared.waterMeanHeight = heightSum / static_cast<double>(heightCount);
-            }
+            auto water = openbus::map::loadWaterData(waterPath);
+            prepared.waterGeometry =
+                openbus::map::prepareMapWaterMesh(water, tileX, tileY, coordinates.tileSize);
+            prepared.waterData = std::move(water);
         } catch (const std::exception& error) {
             prepared.waterError = error.what();
         } catch (...) {
@@ -1632,7 +1213,8 @@ void MapSceneLoader::configureGroundTextures() {
         throw std::runtime_error("Map ground-texture preview references an invalid [groundtex] "
                                  "index");
     }
-    if (pglGenBuffers == nullptr || pglBindBuffer == nullptr || pglBufferData == nullptr) {
+    if (impl_->openGLResourcesEnabled &&
+        (pglGenBuffers == nullptr || pglBindBuffer == nullptr || pglBufferData == nullptr)) {
         throw std::runtime_error("OpenGL buffer functions are unavailable for map terrain");
     }
     impl_->mapTileCoordinates.reserve(map.tiles.size());
@@ -1662,7 +1244,9 @@ void MapSceneLoader::loadGroundTextures() {
     }
     {
         TraceScope phase("map", "MapRenderer.loadGroundTexture");
-        impl_->texture = uploadPreparedTexture(texturePath, true);
+        if (impl_->openGLResourcesEnabled) {
+            impl_->texture = uploadPreparedTexture(texturePath, true);
+        }
     }
 
     terrainByCoordinate.reserve(map.tiles.size());
@@ -1849,41 +1433,8 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                                     decodeTexture(sidecar->path);
                                 }
                             }
-                            const auto& grid = prepared.grid;
-                            const std::size_t side = grid.intervals + 1;
-                            const double step = tileSize / grid.intervals;
-                            prepared.vertices.reserve(side * side);
-                            for (std::size_t row = 0; row < side; ++row) {
-                                for (std::size_t column = 0; column < side; ++column) {
-                                    prepared.vertices.push_back({static_cast<float>(column * step),
-                                                                 static_cast<float>(row * step),
-                                                                 grid.heights[row * side + column],
-                                                                 static_cast<float>(column),
-                                                                 static_cast<float>(row), 0.0F,
-                                                                 0.0F, 0.0F, 1.0F});
-                                }
-                            }
-                            prepared.indices.reserve(grid.intervals * grid.intervals * 6);
-                            for (std::size_t row = 0; row < grid.intervals; ++row) {
-                                for (std::size_t column = 0; column < grid.intervals; ++column) {
-                                    const auto topLeft =
-                                        static_cast<std::uint32_t>(row * side + column);
-                                    const auto topRight =
-                                        static_cast<std::uint32_t>(row * side + column + 1);
-                                    const auto bottomRight =
-                                        static_cast<std::uint32_t>((row + 1) * side + column + 1);
-                                    const auto bottomLeft =
-                                        static_cast<std::uint32_t>((row + 1) * side + column);
-                                    // Match the renderer's GL_CW terrain winding.
-                                    prepared.indices.insert(prepared.indices.end(),
-                                                            {topLeft, bottomRight, topRight,
-                                                             topLeft, bottomLeft, bottomRight});
-                                }
-                            }
-                            const auto [minimum, maximum] =
-                                std::minmax_element(grid.heights.begin(), grid.heights.end());
-                            prepared.minimumHeight = *minimum;
-                            prepared.maximumHeight = *maximum;
+                            prepared.geometry =
+                                openbus::map::prepareMapTerrainMesh(prepared.grid, tileSize);
                             return prepared;
                         }))
                         .first;
@@ -1930,7 +1481,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             static_cast<void>(inserted);
             const openbus::map::TerrainGrid& grid = terrain->second;
             Impl::TileBuffer buffer;
-            buffer.indexCount = prepared.indices.size();
+            buffer.indexCount = prepared.geometry.indices.size();
             buffer.tileX = tile.x;
             buffer.tileY = tile.y;
             const float inverseIntervals = 1.0F / static_cast<float>(grid.intervals);
@@ -2018,29 +1569,31 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             }
             terrainTextureResolutions += prepared.texturePaths.resolutions();
             terrainTexturePathReuses += prepared.texturePaths.reuses();
-            buffer.minZ = prepared.minimumHeight;
-            buffer.maxZ = prepared.maximumHeight;
-            pglGenBuffers(1, &buffer.buffer);
-            pglBindBuffer(GL_ARRAY_BUFFER, buffer.buffer);
-            pglBufferData(
-                GL_ARRAY_BUFFER,
-                static_cast<std::ptrdiff_t>(prepared.vertices.size() * sizeof(TerrainVertex)),
-                prepared.vertices.data(), GL_STATIC_DRAW);
-            pglGenBuffers(1, &buffer.indexBuffer);
-            pglBindBuffer(GL_ARRAY_BUFFER, buffer.indexBuffer);
-            pglBufferData(
-                GL_ARRAY_BUFFER,
-                static_cast<std::ptrdiff_t>(prepared.indices.size() * sizeof(std::uint32_t)),
-                prepared.indices.data(), GL_STATIC_DRAW);
-            if (buffer.buffer == 0 || buffer.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
-                if (buffer.buffer != 0) {
-                    deleteRendererBuffers(1, &buffer.buffer);
+            buffer.minZ = prepared.geometry.minimumHeight;
+            buffer.maxZ = prepared.geometry.maximumHeight;
+            if (impl_->openGLResourcesEnabled) {
+                pglGenBuffers(1, &buffer.buffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, buffer.buffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(prepared.geometry.vertices.size() *
+                                                          sizeof(ModelVertex)),
+                              prepared.geometry.vertices.data(), GL_STATIC_DRAW);
+                pglGenBuffers(1, &buffer.indexBuffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, buffer.indexBuffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(prepared.geometry.indices.size() *
+                                                          sizeof(std::uint32_t)),
+                              prepared.geometry.indices.data(), GL_STATIC_DRAW);
+                if (buffer.buffer == 0 || buffer.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
+                    if (buffer.buffer != 0) {
+                        deleteRendererBuffers(1, &buffer.buffer);
+                    }
+                    if (buffer.indexBuffer != 0) {
+                        deleteRendererBuffers(1, &buffer.indexBuffer);
+                    }
+                    throw std::runtime_error("Could not upload terrain mesh for " +
+                                             openbus::pathToUtf8(tile.textPath.filename()));
                 }
-                if (buffer.indexBuffer != 0) {
-                    deleteRendererBuffers(1, &buffer.indexBuffer);
-                }
-                throw std::runtime_error("Could not upload terrain mesh for " +
-                                         openbus::pathToUtf8(tile.textPath.filename()));
             }
             impl_->terrainBuffers.push_back(buffer);
             ++impl_->terrainTilesByTile[tileKey(buffer.tileX, buffer.tileY)];
@@ -2192,9 +1745,9 @@ void MapSceneLoader::indexMapContent() {
                     }
                 }
             }
-            roadConnections.addSpline(spline, tileReference.x, tileReference.y,
-                                      spline.geometryValid ? splineCantWidth(spline)
-                                                           : std::nullopt);
+            roadConnections->addSpline(spline, tileReference.x, tileReference.y,
+                                       spline.geometryValid ? splineCantWidth(spline)
+                                                            : std::nullopt);
             if (spline.splineId != 0 && !ambiguousMapSplineIds.contains(spline.splineId)) {
                 const auto [existing, inserted] = mapSplinesById.try_emplace(
                     spline.splineId,
@@ -2319,7 +1872,8 @@ void MapSceneLoader::indexMapContent() {
     indexSceneryLightsMapWide();
     gameLog.Log("Map tile index parsed; connecting road and traffic route networks.");
     TraceScope finalizeTrace("map", "MapSceneLoader.indexMapContent.finalizeNetworks");
-    roadConnections.finalize();
+    roadConnections->finalize();
+    roadConnectionIndexReady_.store(true, std::memory_order_release);
     impl_->trafficRouteNetwork.finalize();
     impl_->roadTrafficRouteNetwork.finalize();
     impl_->humanTrafficRouteNetwork.finalize();
@@ -2379,29 +1933,33 @@ bool MapSceneLoader::uploadRoadBatches(bool waitForCompletion) {
         } else {
             batch.color = {0.45, 0.45, 0.45};
         }
-        pglGenBuffers(1, &batch.buffer);
-        pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-        pglBufferData(GL_ARRAY_BUFFER,
-                      static_cast<std::ptrdiff_t>(geometry.vertices.size() * sizeof(ModelVertex)),
-                      geometry.vertices.data(), GL_STATIC_DRAW);
-        pglGenBuffers(1, &batch.indexBuffer);
-        pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
-        pglBufferData(GL_ARRAY_BUFFER,
-                      static_cast<std::ptrdiff_t>(geometry.indices.size() * sizeof(std::uint32_t)),
-                      geometry.indices.data(), GL_STATIC_DRAW);
-        if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
-            if (batch.buffer != 0) {
-                deleteRendererBuffers(1, &batch.buffer);
+        if (impl_->openGLResourcesEnabled) {
+            pglGenBuffers(1, &batch.buffer);
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+            pglBufferData(
+                GL_ARRAY_BUFFER,
+                static_cast<std::ptrdiff_t>(geometry.vertices.size() * sizeof(ModelVertex)),
+                geometry.vertices.data(), GL_STATIC_DRAW);
+            pglGenBuffers(1, &batch.indexBuffer);
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
+            pglBufferData(
+                GL_ARRAY_BUFFER,
+                static_cast<std::ptrdiff_t>(geometry.indices.size() * sizeof(std::uint32_t)),
+                geometry.indices.data(), GL_STATIC_DRAW);
+            if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
+                if (batch.buffer != 0) {
+                    deleteRendererBuffers(1, &batch.buffer);
+                }
+                if (batch.indexBuffer != 0) {
+                    deleteRendererBuffers(1, &batch.indexBuffer);
+                }
+                recordSkipped(skipped, "road batches rejected by OpenGL upload", batchKey);
+                geometryIt = roadVertices.erase(geometryIt);
+                continue;
             }
-            if (batch.indexBuffer != 0) {
-                deleteRendererBuffers(1, &batch.indexBuffer);
-            }
-            recordSkipped(skipped, "road batches rejected by OpenGL upload", batchKey);
-            geometryIt = roadVertices.erase(geometryIt);
-            continue;
+            impl_->roadBatches.push_back(batch);
+            ++impl_->roadBatchesByTile[tileKey(batch.tileX, batch.tileY)];
         }
-        impl_->roadBatches.push_back(batch);
-        ++impl_->roadBatchesByTile[tileKey(batch.tileX, batch.tileY)];
         geometryIt = roadVertices.erase(geometryIt);
     }
     if (roadVertices.empty()) {
@@ -2466,6 +2024,9 @@ GLuint MapSceneLoader::uploadPreparedTexture(const std::filesystem::path& path, 
 }
 
 GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat) {
+    if (!impl_->openGLResourcesEnabled) {
+        return 0;
+    }
     const std::string key =
         openbus::pathToUtf8(path.lexically_normal()) + (repeat ? "|repeat" : "|clamp");
     const auto found = textureCache.find(key);
@@ -2481,6 +2042,9 @@ GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat
 
 std::optional<GLuint>
 MapSceneLoader::requestSeasonalSceneryTexture(const std::filesystem::path& path) {
+    if (!impl_->openGLResourcesEnabled) {
+        return std::nullopt;
+    }
     const std::string key = openbus::pathToUtf8(path.lexically_normal());
     auto found = seasonalTextureRequests.find(key);
     if (found == seasonalTextureRequests.end()) {

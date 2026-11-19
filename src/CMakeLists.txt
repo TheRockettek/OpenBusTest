@@ -13,7 +13,10 @@
 #   scripting  vehicle/scenery script runtime (native OSC + Lua backends)
 #   audio      OpenAL sound engine and vehicle sound banks
 #   input      keyboard/mouse binding helpers
-#   render     OpenGL renderer, map renderer and vehicle renderer
+#   camera     backend-neutral camera matrices and pose helpers
+#   motion_data backend-neutral camera/object frame history
+#   human_geometry backend-neutral human mesh preparation, skinning, and matrix math
+#   render     shared render services and legacy OpenGL renderer implementation
 #   app        window/frame orchestration and the OpenBus executable
 
 # Library defaults shared by every first-party module.
@@ -112,10 +115,12 @@ openbus_add_module(openbus_assets
     SOURCES
         assets/O3DLoader.cpp
         assets/ObjLoader.cpp
+        assets/PngWriter.cpp
         assets/ScreenshotWriter.cpp
         assets/TextureAssetLoader.cpp
         assets/TextureLoader.cpp
         assets/VehicleTextureResolver.cpp
+        assets/VehicleMeshGeometry.cpp
         assets/WavLoader.cpp
         assets/XLoader.cpp
     DEPENDS
@@ -150,15 +155,28 @@ openbus_add_module(openbus_map
         map/MapCollisionStreamer.cpp
         map/MapConfigLoader.cpp
         map/MapRoadGeometry.cpp
+        map/MapRoadRenderGeometry.cpp
+        map/MapSceneryGeometry.cpp
+        map/MapSurfaceGeometry.cpp
         map/MapSceneryPlacement.cpp
         map/MapSplineGeometry.cpp
         map/MapSplineProfile.cpp
         map/MapTrafficRuntime.cpp
         map/MapWaterGeometry.cpp
+        map/SceneryMaterialRuntime.cpp
     DEPENDS
         openbus_config
         openbus_assets
         openbus_physics
+)
+
+openbus_add_module(openbus_scenery_preparation
+    SOURCES
+        render/map/PreparedMapScenery.cpp
+    DEPENDS
+        openbus_assets
+        openbus_config
+        openbus_map
 )
 
 openbus_add_module(openbus_scripting
@@ -196,19 +214,40 @@ openbus_add_module(openbus_input
         OpenBus::GLFW
 )
 
+openbus_add_module(openbus_motion_data
+    SOURCES
+        render/MotionData.cpp
+)
+
+openbus_add_module(openbus_camera
+    SOURCES
+        render/CameraMath.cpp
+    DEPENDS
+        openbus_core
+)
+
+openbus_add_module(openbus_human_geometry
+    SOURCES
+        render/HumanMeshGeometry.cpp
+        render/HumanSkinning.cpp
+        render/MatrixMath.cpp
+    DEPENDS
+        openbus_assets
+        openbus_config
+)
+
 openbus_add_module(openbus_render
     SOURCES
         render/AssetRequestManager.cpp
         render/BusModelLoader.cpp
-        render/CameraMath.cpp
         render/ComputeCulling.cpp
         render/CoreRenderer.cpp
-        render/HumanSkinning.cpp
-        render/MatrixMath.cpp
-        render/MotionData.cpp
+        render/OpenGLFramePresenter.cpp
         render/OpenGLFunctions.cpp
         render/RenderPrimitives.cpp
         render/RendererReflection.cpp
+        render/SpotlightShadowAtlas.cpp
+        render/SpotlightShadowCamera.cpp
         render/map/MapRenderer.cpp
         render/map/MapRendererDraw.cpp
         render/map/MapRendererHelpers.cpp
@@ -217,13 +256,18 @@ openbus_add_module(openbus_render
         render/map/MapSceneryAssets.cpp
     DEPENDS
         openbus_assets
+        openbus_camera
         openbus_config
+        openbus_human_geometry
         openbus_map
+        openbus_motion_data
         openbus_physics
+        openbus_scenery_preparation
         openbus_scripting
         OpenBus::GLFW
-        OpenGL::GL
 )
+add_library(openbus_render_legacy_gl INTERFACE)
+target_link_libraries(openbus_render_legacy_gl INTERFACE openbus_render OpenGL::GL)
 set(OPENBUS_SMAA_ROOT "${PROJECT_SOURCE_DIR}/third_party/smaa")
 set(OPENBUS_SMAA_SHADER "${OPENBUS_SMAA_ROOT}/SMAA.hlsl")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OPENBUS_SMAA_SHADER}")
@@ -243,14 +287,132 @@ target_include_directories(openbus_render
         "${OPENBUS_SMAA_ROOT}/Textures"
 )
 
+if(OPENBUS_BUILD_VULKAN_PROBE)
+    add_library(openbus_vulkan_backend STATIC
+        render/VulkanFunctions.cpp
+        render/VulkanRenderer.cpp
+    )
+    openbus_apply_project_settings(openbus_vulkan_backend)
+    target_include_directories(openbus_vulkan_backend
+        PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+        PRIVATE
+            "${openbus_vulkan_headers_SOURCE_DIR}/include"
+            "${openbus_volk_SOURCE_DIR}"
+    )
+    target_compile_definitions(openbus_vulkan_backend PRIVATE GLFW_INCLUDE_NONE)
+    target_link_libraries(openbus_vulkan_backend
+        PUBLIC OpenBus::GLFW
+        PRIVATE ${CMAKE_DL_LIBS}
+    )
+endif()
+
+if(OPENBUS_BUILD_DILIGENT_VULKAN_PROBE OR OPENBUS_BUILD_DILIGENT_RENDERER)
+    add_library(openbus_diligent_render STATIC
+        render/diligent/DiligentColorPresent.cpp
+        render/diligent/DiligentDynamicTexture2D.cpp
+        render/diligent/DiligentHumanAsset.cpp
+        render/diligent/DiligentMapLighting.cpp
+        render/diligent/DiligentSceneLighting.cpp
+        render/diligent/DiligentSpotlightShadowMaps.cpp
+        render/diligent/DiligentMapTileAsset.cpp
+        render/diligent/DiligentMapTileSet.cpp
+        render/diligent/DiligentMotionRenderTargets.cpp
+        render/diligent/DiligentMultisampling.cpp
+        render/diligent/DiligentObjModel.cpp
+        render/diligent/DiligentPrimitiveRenderer.cpp
+        render/diligent/DiligentReflectionTarget.cpp
+        render/diligent/DiligentRuntimeTexture2D.cpp
+        render/diligent/DiligentSceneFrame.cpp
+        render/diligent/DiligentSceneryAsset.cpp
+        render/diligent/DiligentSceneryAssetCache.cpp
+        render/diligent/DiligentSmaa.cpp
+        render/diligent/DiligentTexture2D.cpp
+        render/diligent/DiligentTexture2DArray.cpp
+        render/diligent/DiligentTextureCompression.cpp
+        render/diligent/DiligentTexturedMesh.cpp
+        render/diligent/DiligentWeatherClouds.cpp
+        render/diligent/DiligentWeatherPrecipitation.cpp
+        render/diligent/DiligentVehicleAsset.cpp
+    )
+    target_include_directories(openbus_diligent_render PUBLIC
+        "${OPENBUS_SOURCE_ROOT}"
+        "${diligentcore_SOURCE_DIR}"
+    )
+    target_include_directories(openbus_diligent_render PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        "${OPENBUS_SMAA_ROOT}/Textures"
+    )
+    target_link_libraries(openbus_diligent_render PUBLIC
+        Diligent-Common
+        Diligent-GraphicsEngineInterface
+        openbus_assets
+        openbus_human_geometry
+        openbus_map
+        openbus_motion_data
+        openbus_scenery_preparation
+    )
+    openbus_apply_project_settings(openbus_diligent_render)
+
+    add_library(openbus_diligent_ui STATIC
+        app/DiligentImGuiLayer.cpp
+        render/diligent/DiligentImGuiRenderer.cpp
+    )
+    target_include_directories(openbus_diligent_ui PUBLIC "${OPENBUS_SOURCE_ROOT}")
+    target_link_libraries(openbus_diligent_ui PUBLIC openbus_diligent_render openbus_imgui_core)
+    target_compile_definitions(openbus_diligent_ui PRIVATE GLFW_INCLUDE_NONE)
+    openbus_apply_project_settings(openbus_diligent_ui)
+
+    add_library(openbus_diligent_vulkan STATIC
+        render/diligent/DiligentVulkanFrame.cpp
+    )
+    target_include_directories(openbus_diligent_vulkan PUBLIC
+        "${OPENBUS_SOURCE_ROOT}"
+        "${diligentcore_SOURCE_DIR}"
+    )
+    target_link_libraries(openbus_diligent_vulkan PUBLIC
+        Diligent-GraphicsEngineVk-static
+    )
+    target_compile_definitions(openbus_diligent_vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR=1)
+    openbus_apply_project_settings(openbus_diligent_vulkan)
+
+    add_library(openbus_diligent_app STATIC
+        app/DiligentWindowBridge.cpp
+        app/DiligentMapBridge.cpp
+        app/DiligentHumanBridge.cpp
+        app/DiligentHumanPreparationBridge.cpp
+        app/DiligentFrameRenderer.cpp
+        app/DiligentScriptTexture.cpp
+        app/vehicle/DiligentVehicleSourceBridge.cpp
+        app/vehicle/DiligentVehicleSceneBridge.cpp
+        app/vehicle/DiligentVehicleRuntimeTextures.cpp
+    )
+    target_include_directories(openbus_diligent_app PUBLIC
+        "${OPENBUS_SOURCE_ROOT}"
+        "${diligentcore_SOURCE_DIR}"
+    )
+    target_link_libraries(openbus_diligent_app PUBLIC
+        openbus_diligent_render
+        openbus_diligent_ui
+        openbus_diligent_vulkan
+        openbus_camera
+        openbus_render
+        openbus_scripting
+        OpenBus::GLFW
+    )
+    target_compile_definitions(openbus_diligent_app PRIVATE GLFW_INCLUDE_NONE)
+    openbus_apply_project_settings(openbus_diligent_app)
+
+endif()
+
 add_executable(OpenBus
     app/CrashHandler.cpp
     app/CustomWeatherUi.cpp
     app/FrameTiming.cpp
-    app/ImGuiLayer.cpp
     app/MetarStationUi.cpp
     app/MapTrafficWorker.cpp
     app/RenderLoop.cpp
+    app/RenderLoopCamera.cpp
     app/RenderLoopDraw.cpp
     app/RenderLoopInput.cpp
     app/RenderLoopSimulation.cpp
@@ -267,12 +429,10 @@ add_executable(OpenBus
     app/vehicle/Vehicle.cpp
     app/vehicle/VehicleAnimation.cpp
     app/vehicle/VehicleDefinition.cpp
-    app/vehicle/VehicleDraw.cpp
     app/vehicle/VehicleInteraction.cpp
     app/vehicle/VehicleMaterials.cpp
     app/vehicle/VehicleMeshLoading.cpp
     app/vehicle/VehiclePreferences.cpp
-    app/vehicle/VehicleTextures.cpp
     app/vehicle/VehicleVisibility.cpp
 )
 openbus_apply_project_settings(OpenBus)
@@ -283,9 +443,17 @@ target_link_libraries(OpenBus PRIVATE
     openbus_physics
     openbus_render
     openbus_scripting
-    openbus_imgui
     ${CMAKE_DL_LIBS}
 )
+if(OPENBUS_BUILD_DILIGENT_RENDERER)
+    target_link_libraries(OpenBus PRIVATE openbus_diligent_app)
+    target_sources(OpenBus PRIVATE
+        app/vehicle/DiligentVehicleBridge.cpp
+        app/vehicle/DiligentVehicleScenePreparation.cpp
+        app/vehicle/VehicleDiligentTextures.cpp
+    )
+    target_compile_definitions(OpenBus PRIVATE OPENBUS_DILIGENT_RENDERER_AVAILABLE=1)
+endif()
 openbus_copy_lua_runtime(OpenBus)
 
 set(OPENBUS_STEAM_RUNTIME_ROOT "${PROJECT_SOURCE_DIR}/third_party/steamworks/redistributable_bin")

@@ -108,6 +108,9 @@ void MotionHistory::beginFrame(std::uint64_t frameId, double timestampSeconds, i
     if (hasPreviousFrame_ && timestampSeconds < previousTimestampSeconds_) {
         throw std::invalid_argument("Motion history timestamps must be monotonic");
     }
+    if (hasPreviousFrame_ && frameId <= previousFrameId_) {
+        throw std::invalid_argument("Motion history frame IDs must be strictly increasing");
+    }
 
     frame_ = {};
     frame_.frameId = frameId;
@@ -136,12 +139,16 @@ void MotionHistory::beginFrame(std::uint64_t frameId, double timestampSeconds, i
 }
 
 MotionTransform MotionHistory::previousModelView(const Matrix4& currentModelView,
-                                                 MotionObjectKey key, bool geometryHistoryValid) {
+                                                 MotionObjectKey key, bool geometryHistoryValid,
+                                                 double maximumTranslationDeltaMeters) {
     if (!frameActive_) {
         throw std::logic_error("Motion history transform requested outside an active frame");
     }
     if (!finiteMatrix(currentModelView)) {
         throw std::invalid_argument("Motion history transform must be finite");
+    }
+    if (std::isnan(maximumTranslationDeltaMeters) || maximumTranslationDeltaMeters < 0.0) {
+        throw std::invalid_argument("Maximum motion-history translation delta is invalid");
     }
     const Matrix4 currentWorld = multiply(currentViewInverse_, currentModelView);
     MotionTransform result;
@@ -152,9 +159,16 @@ MotionTransform MotionHistory::previousModelView(const Matrix4& currentModelView
     }
 
     const auto previous = previousObjects_.find(key);
-    const bool objectHistoryValid = frame_.historyValid && previous != previousObjects_.end() &&
-                                    previous->second.frameId + 1 == frame_.frameId &&
-                                    geometryHistoryValid;
+    bool objectHistoryValid = frame_.historyValid && previous != previousObjects_.end() &&
+                              previous->second.frameId + 1 == frame_.frameId &&
+                              geometryHistoryValid;
+    if (objectHistoryValid) {
+        const Matrix4& previousWorld = previous->second.worldTransform;
+        const double translationDelta =
+            std::hypot(currentWorld[12] - previousWorld[12], currentWorld[13] - previousWorld[13],
+                       currentWorld[14] - previousWorld[14]);
+        objectHistoryValid = translationDelta <= maximumTranslationDeltaMeters;
+    }
     const Matrix4& previousWorld =
         objectHistoryValid ? previous->second.worldTransform : currentWorld;
     result.previousModelView = multiply(frame_.previousView, previousWorld);

@@ -1,6 +1,10 @@
 # Main-view motion data
 
-OpenBus uses a custom OpenGL 3.3 core renderer. Its model shaders already receive the active projection and model-view matrices, so main-view motion is emitted as additional fragment outputs from the existing model/material geometry submissions. The main view is rendered into an MRT framebuffer and its color attachment is blitted to the window; reflections continue using their existing independent targets and are not motion-instrumented.
+This document describes the legacy OpenGL renderer's motion-texture API and probes.
+The production application now uses Diligent Vulkan; do not treat the OpenGL
+texture handles or render-target descriptions below as its runtime contract.
+
+The legacy renderer uses a custom OpenGL 3.3 core pipeline. Its model shaders receive the active projection and model-view matrices, so main-view motion is emitted as additional fragment outputs from existing model/material geometry submissions. The main view is rendered into an MRT framebuffer and its color attachment is blitted; reflections use independent targets and are not motion-instrumented.
 
 ## Accessing the frame
 

@@ -39,6 +39,58 @@ FRAME_SCOPES = (
     "Vehicle::drawBatch.prepareAndSubmit",
 )
 FRAME_SCOPE_MIN_DURATION_US = {"Vehicle::drawBatch.prepareAndSubmit": 100.0}
+LIGHTING_UPLOAD_FIELDS = (
+    "vehicle_uploads",
+    "vehicle_bytes",
+    "vehicle_sets",
+    "vehicle_lights_total",
+    "vehicle_lights_max",
+    "vehicle_selection_views",
+    "player_spotlight_definitions_max",
+    "ai_spotlight_definitions_max",
+    "player_spotlight_candidates_total",
+    "ai_spotlight_candidates_total",
+    "spotlight_shadow_frames",
+    "spotlight_shadow_selected_total",
+    "spotlight_shadow_selected_max",
+    "spotlight_shadow_updates",
+    "spotlight_tile_uploads",
+    "spotlight_tile_bytes",
+    "spotlight_tile_sets",
+    "spotlight_tile_count",
+    "spotlight_tile_assignments",
+    "spotlight_tile_max",
+    "spotlight_tile_fallback_sets",
+    "spotlight_gpu_tile_sets",
+    "spotlight_gpu_tile_count",
+    "spotlight_gpu_tile_assignments",
+    "map_uploads",
+    "map_bytes",
+    "static_map_uploads",
+    "static_map_bytes",
+    "map_view_preparations",
+    "map_view_reuses",
+    "map_selection_calls",
+    "map_registered_max",
+    "map_tile_candidates_total",
+    "map_tile_candidates_max",
+    "map_sets",
+    "map_lights_total",
+    "map_lights_max",
+    "map_gpu_tile_sets",
+    "map_gpu_tile_count",
+    "map_gpu_tile_assignments",
+    "map_gpu_tile_max_samples",
+    "map_gpu_tile_max",
+    "map_gpu_tile_fallback_sets",
+    "map_gpu_tile_fallback_unavailable",
+    "map_gpu_tile_fallback_vertex",
+    "map_gpu_tile_fallback_viewport",
+    "map_gpu_tile_fallback_capacity",
+    "map_gpu_tile_fallback_dark",
+    "map_gpu_tile_fallback_density",
+    "map_gpu_tile_fallback_compute",
+)
 
 
 @dataclass
@@ -360,6 +412,36 @@ def gpu_timing_configuration(log_text: str, environment: dict[str, str]) -> dict
     }
 
 
+def parse_lighting_upload_summaries(log_text: str) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for line_number, line in enumerate(log_text.splitlines(), start=1):
+        marker = line.find("LIGHTING_UPLOAD ")
+        if marker < 0:
+            continue
+        values: dict[str, str] = {}
+        for token in line[marker + len("LIGHTING_UPLOAD ") :].split():
+            key, separator, value = token.partition("=")
+            if separator:
+                if key in values:
+                    raise ValueError(f"Duplicate lighting upload field on log line {line_number}")
+                values[key] = value
+        try:
+            interval = float(values["interval_s"])
+            counters = {
+                key: int(values[key]) if key in values else "" for key in LIGHTING_UPLOAD_FIELDS
+            }
+        except (KeyError, ValueError) as error:
+            raise ValueError(
+                f"Malformed lighting upload summary on log line {line_number}"
+            ) from error
+        if not math.isfinite(interval) or interval < 0 or any(
+            value != "" and value < 0 for value in counters.values()
+        ):
+            raise ValueError(f"Invalid lighting upload summary on log line {line_number}")
+        summaries.append({"IntervalSeconds": interval, **counters})
+    return summaries
+
+
 def parse_gpu_timing_summaries(log_text: str) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for line_number, line in enumerate(log_text.splitlines(), start=1):
@@ -389,6 +471,69 @@ def parse_gpu_timing_summaries(log_text: str) -> list[dict[str, Any]]:
             reflection_maximum = (
                 float(values["reflection_max_ms"]) if reflection_samples > 0 else ""
             )
+            has_shadow = any(
+                key in values
+                for key in (
+                    "spotlight_shadow_samples",
+                    "spotlight_shadow_dropped",
+                    "spotlight_shadow_avg_ms",
+                    "spotlight_shadow_max_ms",
+                )
+            )
+            shadow_samples = int(values["spotlight_shadow_samples"]) if has_shadow else ""
+            shadow_dropped = int(values["spotlight_shadow_dropped"]) if has_shadow else ""
+            shadow_average = (
+                float(values["spotlight_shadow_avg_ms"])
+                if shadow_samples != "" and shadow_samples > 0
+                else ""
+            )
+            shadow_maximum = (
+                float(values["spotlight_shadow_max_ms"])
+                if shadow_samples != "" and shadow_samples > 0
+                else ""
+            )
+            has_spotlight = any(
+                key in values
+                for key in (
+                    "spotlight_cull_samples",
+                    "spotlight_cull_dropped",
+                    "spotlight_cull_avg_ms",
+                    "spotlight_cull_max_ms",
+                )
+            )
+            spotlight_samples = int(values["spotlight_cull_samples"]) if has_spotlight else ""
+            spotlight_dropped = int(values["spotlight_cull_dropped"]) if has_spotlight else ""
+            spotlight_average = (
+                float(values["spotlight_cull_avg_ms"])
+                if spotlight_samples != "" and spotlight_samples > 0
+                else ""
+            )
+            spotlight_maximum = (
+                float(values["spotlight_cull_max_ms"])
+                if spotlight_samples != "" and spotlight_samples > 0
+                else ""
+            )
+            has_map = any(
+                key in values
+                for key in (
+                    "map_light_cull_samples",
+                    "map_light_cull_dropped",
+                    "map_light_cull_avg_ms",
+                    "map_light_cull_max_ms",
+                )
+            )
+            map_samples = int(values["map_light_cull_samples"]) if has_map else ""
+            map_dropped = int(values["map_light_cull_dropped"]) if has_map else ""
+            map_average = (
+                float(values["map_light_cull_avg_ms"])
+                if map_samples != "" and map_samples > 0
+                else ""
+            )
+            map_maximum = (
+                float(values["map_light_cull_max_ms"])
+                if map_samples != "" and map_samples > 0
+                else ""
+            )
         except (KeyError, ValueError) as error:
             raise ValueError(
                 f"Malformed GPU timing summary on application log line {line_number}"
@@ -403,6 +548,12 @@ def parse_gpu_timing_summaries(log_text: str) -> list[dict[str, Any]]:
                     main_maximum,
                     reflection_average,
                     reflection_maximum,
+                    shadow_average,
+                    shadow_maximum,
+                    spotlight_average,
+                    spotlight_maximum,
+                    map_average,
+                    map_maximum,
                 )
                 if value != ""
             ),
@@ -411,6 +562,12 @@ def parse_gpu_timing_summaries(log_text: str) -> list[dict[str, Any]]:
             not all(math.isfinite(value) and value >= 0.0 for value in numeric_values)
             or interval_seconds <= 0.0
             or min(main_samples, main_dropped, reflection_samples, reflection_dropped) < 0
+            or (shadow_samples != "" and shadow_samples < 0)
+            or (shadow_dropped != "" and shadow_dropped < 0)
+            or (spotlight_samples != "" and spotlight_samples < 0)
+            or (spotlight_dropped != "" and spotlight_dropped < 0)
+            or (map_samples != "" and map_samples < 0)
+            or (map_dropped != "" and map_dropped < 0)
         ):
             raise ValueError(
                 f"Invalid GPU timing values on application log line {line_number}"
@@ -427,6 +584,18 @@ def parse_gpu_timing_summaries(log_text: str) -> list[dict[str, Any]]:
                 "ReflectionAverageMs": reflection_average,
                 "ReflectionMaxMs": reflection_maximum,
                 "ReflectionDropped": reflection_dropped,
+                "SpotlightShadowSamples": shadow_samples,
+                "SpotlightShadowAverageMs": shadow_average,
+                "SpotlightShadowMaxMs": shadow_maximum,
+                "SpotlightShadowDropped": shadow_dropped,
+                "SpotlightCullSamples": spotlight_samples,
+                "SpotlightCullAverageMs": spotlight_average,
+                "SpotlightCullMaxMs": spotlight_maximum,
+                "SpotlightCullDropped": spotlight_dropped,
+                "MapLightCullSamples": map_samples,
+                "MapLightCullAverageMs": map_average,
+                "MapLightCullMaxMs": map_maximum,
+                "MapLightCullDropped": map_dropped,
             }
         )
     return summaries
@@ -642,6 +811,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     frame_rows: list[dict[str, Any]] = []
     frametime_rows: list[dict[str, Any]] = []
     gpu_timing_rows: list[dict[str, Any]] = []
+    lighting_upload_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
     run_cases = [
         (resolution, width, height, run_number)
@@ -922,6 +1092,21 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "LogFile": str(log_path),
                 }
             )
+        for interval_index, lighting_summary in enumerate(
+            parse_lighting_upload_summaries(log_text), start=1
+        ):
+            lighting_upload_rows.append(
+                {
+                    "RequestedResolution": resolution,
+                    "WindowResolution": window_resolution,
+                    "FramebufferResolution": actual_resolution,
+                    "RunOrder": run_order,
+                    "Run": run_number,
+                    "IntervalIndex": interval_index,
+                    **lighting_summary,
+                    "LogFile": str(log_path),
+                }
+            )
         frametime_rows.append(
             {
                 "RequestedResolution": resolution,
@@ -1172,6 +1357,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "ReflectionAverageMs",
         "ReflectionMaxMs",
         "ReflectionDropped",
+        "SpotlightShadowSamples",
+        "SpotlightShadowAverageMs",
+        "SpotlightShadowMaxMs",
+        "SpotlightShadowDropped",
+        "SpotlightCullSamples",
+        "SpotlightCullAverageMs",
+        "SpotlightCullMaxMs",
+        "SpotlightCullDropped",
+        "MapLightCullSamples",
+        "MapLightCullAverageMs",
+        "MapLightCullMaxMs",
+        "MapLightCullDropped",
         "TraceFile",
         "LogFile",
     ]
@@ -1204,11 +1401,31 @@ def run_benchmark(args: argparse.Namespace) -> int:
         key=lambda row: (row["RequestedResolution"], row["Run"], row["IntervalSeconds"])
     )
     write_csv(output_path / "render_benchmark_gpu_timing.csv", gpu_timing_rows, gpu_timing_fields)
+    lighting_upload_fields = [
+        "RequestedResolution",
+        "WindowResolution",
+        "FramebufferResolution",
+        "RunOrder",
+        "Run",
+        "IntervalIndex",
+        "IntervalSeconds",
+        *LIGHTING_UPLOAD_FIELDS,
+        "LogFile",
+    ]
+    lighting_upload_rows.sort(
+        key=lambda row: (row["RequestedResolution"], row["Run"], row["IntervalIndex"])
+    )
+    write_csv(
+        output_path / "render_benchmark_lighting_upload.csv",
+        lighting_upload_rows,
+        lighting_upload_fields,
+    )
     print(f"Scope summary: {output_path / 'render_benchmark_scopes.csv'}")
     print(f"Run summary:   {output_path / 'render_benchmark_runs.csv'}")
     print(f"Frame timings: {output_path / 'render_benchmark_frames.csv'}")
     print(f"Run frame stats: {output_path / 'render_benchmark_frametimes.csv'}")
     print(f"GPU timings:  {output_path / 'render_benchmark_gpu_timing.csv'}")
+    print(f"Lighting uploads: {output_path / 'render_benchmark_lighting_upload.csv'}")
     for row in run_rows:
         print(
             f"{row['RequestedResolution']:>9} window {row['WindowResolution']:>9} "

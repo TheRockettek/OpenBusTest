@@ -2,6 +2,7 @@
 
 #include "core/BusTypes.h"
 #include "config/VehicleConfigLoader.h"
+#include "render/ReflectionTextureIndex.h"
 
 #include <array>
 #include <cstddef>
@@ -54,7 +55,6 @@ class ReflectionRenderer {
 
 bool reflectionPassActive();
 unsigned int reflectionTextureForIndex(int index);
-int reflectionTextureIndex(const std::string& textureName);
 bool reflectionTransparentEnabled();
 
 } // namespace openbus::rendering

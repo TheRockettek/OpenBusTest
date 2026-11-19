@@ -44,8 +44,14 @@ int main() {
     behind.position = {0.0, 0.0, 5.0};
     const std::vector<VehicleSpotlight> lights = {centered, offscreen, behind};
     const auto mask = buildVehicleSpotlightTileMask(lights, projection, viewport, 16);
-    if (!mask.enabled || mask.columns != 2 || mask.rows != 2 ||
-        mask.maximumLightsPerTile != 1 || mask.assignedReferences != 4) {
+    const auto boundsOnly =
+        buildVehicleSpotlightTileMask(lights, projection, viewport, 16, 1.0, false);
+    if (!mask.enabled || mask.columns != 2 || mask.rows != 2 || mask.maximumLightsPerTile != 1 ||
+        mask.assignedReferences != 4 || !boundsOnly.enabled || !boundsOnly.words.empty() ||
+        boundsOnly.bounds.size() != lights.size() ||
+        boundsOnly.assignedReferences != mask.assignedReferences ||
+        boundsOnly.columns != mask.columns || boundsOnly.rows != mask.rows ||
+        boundsOnly.wordsPerTile != mask.wordsPerTile) {
         std::cerr << "unexpected spotlight tile mask dimensions or counts\n";
         return 1;
     }
@@ -100,8 +106,7 @@ int main() {
     nearPlane.direction = {0.0, 0.0, 1.0};
     nearPlane.range = 0.05;
     const std::vector<VehicleSpotlight> nearPlaneLights = {nearPlane};
-    const auto nearMask =
-        buildVehicleSpotlightTileMask(nearPlaneLights, projection, viewport, 4);
+    const auto nearMask = buildVehicleSpotlightTileMask(nearPlaneLights, projection, viewport, 4);
     if (!nearMask.enabled || nearMask.assignedReferences != 4 ||
         nearMask.maximumLightsPerTile != 1) {
         std::cerr << "near-plane spotlight did not conservatively cover the viewport\n";

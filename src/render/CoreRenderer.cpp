@@ -1,6 +1,7 @@
 #include "render/CoreRenderer.h"
 #include "render/StaticMapLightFallback.h"
 #include "render/VehicleSpotlightTileMask.h"
+#include "render/MapLightTileBounds.h"
 #include "render/ComputeCulling.h"
 #include "render/MatrixMath.h"
 #include "core/Environment.h"
@@ -57,7 +58,7 @@ namespace {
 
 constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(13 * sizeof(float));
 constexpr std::size_t MAX_MATERIAL_TEXTURES = 8;
-constexpr std::size_t MAX_TEXTURE_UNITS = 16;
+constexpr std::size_t MAX_TEXTURE_UNITS = 17;
 std::size_t submittedFrameTriangleCount = 0;
 std::size_t submittedReflectionTriangleCount = 0;
 bool reflectionTrianglePass = false;
@@ -65,7 +66,7 @@ std::atomic<std::uint64_t> glDebugErrorGeneration = 0;
 std::size_t configuredMapLightSelectionLimit = 0;
 
 constexpr std::size_t kGpuTimerQueriesPerPass = 32;
-constexpr std::size_t kGpuTimerPassCount = 2;
+constexpr std::size_t kGpuTimerPassCount = 3;
 constexpr std::size_t kGpuTimerQueryCount = kGpuTimerQueriesPerPass * kGpuTimerPassCount;
 constexpr auto kGpuTimerPollInterval = std::chrono::milliseconds(100);
 constexpr auto kGpuTimerSummaryInterval = std::chrono::seconds(2);
@@ -153,6 +154,35 @@ bool vehicleSpotlightTileCullingEnabled() {
     return enabled;
 }
 
+bool vehicleSpotlightGpuCullingRequested() {
+    static const bool enabled = [] {
+        const char* setting = openbus::getEnvironment("OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING");
+        const std::string_view value = setting != nullptr ? setting : "";
+        if (value == "1" || value == "true")
+            return true;
+        if (value.empty() || value == "0" || value == "false")
+            return false;
+        gameLog.Warning("OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING must be 0, 1, false or true; "
+                        "using 0");
+        return false;
+    }();
+    return enabled;
+}
+
+bool mapLightGpuCullingRequested() {
+    static const bool enabled = [] {
+        const char* setting = openbus::getEnvironment("OPENBUS_MAP_LIGHT_GPU_CULLING");
+        const std::string_view value = setting != nullptr ? setting : "";
+        if (value == "1" || value == "true")
+            return true;
+        if (value.empty() || value == "0" || value == "false")
+            return false;
+        gameLog.Warning("OPENBUS_MAP_LIGHT_GPU_CULLING must be 0, 1, false or true; using 0");
+        return false;
+    }();
+    return enabled;
+}
+
 float reflectionAmbientFloor() {
     static const float floor = [] {
         constexpr float defaultFloor = 0.25F;
@@ -229,6 +259,10 @@ struct GpuTimerState {
     int sampleEveryNFrames = 1;
     std::array<GLuint, kGpuTimerQueryCount> queries = {};
     std::array<GpuTimerPassState, kGpuTimerPassCount> passes = {};
+    std::array<GLuint, 2 * kGpuTimerQueriesPerPass> spotlightQueries = {};
+    GpuTimerPassState spotlightPass;
+    std::array<GLuint, 2 * kGpuTimerQueriesPerPass> mapQueries = {};
+    GpuTimerPassState mapPass;
     std::size_t activePass = 0;
     std::size_t activeQuery = 0;
     std::chrono::steady_clock::time_point nextPoll = {};
@@ -275,6 +309,36 @@ void initializeGpuTiming() {
     }
 
     nextState.enabled = true;
+    if (vehicleSpotlightGpuCullingRequested()) {
+        if (pglQueryCounter != nullptr) {
+            pglGenQueries(static_cast<GLsizei>(nextState.spotlightQueries.size()),
+                          nextState.spotlightQueries.data());
+            if (std::any_of(nextState.spotlightQueries.begin(), nextState.spotlightQueries.end(),
+                            [](GLuint query) { return query == 0; })) {
+                pglDeleteQueries(static_cast<GLsizei>(nextState.spotlightQueries.size()),
+                                 nextState.spotlightQueries.data());
+                nextState.spotlightQueries.fill(0);
+                gameLog.Warning("GPU spotlight timestamp query allocation failed");
+            }
+        } else {
+            gameLog.Warning("GPU spotlight timestamp queries are unavailable");
+        }
+    }
+    if (mapLightGpuCullingRequested()) {
+        if (pglQueryCounter != nullptr) {
+            pglGenQueries(static_cast<GLsizei>(nextState.mapQueries.size()),
+                          nextState.mapQueries.data());
+            if (std::any_of(nextState.mapQueries.begin(), nextState.mapQueries.end(),
+                            [](GLuint query) { return query == 0; })) {
+                pglDeleteQueries(static_cast<GLsizei>(nextState.mapQueries.size()),
+                                 nextState.mapQueries.data());
+                nextState.mapQueries.fill(0);
+                gameLog.Warning("GPU map-light timestamp query allocation failed");
+            }
+        } else {
+            gameLog.Warning("GPU map-light timestamp queries are unavailable");
+        }
+    }
     nextState.lastSummary = std::chrono::steady_clock::now();
     gpuTimerState = nextState;
     gameLog.Log("GPU timer queries enabled; sampling every " + std::to_string(sampleEveryNFrames) +
@@ -288,7 +352,45 @@ void shutdownGpuTiming() {
         pglDeleteQueries(static_cast<GLsizei>(gpuTimerState.queries.size()),
                          gpuTimerState.queries.data());
     }
+    if (pglDeleteQueries != nullptr &&
+        std::any_of(gpuTimerState.spotlightQueries.begin(), gpuTimerState.spotlightQueries.end(),
+                    [](GLuint query) { return query != 0; })) {
+        pglDeleteQueries(static_cast<GLsizei>(gpuTimerState.spotlightQueries.size()),
+                         gpuTimerState.spotlightQueries.data());
+    }
+    if (pglDeleteQueries != nullptr &&
+        std::any_of(gpuTimerState.mapQueries.begin(), gpuTimerState.mapQueries.end(),
+                    [](GLuint query) { return query != 0; })) {
+        pglDeleteQueries(static_cast<GLsizei>(gpuTimerState.mapQueries.size()),
+                         gpuTimerState.mapQueries.data());
+    }
     gpuTimerState = {};
+}
+
+std::optional<std::size_t> beginGpuLightTimestamp(bool spotlight) {
+    auto& state = gpuTimerState;
+    auto& pass = spotlight ? state.spotlightPass : state.mapPass;
+    auto& queries = spotlight ? state.spotlightQueries : state.mapQueries;
+    if (!state.enabled || !state.frameSampled || queries[0] == 0)
+        return std::nullopt;
+    for (std::size_t offset = 0; offset < pass.pending.size(); ++offset) {
+        const std::size_t slot = (pass.nextQuery + offset) % pass.pending.size();
+        if (!pass.pending[slot]) {
+            pglQueryCounter(queries[slot * 2], 0x8E28 /* GL_TIMESTAMP */);
+            pass.pending[slot] = true;
+            pass.nextQuery = (slot + 1) % pass.pending.size();
+            return slot;
+        }
+    }
+    ++pass.dropped;
+    return std::nullopt;
+}
+
+void endGpuLightTimestamp(bool spotlight, std::optional<std::size_t> slot) {
+    if (slot)
+        pglQueryCounter(
+            (spotlight ? gpuTimerState.spotlightQueries : gpuTimerState.mapQueries)[*slot * 2 + 1],
+            0x8E28 /* GL_TIMESTAMP */);
 }
 
 bool beginGpuTimerQuery(GpuTimingPass pass) {
@@ -378,6 +480,31 @@ void pollGpuTimingQueries() {
             passState.maximumNanoseconds = std::max(passState.maximumNanoseconds, nanoseconds);
         }
     }
+    const auto pollLightTimestamps = [](auto& queries, GpuTimerPassState& pass, const char* name) {
+        for (std::size_t slot = 0; slot < pass.pending.size(); ++slot) {
+            if (!pass.pending[slot])
+                continue;
+            GLuint available = GL_FALSE;
+            pglGetQueryObjectuiv(queries[slot * 2 + 1], GL_QUERY_RESULT_AVAILABLE, &available);
+            if (available == GL_FALSE)
+                continue;
+            std::uint64_t start = 0, end = 0;
+            pglGetQueryObjectui64v(queries[slot * 2], GL_QUERY_RESULT, &start);
+            pglGetQueryObjectui64v(queries[slot * 2 + 1], GL_QUERY_RESULT, &end);
+            pass.pending[slot] = false;
+            if (end < start) {
+                ++pass.dropped;
+                gameLog.Warning(std::string("GPU ") + name + " timestamp order was invalid");
+                continue;
+            }
+            const std::uint64_t elapsed = end - start;
+            ++pass.completed;
+            pass.totalNanoseconds += elapsed;
+            pass.maximumNanoseconds = std::max(pass.maximumNanoseconds, elapsed);
+        }
+    };
+    pollLightTimestamps(state.spotlightQueries, state.spotlightPass, "spotlight");
+    pollLightTimestamps(state.mapQueries, state.mapPass, "map-light");
 
     const double summaryElapsedSeconds =
         std::chrono::duration<double>(now - state.lastSummary).count();
@@ -389,32 +516,64 @@ void pollGpuTimingQueries() {
             << "GPU_TIMING interval_s=" << summaryElapsedSeconds;
     appendGpuTimerSummary(summary, "main_view", state.passes[0]);
     appendGpuTimerSummary(summary, "reflection", state.passes[1]);
+    appendGpuTimerSummary(summary, "spotlight_shadow", state.passes[2]);
+    appendGpuTimerSummary(summary, "spotlight_cull", state.spotlightPass);
+    appendGpuTimerSummary(summary, "map_light_cull", state.mapPass);
     gameLog.Log(summary.str());
     std::ostringstream lightingSummary;
-    lightingSummary << "LIGHTING_UPLOAD interval_s=" << summaryElapsedSeconds
-                    << " vehicle_uploads=" << lightUploadStats.vehicleUploads
-                    << " vehicle_bytes=" << lightUploadStats.vehicleBytes
-                    << " vehicle_sets=" << lightUploadStats.vehicleSets
-                    << " vehicle_lights_total=" << lightUploadStats.vehicleLightsTotal
-                    << " vehicle_lights_max=" << lightUploadStats.vehicleLightsMax
-                    << " spotlight_tile_uploads=" << lightUploadStats.vehicleSpotlightTileUploads
-                    << " spotlight_tile_bytes=" << lightUploadStats.vehicleSpotlightTileBytes
-                    << " spotlight_tile_sets=" << lightUploadStats.vehicleSpotlightTileSets
-                    << " spotlight_tile_count=" << lightUploadStats.vehicleSpotlightTileCountTotal
-                    << " spotlight_tile_assignments="
-                    << lightUploadStats.vehicleSpotlightTileAssignmentsTotal
-                    << " spotlight_tile_max=" << lightUploadStats.vehicleSpotlightTileAssignmentsMax
-                    << " spotlight_tile_fallback_sets="
-                    << lightUploadStats.vehicleSpotlightTileFallbackSets
-                    << " map_uploads=" << lightUploadStats.mapUploads
-                    << " map_bytes=" << lightUploadStats.mapBytes
-                    << " static_map_uploads=" << lightUploadStats.staticMapUploads
-                    << " static_map_bytes=" << lightUploadStats.staticMapBytes
-                    << " map_view_preparations=" << lightUploadStats.mapViewPreparations
-                    << " map_view_reuses=" << lightUploadStats.mapViewReuses
-                    << " map_sets=" << lightUploadStats.mapSets
-                    << " map_lights_total=" << lightUploadStats.mapLightsTotal
-                    << " map_lights_max=" << lightUploadStats.mapLightsMax;
+    lightingSummary
+        << "LIGHTING_UPLOAD interval_s=" << summaryElapsedSeconds
+        << " vehicle_uploads=" << lightUploadStats.vehicleUploads
+        << " vehicle_bytes=" << lightUploadStats.vehicleBytes
+        << " vehicle_sets=" << lightUploadStats.vehicleSets
+        << " vehicle_lights_total=" << lightUploadStats.vehicleLightsTotal
+        << " vehicle_lights_max=" << lightUploadStats.vehicleLightsMax
+        << " vehicle_selection_views=" << lightUploadStats.vehicleSelectionViews
+        << " player_spotlight_definitions_max=" << lightUploadStats.playerSpotlightDefinitionsMax
+        << " ai_spotlight_definitions_max=" << lightUploadStats.aiSpotlightDefinitionsMax
+        << " player_spotlight_candidates_total=" << lightUploadStats.playerSpotlightCandidatesTotal
+        << " ai_spotlight_candidates_total=" << lightUploadStats.aiSpotlightCandidatesTotal
+        << " spotlight_shadow_frames=" << lightUploadStats.spotlightShadowFrames
+        << " spotlight_shadow_selected_total=" << lightUploadStats.spotlightShadowSelectedTotal
+        << " spotlight_shadow_selected_max=" << lightUploadStats.spotlightShadowSelectedMax
+        << " spotlight_shadow_updates=" << lightUploadStats.spotlightShadowUpdates
+        << " spotlight_tile_uploads=" << lightUploadStats.vehicleSpotlightTileUploads
+        << " spotlight_tile_bytes=" << lightUploadStats.vehicleSpotlightTileBytes
+        << " spotlight_tile_sets=" << lightUploadStats.vehicleSpotlightTileSets
+        << " spotlight_tile_count=" << lightUploadStats.vehicleSpotlightTileCountTotal
+        << " spotlight_tile_assignments=" << lightUploadStats.vehicleSpotlightTileAssignmentsTotal
+        << " spotlight_tile_max=" << lightUploadStats.vehicleSpotlightTileAssignmentsMax
+        << " spotlight_tile_fallback_sets=" << lightUploadStats.vehicleSpotlightTileFallbackSets
+        << " spotlight_gpu_tile_sets=" << lightUploadStats.vehicleSpotlightGpuTileSets
+        << " spotlight_gpu_tile_count=" << lightUploadStats.vehicleSpotlightGpuTileCountTotal
+        << " spotlight_gpu_tile_assignments="
+        << lightUploadStats.vehicleSpotlightGpuTileAssignmentsTotal
+        << " map_uploads=" << lightUploadStats.mapUploads
+        << " map_bytes=" << lightUploadStats.mapBytes
+        << " static_map_uploads=" << lightUploadStats.staticMapUploads
+        << " static_map_bytes=" << lightUploadStats.staticMapBytes
+        << " map_view_preparations=" << lightUploadStats.mapViewPreparations
+        << " map_view_reuses=" << lightUploadStats.mapViewReuses
+        << " map_selection_calls=" << lightUploadStats.mapSelectionCalls
+        << " map_registered_max=" << lightUploadStats.mapRegisteredMax
+        << " map_tile_candidates_total=" << lightUploadStats.mapTileCandidatesTotal
+        << " map_tile_candidates_max=" << lightUploadStats.mapTileCandidatesMax
+        << " map_sets=" << lightUploadStats.mapSets
+        << " map_lights_total=" << lightUploadStats.mapLightsTotal
+        << " map_lights_max=" << lightUploadStats.mapLightsMax
+        << " map_gpu_tile_sets=" << lightUploadStats.mapGpuTileSets
+        << " map_gpu_tile_count=" << lightUploadStats.mapGpuTileCountTotal
+        << " map_gpu_tile_assignments=" << lightUploadStats.mapGpuTileAssignmentsTotal
+        << " map_gpu_tile_max_samples=" << lightUploadStats.mapGpuTileMaxSamples
+        << " map_gpu_tile_max=" << lightUploadStats.mapGpuTileAssignmentsMax
+        << " map_gpu_tile_fallback_sets=" << lightUploadStats.mapGpuTileFallbackSets
+        << " map_gpu_tile_fallback_unavailable=" << lightUploadStats.mapGpuTileFallbackUnavailable
+        << " map_gpu_tile_fallback_vertex=" << lightUploadStats.mapGpuTileFallbackVertexLighting
+        << " map_gpu_tile_fallback_viewport=" << lightUploadStats.mapGpuTileFallbackViewport
+        << " map_gpu_tile_fallback_capacity=" << lightUploadStats.mapGpuTileFallbackCapacity
+        << " map_gpu_tile_fallback_dark=" << lightUploadStats.mapGpuTileFallbackDark
+        << " map_gpu_tile_fallback_density=" << lightUploadStats.mapGpuTileFallbackDensity
+        << " map_gpu_tile_fallback_compute=" << lightUploadStats.mapGpuTileFallbackCompute;
     gameLog.Log(lightingSummary.str());
     lightUploadStats = {};
     state.lastSummary = now;
@@ -500,6 +659,10 @@ struct Uniforms {
     GLint diffuseLight = -1;
     GLint spotlightCount = -1;
     GLint spotlightTexture = -1;
+    GLint spotlightShadowCount = -1;
+    GLint spotlightShadowAtlas = -1;
+    GLint spotlightShadowDepthPass = -1;
+    GLint spotlightShadowMaterialCutout = -1;
     GLint spotlightTileMaskTexture = -1;
     GLint spotlightTileMaskEnabled = -1;
     GLint spotlightTileColumns = -1;
@@ -509,6 +672,13 @@ struct Uniforms {
     GLint spotlightViewportOrigin = -1;
     GLint mapLightCount = -1;
     GLint mapLightStrength = -1;
+    GLint mapLightTileMaskTexture = -1;
+    GLint mapLightTileMaskEnabled = -1;
+    GLint mapLightTileColumns = -1;
+    GLint mapLightTileRows = -1;
+    GLint mapLightTileWordsPerTile = -1;
+    GLint mapLightViewportOrigin = -1;
+    GLint mapLightFadeStartSquared = -1;
     GLint mapLightTexture = -1;
     GLint staticMapLightTexture = -1;
     GLint staticMapViewTexture = -1;
@@ -624,10 +794,18 @@ GLuint vehicleSpotlightBuffer = 0;
 GLuint vehicleSpotlightTexture = 0;
 GLuint vehicleSpotlightTileMaskBuffer = 0;
 GLuint vehicleSpotlightTileMaskTexture = 0;
+GLuint vehicleSpotlightGpuTileProgram = 0;
+GLuint vehicleSpotlightGpuBoundsBuffer = 0;
+GLint vehicleSpotlightGpuColumns = -1;
+GLint vehicleSpotlightGpuWordsPerTile = -1;
+GLint vehicleSpotlightGpuLightCount = -1;
+GLint vehicleSpotlightGpuWordCount = -1;
 std::size_t vehicleSpotlightCapacity = 0;
 std::size_t vehicleSpotlightTileMaskCapacity = 0;
 GLuint mapLightBuffer = 0;
 GLuint mapLightTexture = 0;
+GLuint mapLightTileMaskBuffer = 0;
+GLuint mapLightTileMaskTexture = 0;
 GLuint staticMapViewBuffer = 0;
 GLuint staticMapViewTexture = 0;
 std::size_t mapLightCapacity = 0;
@@ -641,6 +819,11 @@ constexpr GLenum vehicleSpotlightTextureUnit = GL_TEXTURE0 + 11;
 constexpr GLenum staticMapLightTextureUnit = GL_TEXTURE0 + 12;
 constexpr GLenum staticMapViewTextureUnit = GL_TEXTURE0 + 13;
 constexpr GLenum vehicleSpotlightTileMaskTextureUnit = GL_TEXTURE0 + 14;
+constexpr GLenum mapLightTileMaskTextureUnit = GL_TEXTURE0 + 15;
+constexpr GLenum spotlightShadowAtlasTextureUnit = GL_TEXTURE0 + 16;
+bool spotlightShadowShadersAvailable = false;
+bool spotlightShadowDepthPassActive = false;
+std::size_t activeVehicleSpotlightCount = 0;
 enum class AntiAliasingMode { Off, Fxaa, Msaa, Smaa };
 std::vector<GLuint> staticPrimitiveBuffers;
 std::vector<std::pair<GLuint, GLuint>> staticMapLightBuffers;
@@ -765,17 +948,16 @@ void destroyMotionTarget() {
         motionTarget.framebuffer, motionTarget.multisampleFramebuffer,
         motionTarget.smaaEdgeFramebuffer, motionTarget.smaaWeightsFramebuffer};
     pglDeleteFramebuffers(static_cast<GLsizei>(framebuffers.size()), framebuffers.data());
-    const std::array<GLuint, 10> textures = {
-        motionTarget.color,
-        motionTarget.motionVectors,
-        motionTarget.validity,
-        motionTarget.depth,
-        motionTarget.multisampleColor,
-        motionTarget.multisampleMotionVectors,
-        motionTarget.multisampleValidity,
-        motionTarget.multisampleDepth,
-        motionTarget.smaaEdges,
-        motionTarget.smaaWeights};
+    const std::array<GLuint, 10> textures = {motionTarget.color,
+                                             motionTarget.motionVectors,
+                                             motionTarget.validity,
+                                             motionTarget.depth,
+                                             motionTarget.multisampleColor,
+                                             motionTarget.multisampleMotionVectors,
+                                             motionTarget.multisampleValidity,
+                                             motionTarget.multisampleDepth,
+                                             motionTarget.smaaEdges,
+                                             motionTarget.smaaWeights};
     glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
     motionTarget = {};
     publishedMotionData = {};
@@ -880,31 +1062,29 @@ bool ensureMotionTarget(int width, int height) {
             const auto createMultisampleTexture = [&](GLuint& texture, GLint internalFormat) {
                 glGenTextures(1, &texture);
                 glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, texture);
-                pglTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, internalFormat,
-                                         width, height, GL_TRUE);
+                pglTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, internalFormat, width,
+                                         height, GL_TRUE);
             };
             createMultisampleTexture(motionTarget.multisampleColor, GL_RGBA8);
-            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                    GL_TEXTURE_2D_MULTISAMPLE, motionTarget.multisampleColor, 0);
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE,
+                                    motionTarget.multisampleColor, 0);
             createMultisampleTexture(motionTarget.multisampleMotionVectors, GL_RG16F);
-            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
-                                    GL_TEXTURE_2D_MULTISAMPLE,
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D_MULTISAMPLE,
                                     motionTarget.multisampleMotionVectors, 0);
             createMultisampleTexture(motionTarget.multisampleValidity, GL_R8);
-            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,
-                                    GL_TEXTURE_2D_MULTISAMPLE,
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D_MULTISAMPLE,
                                     motionTarget.multisampleValidity, 0);
             glGenTextures(1, &motionTarget.multisampleDepth);
             glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, motionTarget.multisampleDepth);
             pglTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, GL_DEPTH_COMPONENT24,
                                      width, height, GL_TRUE);
-            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                    GL_TEXTURE_2D_MULTISAMPLE, motionTarget.multisampleDepth, 0);
-            const GLenum multisampleDrawBuffers[] = {
-                GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+            pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE,
+                                    motionTarget.multisampleDepth, 0);
+            const GLenum multisampleDrawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
+                                                     GL_COLOR_ATTACHMENT2};
             pglDrawBuffers(3, multisampleDrawBuffers);
-            const bool complete = pglCheckFramebufferStatus(GL_FRAMEBUFFER) ==
-                                  GL_FRAMEBUFFER_COMPLETE;
+            const bool complete =
+                pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
             glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
             if (!complete) {
                 destroyMultisampleTarget();
@@ -915,8 +1095,7 @@ bool ensureMotionTarget(int width, int height) {
         };
         pglActiveTexture(GL_TEXTURE0);
         currentTextureUnit = GL_TEXTURE0;
-        if (!tryCreateMultisampleTarget(requestedSamples) &&
-            !tryCreateMultisampleTarget(2)) {
+        if (!tryCreateMultisampleTarget(requestedSamples) && !tryCreateMultisampleTarget(2)) {
             destroyMultisampleTarget();
             antiAliasingMode = AntiAliasingMode::Fxaa;
             gameLog.Warning("4x MSAA is unavailable for the motion-data targets; using FXAA");
@@ -955,8 +1134,7 @@ bool ensureMotionTarget(int width, int height) {
                                 motionTarget.smaaEdges, 0);
         const GLenum smaaDrawBuffer = GL_COLOR_ATTACHMENT0;
         pglDrawBuffers(1, &smaaDrawBuffer);
-        bool smaaComplete =
-            pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        bool smaaComplete = pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         if (smaaComplete) {
             pglGenFramebuffers(1, &motionTarget.smaaWeightsFramebuffer);
             pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.smaaWeightsFramebuffer);
@@ -964,8 +1142,7 @@ bool ensureMotionTarget(int width, int height) {
             pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                     motionTarget.smaaWeights, 0);
             pglDrawBuffers(1, &smaaDrawBuffer);
-            smaaComplete =
-                pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+            smaaComplete = pglCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         }
         if (!smaaComplete) {
             destroySmaaTargets();
@@ -1309,6 +1486,7 @@ uniform float uInteriorLightStrength;
 uniform vec3 uInteriorLightColor;
 uniform vec4 uColor;
 uniform int uAlphaMode;
+uniform bool uSpotlightShadowDepthPass;
 uniform float uVisibilityFade;
 uniform bool uCullBackFaces;
 uniform vec2 uMotionRenderSize;
@@ -1344,6 +1522,12 @@ void main() {
         color.a = uColor.a * texture(uTransmap, transmapCoordinate).a;
     }
     float visibilityFade = clamp(uVisibilityFade, 0.0, 1.0);
+    if (uSpotlightShadowDepthPass) {
+        float fadedAlpha = color.a * visibilityFade;
+        if ((uAlphaMode == 1 && fadedAlpha < 0.5) ||
+            (uAlphaMode == 3 && fadedAlpha < 0.99)) discard;
+        return;
+    }
     if (!uUseBumpmap) {
         float fadedAlpha = color.a * visibilityFade;
         if ((uAlphaMode == 1 && fadedAlpha < 0.5) ||
@@ -1514,6 +1698,8 @@ uniform sampler2D uMaterialTextures[8];
 uniform bool uFlipTextureY[8];
 uniform sampler2D uTextTexture;
 uniform bool uUseTextTexture;
+uniform bool uSpotlightShadowDepthPass;
+uniform float uSpotlightShadowMaterialCutout;
 uniform vec3 uLightDirection;
 uniform float uAmbientLight;
 uniform float uDiffuseLight;
@@ -1551,6 +1737,10 @@ void main() {
         color *= texture(uMaterialTextures[6], textureCoord);
     } else {
         color *= texture(uMaterialTextures[7], textureCoord);
+    }
+    if (uSpotlightShadowDepthPass) {
+        if (color.a * clamp(uVisibilityFade, 0.0, 1.0) < uSpotlightShadowMaterialCutout) discard;
+        return;
     }
     vec3 surfaceNormal = normalize(vNormal);
     float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
@@ -1750,14 +1940,13 @@ void main() {
 )GLSL";
 
 std::string makeSmaaFragmentShader(std::string_view mainFunction) {
-    std::string source =
-        "#version 330 core\n"
-        "#define SMAA_GLSL_3\n"
-        "#define SMAA_INCLUDE_VS 1\n"
-        "#define SMAA_INCLUDE_PS 1\n"
-        "#define SMAA_PRESET_HIGH\n"
-        "#define SMAA_RT_METRICS uMetrics\n"
-        "uniform vec4 uMetrics;\n";
+    std::string source = "#version 330 core\n"
+                         "#define SMAA_GLSL_3\n"
+                         "#define SMAA_INCLUDE_VS 1\n"
+                         "#define SMAA_INCLUDE_PS 1\n"
+                         "#define SMAA_PRESET_HIGH\n"
+                         "#define SMAA_RT_METRICS uMetrics\n"
+                         "uniform vec4 uMetrics;\n";
     source += openbusSmaaShader;
     source += "\nin vec2 vTexCoord;\n"
               "layout(location = 0) out vec4 fragmentColor;\n"
@@ -1934,6 +2123,39 @@ float weatherFogTransmission(vec3 viewPosition) {
 const char* vehicleSpotlightContributionShaderFunctions = R"GLSL(
 uniform samplerBuffer uSpotlightData;
 uniform int uSpotlightCount;
+#ifdef OPENBUS_SPOTLIGHT_SHADOWS
+uniform sampler2D uSpotlightShadowAtlas;
+uniform int uSpotlightShadowCount;
+float spotlightShadowVisibility(int index, vec3 position) {
+    if (index >= uSpotlightShadowCount) return 1.0;
+    int offset = uSpotlightCount * 3 + index * 6;
+    vec4 rect = texelFetch(uSpotlightData, offset + 4);
+    if (rect.z <= 0.0 || rect.w <= 0.0) return 1.0;
+    mat4 lightClip = mat4(texelFetch(uSpotlightData, offset),
+                          texelFetch(uSpotlightData, offset + 1),
+                          texelFetch(uSpotlightData, offset + 2),
+                          texelFetch(uSpotlightData, offset + 3));
+    vec4 clip = lightClip * vec4(position, 1.0);
+    if (clip.w <= 0.0) return 1.0;
+    vec3 projected = clip.xyz / clip.w * 0.5 + 0.5;
+    if (any(lessThan(projected, vec3(0.0))) ||
+        any(greaterThan(projected, vec3(1.0)))) return 1.0;
+    vec2 texel = 1.0 / vec2(textureSize(uSpotlightShadowAtlas, 0));
+    vec2 lower = rect.xy + texel * 0.5;
+    vec2 upper = rect.xy + rect.zw - texel * 0.5;
+    vec2 center = rect.xy + projected.xy * rect.zw;
+    float visibility = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 uv = clamp(center + vec2(x, y) * texel, lower, upper);
+            visibility += projected.z - 0.0015 <= texture(uSpotlightShadowAtlas, uv).r
+                              ? 1.0 : 0.0;
+        }
+    }
+    float strength = clamp(texelFetch(uSpotlightData, offset + 5).x, 0.0, 1.0);
+    return mix(1.0, visibility / 9.0, strength);
+}
+#endif
 vec3 vehicleSpotlightContribution(int index, vec3 position, vec3 normal) {
     vec4 positionRange = texelFetch(uSpotlightData, index * 3);
     vec3 displacement = position - positionRange.xyz;
@@ -1965,7 +2187,11 @@ vec3 vehicleSpotlightContribution(int index, vec3 position, vec3 normal) {
     float attenuation = 1.0 /
         (0.2 + relativeDistance + 40.0 * relativeDistance * relativeDistance);
     float diffuse = max(dot(normal, -ray), 0.0);
-    return colorOuter.rgb * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
+    vec3 contribution = colorOuter.rgb * cone * cone * attenuation * (0.1 + 0.3 * diffuse);
+#ifdef OPENBUS_SPOTLIGHT_SHADOWS
+    contribution *= spotlightShadowVisibility(index, position);
+#endif
+    return contribution;
 }
 )GLSL";
 
@@ -2072,6 +2298,92 @@ vec3 mapLightLighting(vec3 position, vec3 normal) {
 }
 )GLSL";
 
+const char* mapLightTileFragmentShaderFunctions = R"GLSL(
+uniform samplerBuffer uMapLightData;
+uniform samplerBuffer uStaticMapLightData;
+uniform usamplerBuffer uStaticMapViewData;
+uniform bool uStaticMapMode;
+uniform int uMapLightCount;
+uniform float uMapLightStrength;
+uniform usamplerBuffer uMapLightTileMask;
+uniform bool uMapLightTileMaskEnabled;
+uniform int uMapLightTileColumns;
+uniform int uMapLightTileRows;
+uniform int uMapLightTileWordsPerTile;
+uniform vec2 uMapLightViewportOrigin;
+uniform float uMapLightFadeStartSquared;
+int mapLightFirstSetBit(uint value) {
+    int bit = 0;
+    if ((value & 65535u) == 0u) { value >>= 16u; bit += 16; }
+    if ((value & 255u) == 0u) { value >>= 8u; bit += 8; }
+    if ((value & 15u) == 0u) { value >>= 4u; bit += 4; }
+    if ((value & 3u) == 0u) { value >>= 2u; bit += 2; }
+    if ((value & 1u) == 0u) bit += 1;
+    return bit;
+}
+vec3 mapLightContribution(int i, vec3 position, vec3 normal) {
+    vec4 positionRadius;
+    vec3 lightColor;
+    if (uStaticMapMode) {
+        uvec4 viewEntry = texelFetch(uStaticMapViewData, i);
+        vec4 attributes = texelFetch(uStaticMapLightData, int(viewEntry.w));
+        positionRadius = vec4(uintBitsToFloat(viewEntry.xyz), attributes.w);
+        lightColor = attributes.rgb;
+    } else {
+        positionRadius = texelFetch(uMapLightData, i * 2);
+        lightColor = texelFetch(uMapLightData, i * 2 + 1).rgb;
+    }
+    vec3 displacement = position - positionRadius.xyz;
+    float distanceSquared = dot(displacement, displacement);
+    if (distanceSquared <= 0.00000001) return vec3(0.0);
+    float radius = positionRadius.w;
+    float radiusSquared = radius * radius;
+    float relativeDistanceSquared;
+    vec3 ray;
+    if (isinf(distanceSquared) || isinf(radiusSquared)) {
+        float scale = max(max(abs(displacement.x), abs(displacement.y)), abs(displacement.z));
+        if (isinf(scale)) return vec3(0.0);
+        vec3 scaledDisplacement = displacement / scale;
+        float scaledDistanceSquared = dot(scaledDisplacement, scaledDisplacement);
+        float distanceOverRadius = scale / radius;
+        relativeDistanceSquared = distanceOverRadius * distanceOverRadius * scaledDistanceSquared;
+        ray = scaledDisplacement * inversesqrt(scaledDistanceSquared);
+    } else {
+        relativeDistanceSquared = distanceSquared / radiusSquared;
+        ray = displacement * inversesqrt(distanceSquared);
+    }
+    float falloff = relativeDistanceSquared <= 1.0 ? 1.0 : 1.0 / relativeDistanceSquared;
+    if (uMapLightTileMaskEnabled) {
+        float relativeTailDistance = relativeDistanceSquared / uMapLightFadeStartSquared;
+        falloff *= 1.0 - smoothstep(1.0, 4.0, relativeTailDistance);
+    }
+    float diffuse = max(dot(normal, -ray), 0.0);
+    return lightColor * falloff * (0.12 + 0.88 * diffuse);
+}
+vec3 mapLightLighting(vec3 position, vec3 normal) {
+    vec3 result = vec3(0.0);
+    if (!uMapLightTileMaskEnabled) {
+        for (int i = 0; i < uMapLightCount; ++i)
+            result += mapLightContribution(i, position, normal);
+        return result * uMapLightStrength;
+    }
+    ivec2 pixel = ivec2(gl_FragCoord.xy - uMapLightViewportOrigin);
+    ivec2 tile = clamp(pixel / 32, ivec2(0),
+                       ivec2(uMapLightTileColumns - 1, uMapLightTileRows - 1));
+    int offset = (tile.y * uMapLightTileColumns + tile.x) * uMapLightTileWordsPerTile;
+    for (int word = 0; word < uMapLightTileWordsPerTile; ++word) {
+        uint candidates = texelFetch(uMapLightTileMask, offset + word).r;
+        while (candidates != 0u) {
+            int index = word * 32 + mapLightFirstSetBit(candidates);
+            if (index >= uMapLightCount) break;
+            result += mapLightContribution(index, position, normal);
+            candidates &= candidates - 1u;
+        }
+    }
+    return result * uMapLightStrength;
+}
+)GLSL";
+
 GLuint compileShader(GLenum type, const char* source) {
     const GLuint shader = pglCreateShader(type);
     pglShaderSource(shader, 1, &source, nullptr);
@@ -2102,7 +2414,9 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
         }
         vertex.insert(versionEnd + 1, mapLightShaderFunctions);
         if (usesVehicleSpotlights) {
-            std::string spotlightFunctions = vehicleSpotlightContributionShaderFunctions;
+            std::string spotlightFunctions =
+                spotlightShadowShadersAvailable ? "#define OPENBUS_SPOTLIGHT_SHADOWS\n" : "";
+            spotlightFunctions += vehicleSpotlightContributionShaderFunctions;
             spotlightFunctions += vehicleSpotlightVertexShaderFunctions;
             vertex.insert(versionEnd + 1, spotlightFunctions);
         }
@@ -2119,7 +2433,9 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
         const auto versionEnd = fragment.find('\n', fragment.find("#version"));
         if (versionEnd == std::string::npos)
             throw std::runtime_error("Spotlight shader is missing a version directive");
-        std::string spotlightFunctions = vehicleSpotlightContributionShaderFunctions;
+        std::string spotlightFunctions =
+            spotlightShadowShadersAvailable ? "#define OPENBUS_SPOTLIGHT_SHADOWS\n" : "";
+        spotlightFunctions += vehicleSpotlightContributionShaderFunctions;
         spotlightFunctions += vehicleSpotlightFragmentShaderFunctions;
         fragment.insert(versionEnd + 1, spotlightFunctions);
     }
@@ -2127,7 +2443,9 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
         const auto versionEnd = fragment.find('\n', fragment.find("#version"));
         if (versionEnd == std::string::npos)
             throw std::runtime_error("Map-light shader is missing a version directive");
-        fragment.insert(versionEnd + 1, mapLightShaderFunctions);
+        fragment.insert(versionEnd + 1, mapLightGpuCullingRequested()
+                                            ? mapLightTileFragmentShaderFunctions
+                                            : mapLightShaderFunctions);
     }
     if (fragment.find("layout(location = 1) out vec2 motionVector") == std::string::npos) {
         const auto versionEnd = fragment.find('\n', fragment.find("#version"));
@@ -2184,6 +2502,11 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource,
 void findSpotlightUniforms(GLuint program, Uniforms& uniforms) {
     uniforms.spotlightCount = pglGetUniformLocation(program, "uSpotlightCount");
     uniforms.spotlightTexture = pglGetUniformLocation(program, "uSpotlightData");
+    uniforms.spotlightShadowCount = pglGetUniformLocation(program, "uSpotlightShadowCount");
+    uniforms.spotlightShadowAtlas = pglGetUniformLocation(program, "uSpotlightShadowAtlas");
+    uniforms.spotlightShadowDepthPass = pglGetUniformLocation(program, "uSpotlightShadowDepthPass");
+    uniforms.spotlightShadowMaterialCutout =
+        pglGetUniformLocation(program, "uSpotlightShadowMaterialCutout");
     uniforms.spotlightTileMaskTexture = pglGetUniformLocation(program, "uSpotlightTileMask");
     uniforms.spotlightTileMaskEnabled = pglGetUniformLocation(program, "uSpotlightTileMaskEnabled");
     uniforms.spotlightTileColumns = pglGetUniformLocation(program, "uSpotlightTileColumns");
@@ -2198,6 +2521,13 @@ void findSpotlightUniforms(GLuint program, Uniforms& uniforms) {
 void findMapLightUniforms(GLuint program, Uniforms& uniforms) {
     uniforms.mapLightCount = pglGetUniformLocation(program, "uMapLightCount");
     uniforms.mapLightStrength = pglGetUniformLocation(program, "uMapLightStrength");
+    uniforms.mapLightTileMaskTexture = pglGetUniformLocation(program, "uMapLightTileMask");
+    uniforms.mapLightTileMaskEnabled = pglGetUniformLocation(program, "uMapLightTileMaskEnabled");
+    uniforms.mapLightTileColumns = pglGetUniformLocation(program, "uMapLightTileColumns");
+    uniforms.mapLightTileRows = pglGetUniformLocation(program, "uMapLightTileRows");
+    uniforms.mapLightTileWordsPerTile = pglGetUniformLocation(program, "uMapLightTileWordsPerTile");
+    uniforms.mapLightViewportOrigin = pglGetUniformLocation(program, "uMapLightViewportOrigin");
+    uniforms.mapLightFadeStartSquared = pglGetUniformLocation(program, "uMapLightFadeStartSquared");
     uniforms.mapLightTexture = pglGetUniformLocation(program, "uMapLightData");
     uniforms.staticMapLightTexture = pglGetUniformLocation(program, "uStaticMapLightData");
     uniforms.staticMapViewTexture = pglGetUniformLocation(program, "uStaticMapViewData");
@@ -2438,6 +2768,405 @@ void useProgram(GLuint program) {
     }
 }
 
+void shutdownGpuSpotlightTiles() {
+    if (vehicleSpotlightGpuTileProgram != 0)
+        pglDeleteProgram(vehicleSpotlightGpuTileProgram);
+    if (vehicleSpotlightGpuBoundsBuffer != 0)
+        deleteRendererBuffers(1, &vehicleSpotlightGpuBoundsBuffer);
+    vehicleSpotlightGpuTileProgram = 0;
+    vehicleSpotlightGpuBoundsBuffer = 0;
+    vehicleSpotlightGpuColumns = -1;
+    vehicleSpotlightGpuWordsPerTile = -1;
+    vehicleSpotlightGpuLightCount = -1;
+    vehicleSpotlightGpuWordCount = -1;
+}
+
+void initializeGpuSpotlightTiles() {
+    const bool spotlightRequested = vehicleSpotlightGpuCullingRequested();
+    const bool mapRequested = mapLightGpuCullingRequested();
+    if (!spotlightRequested && !mapRequested)
+        return;
+    if (spotlightRequested && !vehicleSpotlightTileCullingEnabled()) {
+        gameLog.Warning("GPU spotlight tiles require OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1");
+        if (!mapRequested)
+            return;
+    }
+    GLint major = 0, minor = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+    if ((major < 4 || (major == 4 && minor < 3)) || !pglDispatchCompute || !pglMemoryBarrier ||
+        !pglBindBufferBase || !pglGetIntegeri) {
+        gameLog.Warning("GPU light tiles require OpenGL 4.3; using CPU spotlight masks and exact "
+                        "map lighting");
+        return;
+    }
+    constexpr const char* source = R"GLSL(
+#version 430 core
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Bounds { ivec4 bounds[]; };
+layout(std430, binding = 1) writeonly buffer Masks { uint masks[]; };
+uniform int uColumns;
+uniform int uWordsPerTile;
+uniform int uLightCount;
+uniform int uWordCount;
+void main() {
+    uint offset = gl_GlobalInvocationID.x;
+    if (offset >= uint(uWordCount)) return;
+    uint tile = offset / uint(uWordsPerTile);
+    int x = int(tile % uint(uColumns));
+    int y = int(tile / uint(uColumns));
+    uint firstLight = (offset % uint(uWordsPerTile)) * 32u;
+    uint mask = 0u;
+    for (uint bit = 0u; bit < 32u; ++bit) {
+        uint index = firstLight + bit;
+        if (index >= uint(uLightCount)) break;
+        ivec4 b = bounds[index];
+        if (x >= b.x && y >= b.y && x <= b.z && y <= b.w)
+            mask |= 1u << bit;
+    }
+    masks[offset] = mask;
+}
+)GLSL";
+    const GLuint shader = compileShader(0x91B9 /* GL_COMPUTE_SHADER */, source);
+    if (shader == 0) {
+        gameLog.Warning("GPU light tile shader unavailable; using fallback lighting");
+        return;
+    }
+    vehicleSpotlightGpuTileProgram = pglCreateProgram();
+    if (vehicleSpotlightGpuTileProgram != 0) {
+        pglAttachShader(vehicleSpotlightGpuTileProgram, shader);
+        pglLinkProgram(vehicleSpotlightGpuTileProgram);
+    }
+    pglDeleteShader(shader);
+    GLint linked = GL_FALSE;
+    if (vehicleSpotlightGpuTileProgram != 0)
+        pglGetProgramiv(vehicleSpotlightGpuTileProgram, GL_LINK_STATUS, &linked);
+    if (linked != GL_TRUE) {
+        std::string log;
+        if (vehicleSpotlightGpuTileProgram != 0) {
+            GLint length = 0;
+            pglGetProgramiv(vehicleSpotlightGpuTileProgram, GL_INFO_LOG_LENGTH, &length);
+            log.resize(static_cast<std::size_t>(std::max(length, 1)));
+            GLsizei written = 0;
+            pglGetProgramInfoLog(vehicleSpotlightGpuTileProgram, static_cast<GLsizei>(log.size()),
+                                 &written, log.data());
+            log.resize(static_cast<std::size_t>(std::max<GLsizei>(written, 0)));
+        }
+        gameLog.Warning("GPU light tile program failed to link; using fallback lighting: " + log);
+        shutdownGpuSpotlightTiles();
+        return;
+    }
+    pglGenBuffers(1, &vehicleSpotlightGpuBoundsBuffer);
+    vehicleSpotlightGpuColumns = pglGetUniformLocation(vehicleSpotlightGpuTileProgram, "uColumns");
+    vehicleSpotlightGpuWordsPerTile =
+        pglGetUniformLocation(vehicleSpotlightGpuTileProgram, "uWordsPerTile");
+    vehicleSpotlightGpuLightCount =
+        pglGetUniformLocation(vehicleSpotlightGpuTileProgram, "uLightCount");
+    vehicleSpotlightGpuWordCount =
+        pglGetUniformLocation(vehicleSpotlightGpuTileProgram, "uWordCount");
+    if (vehicleSpotlightGpuBoundsBuffer == 0 || vehicleSpotlightGpuColumns < 0 ||
+        vehicleSpotlightGpuWordsPerTile < 0 || vehicleSpotlightGpuLightCount < 0 ||
+        vehicleSpotlightGpuWordCount < 0) {
+        gameLog.Warning("GPU light tile resources unavailable; using fallback lighting");
+        shutdownGpuSpotlightTiles();
+        return;
+    }
+    gameLog.Log("Experimental GPU light tile assignment enabled");
+}
+
+bool buildGpuLightTiles(const detail::VehicleSpotlightTileMask& tiles, GLuint outputBuffer,
+                        bool measureSpotlight) {
+    if (vehicleSpotlightGpuTileProgram == 0 || !tiles.enabled)
+        return false;
+    constexpr std::size_t maxWords = 65535U * 64U;
+    constexpr std::size_t maxStorageBytes = 128U * 1024U * 1024U;
+    const std::size_t tileCount =
+        static_cast<std::size_t>(tiles.columns) * static_cast<std::size_t>(tiles.rows);
+    const std::size_t wordsPerTile = static_cast<std::size_t>(tiles.wordsPerTile);
+    if (tiles.bounds.size() > maxStorageBytes / sizeof(tiles.bounds[0]) ||
+        tiles.bounds.size() > static_cast<std::size_t>(std::numeric_limits<GLint>::max()) ||
+        wordsPerTile == 0 || tileCount > maxWords / wordsPerTile) {
+        static bool loggedLimit = false;
+        if (!loggedLimit) {
+            gameLog.Warning(
+                "GPU light tile workload exceeds conservative limits; using fallback lighting");
+            loggedLimit = true;
+        }
+        return false;
+    }
+    const std::size_t wordCount = tileCount * wordsPerTile;
+    if (wordCount == 0 || glGetError() != GL_NO_ERROR) {
+        gameLog.Warning("GPU light tile dispatch skipped after an earlier OpenGL error");
+        return false;
+    }
+    GLint oldProgram = 0, oldBuffer = 0;
+    std::array<GLint, 2> oldBindings = {};
+    glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &oldProgram);
+    glGetIntegerv(0x90D3 /* GL_SHADER_STORAGE_BUFFER_BINDING */, &oldBuffer);
+    for (GLuint i = 0; i < oldBindings.size(); ++i)
+        pglGetIntegeri(0x90D3, i, &oldBindings[i]);
+    constexpr GLenum storage = 0x90D2;
+    const std::uint64_t errorCheckpoint = glDebugErrorCheckpoint();
+    pglBindBuffer(storage, vehicleSpotlightGpuBoundsBuffer);
+    pglBufferData(storage,
+                  static_cast<std::ptrdiff_t>(tiles.bounds.size() * sizeof(tiles.bounds[0])),
+                  tiles.bounds.data(), GL_DYNAMIC_DRAW);
+    pglBindBuffer(storage, outputBuffer);
+    pglBufferData(storage, static_cast<std::ptrdiff_t>(wordCount * sizeof(std::uint32_t)), nullptr,
+                  GL_DYNAMIC_DRAW);
+    bool success = glGetError() == GL_NO_ERROR &&
+                   glDebugErrorGeneration.load(std::memory_order_relaxed) == errorCheckpoint;
+    if (success) {
+        pglBindBufferBase(storage, 0, vehicleSpotlightGpuBoundsBuffer);
+        pglBindBufferBase(storage, 1, outputBuffer);
+        pglUseProgram(vehicleSpotlightGpuTileProgram);
+        pglUniform1i(vehicleSpotlightGpuColumns, tiles.columns);
+        pglUniform1i(vehicleSpotlightGpuWordsPerTile, tiles.wordsPerTile);
+        pglUniform1i(vehicleSpotlightGpuLightCount, static_cast<GLint>(tiles.bounds.size()));
+        pglUniform1i(vehicleSpotlightGpuWordCount, static_cast<GLint>(wordCount));
+        success = glGetError() == GL_NO_ERROR &&
+                  glDebugErrorGeneration.load(std::memory_order_relaxed) == errorCheckpoint;
+        if (success) {
+            const auto timestamp = beginGpuLightTimestamp(measureSpotlight);
+            pglDispatchCompute(static_cast<GLuint>((wordCount + 63) / 64), 1, 1);
+            pglMemoryBarrier(0x00000008 /* GL_TEXTURE_FETCH_BARRIER_BIT */);
+            endGpuLightTimestamp(measureSpotlight, timestamp);
+            success = glGetError() == GL_NO_ERROR &&
+                      glDebugErrorGeneration.load(std::memory_order_relaxed) == errorCheckpoint;
+        }
+    }
+    const std::uint64_t restoreCheckpoint = glDebugErrorCheckpoint();
+    pglUseProgram(static_cast<GLuint>(oldProgram));
+    for (GLuint i = 0; i < oldBindings.size(); ++i)
+        pglBindBufferBase(storage, i, static_cast<GLuint>(oldBindings[i]));
+    pglBindBuffer(storage, static_cast<GLuint>(oldBuffer));
+    if (glGetError() != GL_NO_ERROR ||
+        glDebugErrorGeneration.load(std::memory_order_relaxed) != restoreCheckpoint) {
+        throw std::runtime_error("Failed to restore OpenGL state after GPU light tile dispatch");
+    }
+    if (!success) {
+        gameLog.Warning("GPU light tile dispatch failed; using fallback lighting");
+        shutdownGpuSpotlightTiles();
+    }
+    return success;
+}
+
+struct MapLightTileInput {
+    std::array<float, 3> position;
+    std::array<float, 3> color;
+    float radius;
+};
+
+enum class MapLightTileFallback {
+    Unavailable,
+    VertexLighting,
+    Viewport,
+    Capacity,
+    Dark,
+    Density,
+    Compute,
+};
+
+struct MapLightTiles {
+    detail::VehicleSpotlightTileMask mask;
+    float fadeStartSquared = 0.0F;
+    bool maximumMeasured = false;
+    MapLightTileFallback fallback = MapLightTileFallback::Unavailable;
+};
+
+template <typename Fetch> MapLightTiles buildMapLightTiles(std::size_t count, Fetch fetch) {
+    MapLightTiles result;
+    if (!mapLightGpuCullingRequested() || mapLightTileMaskBuffer == 0 ||
+        vehicleSpotlightGpuTileProgram == 0 || count == 0)
+        return result;
+    if (mapLightVertexEvaluationEnabled()) {
+        result.fallback = MapLightTileFallback::VertexLighting;
+        return result;
+    }
+    std::array<GLint, 4> viewport = {};
+    glGetIntegerv(GL_VIEWPORT, viewport.data());
+    if (viewport[2] <= 0 || viewport[3] <= 0) {
+        result.fallback = MapLightTileFallback::Viewport;
+        return result;
+    }
+    auto& mask = result.mask;
+    mask.viewportX = viewport[0];
+    mask.viewportY = viewport[1];
+    mask.columns = (viewport[2] - 1) / detail::VEHICLE_SPOTLIGHT_TILE_SIZE + 1;
+    mask.rows = (viewport[3] - 1) / detail::VEHICLE_SPOTLIGHT_TILE_SIZE + 1;
+    const std::size_t columns = static_cast<std::size_t>(mask.columns);
+    const std::size_t rows = static_cast<std::size_t>(mask.rows);
+    if (columns > std::numeric_limits<std::size_t>::max() / rows) {
+        result.fallback = MapLightTileFallback::Capacity;
+        return result;
+    }
+    const std::size_t tiles = columns * rows;
+    const std::size_t wordsPerTile = count / 32 + (count % 32 != 0 ? 1 : 0);
+    constexpr std::size_t maximumWords = 65535U * 64U;
+    if (wordsPerTile > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        tiles > std::min(maximumWords, vehicleSpotlightTileMaskCapacity) / wordsPerTile) {
+        result.fallback = MapLightTileFallback::Capacity;
+        return result;
+    }
+    double totalColor = 0.0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto light = fetch(i);
+        totalColor += std::max({light.color[0], light.color[1], light.color[2]});
+    }
+    if (totalColor == 0.0) {
+        result.fallback = MapLightTileFallback::Dark;
+        return result;
+    }
+    // At most a quarter of this linear-space budget is removed in ideal arithmetic.
+    constexpr double errorBudget = 0.001;
+    const double squared = std::max(1.0, 4.0 * totalColor / errorBudget);
+    if (!std::isfinite(squared) || squared > std::numeric_limits<float>::max() / 4.0) {
+        result.fallback = MapLightTileFallback::Capacity;
+        return result;
+    }
+    result.fadeStartSquared =
+        std::nextafter(static_cast<float>(squared), std::numeric_limits<float>::infinity());
+    const double radiusScale = 2.0 * std::sqrt(static_cast<double>(result.fadeStartSquared));
+    const Matrix4 projection = projectionMatrix();
+    const long double maxReferences = static_cast<long double>(tiles) * count * 0.45;
+    mask.bounds.resize(count);
+    const std::size_t sampleCount = std::min<std::size_t>(128, count);
+    const auto sampleIndex = [count, sampleCount](std::size_t sample) {
+        return sample * (count / sampleCount) + sample * (count % sampleCount) / sampleCount;
+    };
+    const auto project = [&](std::size_t index) {
+        const auto light = fetch(index);
+        return detail::mapLightTileBounds(light.position, light.radius * radiusScale, projection,
+                                          viewport[2], viewport[3]);
+    };
+    const auto coverage = [](const detail::VehicleSpotlightTileBounds& bounds) -> std::size_t {
+        if (bounds.maximumX < bounds.minimumX || bounds.maximumY < bounds.minimumY)
+            return 0;
+        return static_cast<std::size_t>(bounds.maximumX - bounds.minimumX + 1) *
+               static_cast<std::size_t>(bounds.maximumY - bounds.minimumY + 1);
+    };
+    long double sampledReferences = 0.0;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        const std::size_t index = sampleIndex(sample);
+        mask.bounds[index] = project(index);
+        sampledReferences += coverage(mask.bounds[index]);
+    }
+    if (sampledReferences > static_cast<long double>(tiles) * sampleCount * 0.55) {
+        result.fallback = MapLightTileFallback::Density;
+        return result;
+    }
+    std::size_t sample = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (sample < sampleCount && sampleIndex(sample) == i) {
+            ++sample;
+        } else {
+            mask.bounds[i] = project(i);
+        }
+        const auto covered = coverage(mask.bounds[i]);
+        if (mask.assignedReferences > std::numeric_limits<std::size_t>::max() - covered) {
+            result.fallback = MapLightTileFallback::Capacity;
+            return result;
+        }
+        mask.assignedReferences += covered;
+        if (mask.assignedReferences > maxReferences) {
+            result.fallback = MapLightTileFallback::Density;
+            return result;
+        }
+    }
+    mask.wordsPerTile = static_cast<int>(wordsPerTile);
+    mask.enabled = true;
+    if (gpuTimerState.enabled && gpuTimerState.frameSampled) {
+        const std::size_t stride = columns + 1;
+        if (stride <= std::numeric_limits<std::size_t>::max() / (rows + 1)) {
+            std::vector<std::int64_t> counts(stride * (rows + 1), 0);
+            for (const auto& bounds : mask.bounds) {
+                if (bounds.maximumX < bounds.minimumX || bounds.maximumY < bounds.minimumY)
+                    continue;
+                const auto x0 = static_cast<std::size_t>(bounds.minimumX);
+                const auto y0 = static_cast<std::size_t>(bounds.minimumY);
+                const auto x1 = static_cast<std::size_t>(bounds.maximumX) + 1;
+                const auto y1 = static_cast<std::size_t>(bounds.maximumY) + 1;
+                ++counts[y0 * stride + x0];
+                --counts[y0 * stride + x1];
+                --counts[y1 * stride + x0];
+                ++counts[y1 * stride + x1];
+            }
+            for (std::size_t y = 0; y < rows; ++y) {
+                for (std::size_t x = 0; x < columns; ++x) {
+                    auto& value = counts[y * stride + x];
+                    if (x != 0)
+                        value += counts[y * stride + x - 1];
+                    if (y != 0)
+                        value += counts[(y - 1) * stride + x];
+                    if (x != 0 && y != 0)
+                        value -= counts[(y - 1) * stride + x - 1];
+                    mask.maximumLightsPerTile =
+                        std::max(mask.maximumLightsPerTile, static_cast<std::size_t>(value));
+                }
+            }
+            result.maximumMeasured = true;
+        }
+    }
+    if (!buildGpuLightTiles(mask, mapLightTileMaskBuffer, false)) {
+        mask.enabled = false;
+        result.fallback = MapLightTileFallback::Compute;
+    }
+    return result;
+}
+
+void setMapLightTileUniforms(const Uniforms& uniforms, const MapLightTiles& tiles) {
+    if (uniforms.mapLightTileMaskEnabled < 0)
+        return;
+    pglUniform1i(uniforms.mapLightTileMaskEnabled, tiles.mask.enabled ? 1 : 0);
+    pglUniform1i(uniforms.mapLightTileColumns, std::max(tiles.mask.columns, 1));
+    pglUniform1i(uniforms.mapLightTileRows, std::max(tiles.mask.rows, 1));
+    pglUniform1i(uniforms.mapLightTileWordsPerTile, std::max(tiles.mask.wordsPerTile, 1));
+    pglUniform2f(uniforms.mapLightViewportOrigin, static_cast<float>(tiles.mask.viewportX),
+                 static_cast<float>(tiles.mask.viewportY));
+    pglUniform1f(uniforms.mapLightFadeStartSquared, tiles.fadeStartSquared);
+}
+
+void recordMapLightTiles(const MapLightTiles& tiles, std::size_t count) {
+    if (!mapLightGpuCullingRequested() || count == 0)
+        return;
+    if (!tiles.mask.enabled) {
+        ++lightUploadStats.mapGpuTileFallbackSets;
+        switch (tiles.fallback) {
+        case MapLightTileFallback::Unavailable:
+            ++lightUploadStats.mapGpuTileFallbackUnavailable;
+            break;
+        case MapLightTileFallback::VertexLighting:
+            ++lightUploadStats.mapGpuTileFallbackVertexLighting;
+            break;
+        case MapLightTileFallback::Viewport:
+            ++lightUploadStats.mapGpuTileFallbackViewport;
+            break;
+        case MapLightTileFallback::Capacity:
+            ++lightUploadStats.mapGpuTileFallbackCapacity;
+            break;
+        case MapLightTileFallback::Dark:
+            ++lightUploadStats.mapGpuTileFallbackDark;
+            break;
+        case MapLightTileFallback::Density:
+            ++lightUploadStats.mapGpuTileFallbackDensity;
+            break;
+        case MapLightTileFallback::Compute:
+            ++lightUploadStats.mapGpuTileFallbackCompute;
+            break;
+        }
+        return;
+    }
+    ++lightUploadStats.mapGpuTileSets;
+    lightUploadStats.mapGpuTileCountTotal +=
+        static_cast<std::uint64_t>(tiles.mask.columns) * tiles.mask.rows;
+    lightUploadStats.mapGpuTileAssignmentsTotal += tiles.mask.assignedReferences;
+    if (tiles.maximumMeasured) {
+        ++lightUploadStats.mapGpuTileMaxSamples;
+        lightUploadStats.mapGpuTileAssignmentsMax =
+            std::max(lightUploadStats.mapGpuTileAssignmentsMax, tiles.mask.maximumLightsPerTile);
+    }
+}
+
 void bindTexture(GLenum target, GLuint texture) {
     const std::size_t unit = static_cast<std::size_t>(currentTextureUnit - GL_TEXTURE0);
     GLuint& cachedTexture =
@@ -2636,6 +3365,10 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
 
 } // namespace
 
+float configuredReflectionAmbientFloor() {
+    return reflectionAmbientFloor();
+}
+
 void resetFrameTriangleCount() {
     submittedFrameTriangleCount = 0;
     reflectionTrianglePass = false;
@@ -2680,6 +3413,10 @@ std::size_t mapLightSelectionLimit() {
     return mapLightLimit();
 }
 
+std::size_t vehicleSpotlightSelectionLimit() {
+    return vehicleSpotlightLimit();
+}
+
 void configureMapLightSelectionLimit(std::size_t limit) {
     configuredMapLightSelectionLimit = limit;
     if (openbus::getEnvironment("OPENBUS_MAP_LIGHT_LIMIT") == nullptr) {
@@ -2716,8 +3453,30 @@ bool initializeCoreRenderer() {
         gameLog.Warning("OpenGL debug error reporting is unavailable; upload errors cannot be "
                         "detected");
     }
+    GLint fragmentTextureUnits = 0;
+    GLint vertexTextureUnits = 0;
+    GLint combinedTextureUnits = 0;
+    glGetIntegerv(0x8872 /* GL_MAX_TEXTURE_IMAGE_UNITS */, &fragmentTextureUnits);
+    glGetIntegerv(0x8B4C /* GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS */, &vertexTextureUnits);
+    glGetIntegerv(0x8B4D /* GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS */, &combinedTextureUnits);
+    spotlightShadowShadersAvailable =
+        fragmentTextureUnits >= 17 && vertexTextureUnits >= 17 && combinedTextureUnits >= 17;
+    if (!spotlightShadowShadersAvailable) {
+        gameLog.Warning("Spotlight shadow sampling unavailable: insufficient texture units");
+    }
     modelProgram = createProgram(modelVertexShader, modelFragmentShader, true, true, true);
     materialProgram = createProgram(modelVertexShader, materialFragmentShader, true, true, true);
+    if (spotlightShadowShadersAvailable && (modelProgram == 0 || materialProgram == 0)) {
+        if (modelProgram != 0)
+            pglDeleteProgram(modelProgram);
+        if (materialProgram != 0)
+            pglDeleteProgram(materialProgram);
+        spotlightShadowShadersAvailable = false;
+        gameLog.Warning("Spotlight shadow shaders unavailable; using unshadowed lighting");
+        modelProgram = createProgram(modelVertexShader, modelFragmentShader, true, true, true);
+        materialProgram =
+            createProgram(modelVertexShader, materialFragmentShader, true, true, true);
+    }
     environmentProgram = createProgram(modelVertexShader, environmentFragmentShader, true);
     primitiveProgram = createProgram(primitiveVertexShader, primitiveFragmentShader);
     textureQuadProgram = createProgram(textureQuadVertexShader, textureQuadFragmentShader);
@@ -2752,16 +3511,12 @@ bool initializeCoreRenderer() {
     if (motionResolveProgram != 0) {
         motionResolveFullscreen = {pglGetUniformLocation(motionResolveProgram, "uRect"),
                                    pglGetUniformLocation(motionResolveProgram, "uFlipTextureY")};
-        motionResolveColorSamples =
-            pglGetUniformLocation(motionResolveProgram, "uColorSamples");
-        motionResolveMotionSamples =
-            pglGetUniformLocation(motionResolveProgram, "uMotionSamples");
+        motionResolveColorSamples = pglGetUniformLocation(motionResolveProgram, "uColorSamples");
+        motionResolveMotionSamples = pglGetUniformLocation(motionResolveProgram, "uMotionSamples");
         motionResolveValiditySamples =
             pglGetUniformLocation(motionResolveProgram, "uValiditySamples");
-        motionResolveDepthSamples =
-            pglGetUniformLocation(motionResolveProgram, "uDepthSamples");
-        motionResolveSampleCount =
-            pglGetUniformLocation(motionResolveProgram, "uSampleCount");
+        motionResolveDepthSamples = pglGetUniformLocation(motionResolveProgram, "uDepthSamples");
+        motionResolveSampleCount = pglGetUniformLocation(motionResolveProgram, "uSampleCount");
     }
     if (smaaEdgeProgram != 0) {
         smaaEdgeFullscreen = {pglGetUniformLocation(smaaEdgeProgram, "uRect"),
@@ -2785,8 +3540,7 @@ bool initializeCoreRenderer() {
             pglGetUniformLocation(smaaNeighborhoodProgram, "uColorTexture");
         smaaNeighborhoodWeightsTexture =
             pglGetUniformLocation(smaaNeighborhoodProgram, "uWeightsTexture");
-        smaaNeighborhoodMetrics =
-            pglGetUniformLocation(smaaNeighborhoodProgram, "uMetrics");
+        smaaNeighborhoodMetrics = pglGetUniformLocation(smaaNeighborhoodProgram, "uMetrics");
     }
     cloudView = pglGetUniformLocation(cloudProgram, "uView");
     cloudProjectionScale = pglGetUniformLocation(cloudProgram, "uProjectionScale");
@@ -2870,6 +3624,30 @@ bool initializeCoreRenderer() {
         selectTextureUnit(staticMapViewTextureUnit);
         glBindTexture(GL_TEXTURE_BUFFER, staticMapViewTexture);
         pglTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, staticMapViewBuffer);
+        if (mapLightGpuCullingRequested()) {
+            const std::uint64_t checkpoint = glDebugErrorCheckpoint();
+            pglGenBuffers(1, &mapLightTileMaskBuffer);
+            glGenTextures(1, &mapLightTileMaskTexture);
+            if (mapLightTileMaskBuffer != 0 && mapLightTileMaskTexture != 0) {
+                pglBindBuffer(GL_TEXTURE_BUFFER, mapLightTileMaskBuffer);
+                pglBufferData(GL_TEXTURE_BUFFER, sizeof(std::uint32_t), nullptr, GL_DYNAMIC_DRAW);
+                selectTextureUnit(mapLightTileMaskTextureUnit);
+                glBindTexture(GL_TEXTURE_BUFFER, mapLightTileMaskTexture);
+                pglTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, mapLightTileMaskBuffer);
+            }
+            const GLenum setupError = glGetError();
+            if (mapLightTileMaskBuffer == 0 || mapLightTileMaskTexture == 0 ||
+                setupError != GL_NO_ERROR ||
+                glDebugErrorGeneration.load(std::memory_order_relaxed) != checkpoint) {
+                gameLog.Warning("Map-light tile buffer unavailable; using exact global lighting");
+                if (mapLightTileMaskBuffer != 0)
+                    pglDeleteBuffers(1, &mapLightTileMaskBuffer);
+                if (mapLightTileMaskTexture != 0)
+                    glDeleteTextures(1, &mapLightTileMaskTexture);
+                mapLightTileMaskBuffer = 0;
+                mapLightTileMaskTexture = 0;
+            }
+        }
         pglBindBuffer(GL_TEXTURE_BUFFER, 0);
         selectTextureUnit(GL_TEXTURE0);
         pglBindVertexArray(modelVertexArray);
@@ -2908,7 +3686,10 @@ bool initializeCoreRenderer() {
         }
         useProgram(modelProgram);
         pglUniform1i(modelUniforms.mapLightTexture, 10);
+        pglUniform1i(modelUniforms.mapLightTileMaskTexture, mapLightTileMaskTexture != 0 ? 15 : 14);
         pglUniform1i(modelUniforms.spotlightTexture, 11);
+        pglUniform1i(modelUniforms.spotlightShadowAtlas, 16);
+        pglUniform1i(modelUniforms.spotlightShadowCount, 0);
         pglUniform1i(modelUniforms.spotlightTileMaskTexture, 14);
         pglUniform1i(modelUniforms.staticMapLightTexture, 12);
         pglUniform1i(modelUniforms.staticMapViewTexture, 13);
@@ -2930,7 +3711,11 @@ bool initializeCoreRenderer() {
         pglUniform1i(modelUniforms.textTexture, 5);
         useProgram(materialProgram);
         pglUniform1i(materialUniforms.mapLightTexture, 10);
+        pglUniform1i(materialUniforms.mapLightTileMaskTexture,
+                     mapLightTileMaskTexture != 0 ? 15 : 14);
         pglUniform1i(materialUniforms.spotlightTexture, 11);
+        pglUniform1i(materialUniforms.spotlightShadowAtlas, 16);
+        pglUniform1i(materialUniforms.spotlightShadowCount, 0);
         pglUniform1i(materialUniforms.spotlightTileMaskTexture, 14);
         pglUniform1i(materialUniforms.staticMapLightTexture, 12);
         pglUniform1i(materialUniforms.staticMapViewTexture, 13);
@@ -2999,6 +3784,7 @@ bool initializeCoreRenderer() {
                             "Set OPENBUS_CULLING_BACKEND=compute-indirect for GPU culling");
         }
         initializeComputeCulling(false, indirectCullingRequested(backend));
+        initializeGpuSpotlightTiles();
         return true;
     }
     shutdownCoreRenderer();
@@ -3006,6 +3792,10 @@ bool initializeCoreRenderer() {
 }
 
 void shutdownCoreRenderer() {
+    spotlightShadowShadersAvailable = false;
+    spotlightShadowDepthPassActive = false;
+    activeVehicleSpotlightCount = 0;
+    shutdownGpuSpotlightTiles();
     shutdownGpuTiming();
     destroyMotionTarget();
     const std::array<GLuint, 2> smaaLookupTextures = {smaaAreaTexture, smaaSearchTexture};
@@ -3074,6 +3864,14 @@ void shutdownCoreRenderer() {
     if (mapLightTexture != 0) {
         glDeleteTextures(1, &mapLightTexture);
         mapLightTexture = 0;
+    }
+    if (mapLightTileMaskBuffer != 0) {
+        pglDeleteBuffers(1, &mapLightTileMaskBuffer);
+        mapLightTileMaskBuffer = 0;
+    }
+    if (mapLightTileMaskTexture != 0) {
+        glDeleteTextures(1, &mapLightTileMaskTexture);
+        mapLightTileMaskTexture = 0;
     }
     if (staticMapViewBuffer != 0) {
         pglDeleteBuffers(1, &staticMapViewBuffer);
@@ -3186,9 +3984,8 @@ bool beginMotionDataFrame(int width, int height, double timestampSeconds, double
     if (motionTarget.samples > 1) {
         glEnable(GL_MULTISAMPLE);
     }
-    const GLuint renderFramebuffer = motionTarget.samples > 1
-                                         ? motionTarget.multisampleFramebuffer
-                                         : motionTarget.framebuffer;
+    const GLuint renderFramebuffer =
+        motionTarget.samples > 1 ? motionTarget.multisampleFramebuffer : motionTarget.framebuffer;
     pglBindFramebuffer(GL_FRAMEBUFFER, renderFramebuffer);
     const GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
     pglDrawBuffers(3, drawBuffers);
@@ -3227,13 +4024,12 @@ void finishMotionDataFrame() {
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     const auto drawFullscreen = [&](GLuint program, const FullscreenUniforms& quadUniforms,
-                                    const GLuint* textures,
-                                    const GLenum* textureTargets, const GLint* samplerLocations,
-                                    int textureCount, GLint metricsLocation,
-                                    GLint sampleCountLocation, int sampleCount) {
-        constexpr std::array<float, 16> vertices = {
-            0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F,
-            0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F};
+                                    const GLuint* textures, const GLenum* textureTargets,
+                                    const GLint* samplerLocations, int textureCount,
+                                    GLint metricsLocation, GLint sampleCountLocation,
+                                    int sampleCount) {
+        constexpr std::array<float, 16> vertices = {0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F,
+                                                    0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F};
         useProgram(program);
         pglBindVertexArray(textureQuadVertexArray);
         currentVertexArray = textureQuadVertexArray;
@@ -3278,8 +4074,8 @@ void finishMotionDataFrame() {
 
     if (motionTarget.samples > 1) {
         pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.framebuffer);
-        const GLenum drawBuffers[] = {
-            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+        const GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
+                                      GL_COLOR_ATTACHMENT2};
         pglDrawBuffers(3, drawBuffers);
         glViewport(0, 0, motionTarget.width, motionTarget.height);
         glEnable(GL_DEPTH_TEST);
@@ -3289,15 +4085,14 @@ void finishMotionDataFrame() {
             motionTarget.multisampleColor, motionTarget.multisampleMotionVectors,
             motionTarget.multisampleValidity, motionTarget.multisampleDepth};
         const std::array<GLenum, 4> textureTargets = {
-            GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE,
-            GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE};
+            GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE,
+            GL_TEXTURE_2D_MULTISAMPLE};
         const std::array<GLint, 4> samplers = {
-            motionResolveColorSamples, motionResolveMotionSamples,
-            motionResolveValiditySamples, motionResolveDepthSamples};
+            motionResolveColorSamples, motionResolveMotionSamples, motionResolveValiditySamples,
+            motionResolveDepthSamples};
         drawFullscreen(motionResolveProgram, motionResolveFullscreen, textures.data(),
-                       textureTargets.data(),
-                       samplers.data(), static_cast<int>(textures.size()), -1,
-                       motionResolveSampleCount, motionTarget.samples);
+                       textureTargets.data(), samplers.data(), static_cast<int>(textures.size()),
+                       -1, motionResolveSampleCount, motionTarget.samples);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
     }
@@ -3325,10 +4120,10 @@ void finishMotionDataFrame() {
                        smaaEdgeMetrics, -1, 0);
 
         pglBindFramebuffer(GL_FRAMEBUFFER, motionTarget.smaaWeightsFramebuffer);
-        const std::array<GLuint, 3> weightInputs = {
-            motionTarget.smaaEdges, smaaAreaTexture, smaaSearchTexture};
-        const std::array<GLint, 3> weightSamplers = {
-            smaaWeightsEdgeTexture, smaaWeightsAreaTexture, smaaWeightsSearchTexture};
+        const std::array<GLuint, 3> weightInputs = {motionTarget.smaaEdges, smaaAreaTexture,
+                                                    smaaSearchTexture};
+        const std::array<GLint, 3> weightSamplers = {smaaWeightsEdgeTexture, smaaWeightsAreaTexture,
+                                                     smaaWeightsSearchTexture};
         drawFullscreen(smaaWeightsProgram, smaaWeightsFullscreen, weightInputs.data(), edgeTargets,
                        weightSamplers.data(), static_cast<int>(weightInputs.size()),
                        smaaWeightsMetrics, -1, 0);
@@ -3336,13 +4131,12 @@ void finishMotionDataFrame() {
         pglBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
         glViewport(motionTarget.previousViewport[0], motionTarget.previousViewport[1],
                    motionTarget.previousViewport[2], motionTarget.previousViewport[3]);
-        const std::array<GLuint, 2> neighborhoodInputs = {
-            motionTarget.color, motionTarget.smaaWeights};
-        const std::array<GLint, 2> neighborhoodSamplers = {
-            smaaNeighborhoodColorTexture, smaaNeighborhoodWeightsTexture};
+        const std::array<GLuint, 2> neighborhoodInputs = {motionTarget.color,
+                                                          motionTarget.smaaWeights};
+        const std::array<GLint, 2> neighborhoodSamplers = {smaaNeighborhoodColorTexture,
+                                                           smaaNeighborhoodWeightsTexture};
         drawFullscreen(smaaNeighborhoodProgram, smaaNeighborhoodFullscreen,
-                       neighborhoodInputs.data(),
-                       neighborhoodTargets, neighborhoodSamplers.data(),
+                       neighborhoodInputs.data(), neighborhoodTargets, neighborhoodSamplers.data(),
                        static_cast<int>(neighborhoodInputs.size()), smaaNeighborhoodMetrics, -1, 0);
     } else {
         pglBindFramebuffer(GL_READ_FRAMEBUFFER, motionTarget.framebuffer);
@@ -3512,6 +4306,33 @@ void recordMapLightViewPreparation(bool reused) {
     }
 }
 
+void recordMapLightSelection(std::size_t registered, std::size_t tileCandidates) {
+    ++lightUploadStats.mapSelectionCalls;
+    lightUploadStats.mapRegisteredMax = std::max(lightUploadStats.mapRegisteredMax, registered);
+    lightUploadStats.mapTileCandidatesTotal += tileCandidates;
+    lightUploadStats.mapTileCandidatesMax =
+        std::max(lightUploadStats.mapTileCandidatesMax, tileCandidates);
+}
+
+void recordVehicleSpotlightSelection(std::size_t playerDefinitions, std::size_t aiDefinitions,
+                                     std::size_t playerCandidates, std::size_t aiCandidates) {
+    ++lightUploadStats.vehicleSelectionViews;
+    lightUploadStats.playerSpotlightDefinitionsMax =
+        std::max(lightUploadStats.playerSpotlightDefinitionsMax, playerDefinitions);
+    lightUploadStats.aiSpotlightDefinitionsMax =
+        std::max(lightUploadStats.aiSpotlightDefinitionsMax, aiDefinitions);
+    lightUploadStats.playerSpotlightCandidatesTotal += playerCandidates;
+    lightUploadStats.aiSpotlightCandidatesTotal += aiCandidates;
+}
+
+void recordSpotlightShadowFrame(std::size_t selected, std::size_t updated) {
+    ++lightUploadStats.spotlightShadowFrames;
+    lightUploadStats.spotlightShadowSelectedTotal += selected;
+    lightUploadStats.spotlightShadowSelectedMax =
+        std::max(lightUploadStats.spotlightShadowSelectedMax, selected);
+    lightUploadStats.spotlightShadowUpdates += updated;
+}
+
 namespace {
 void uploadDynamicLightBuffer(GLuint buffer, std::size_t bytes, const void* data,
                               const char* description) {
@@ -3563,14 +4384,19 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
         }
     }
     detail::VehicleSpotlightTileMask tileMask;
+    Matrix4 tileProjection = {};
+    std::array<int, 4> tileViewport = {};
+    bool gpuTileMask = false;
+    const bool useGpuTiles =
+        vehicleSpotlightGpuCullingRequested() && vehicleSpotlightGpuTileProgram != 0;
     if (activeLightCount > 0 && vehicleSpotlightTileCullingEnabled()) {
         std::array<GLint, 4> glViewport = {};
         glGetIntegerv(GL_VIEWPORT, glViewport.data());
-        const std::array<int, 4> viewport = {glViewport[0], glViewport[1], glViewport[2],
-                                             glViewport[3]};
+        tileViewport = {glViewport[0], glViewport[1], glViewport[2], glViewport[3]};
+        tileProjection = projectionMatrix();
         tileMask = detail::buildVehicleSpotlightTileMask(
-            std::span<const VehicleSpotlight>(lights.data(), activeLightCount), projectionMatrix(),
-            viewport, vehicleSpotlightTileMaskCapacity, 0.75);
+            std::span<const VehicleSpotlight>(lights.data(), activeLightCount), tileProjection,
+            tileViewport, vehicleSpotlightTileMaskCapacity, 0.75, !useGpuTiles);
     }
     ++lightUploadStats.vehicleSets;
     lightUploadStats.vehicleLightsTotal += activeLightCount;
@@ -3606,7 +4432,21 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
         ++lightUploadStats.vehicleUploads;
         lightUploadStats.vehicleBytes += bytes;
     }
-    if (tileMask.enabled) {
+    if (tileMask.enabled && useGpuTiles) {
+        uploadedVehicleSpotlightTileMask.clear();
+        gpuTileMask = buildGpuLightTiles(tileMask, vehicleSpotlightTileMaskBuffer, true);
+        if (!gpuTileMask) {
+            tileMask = detail::buildVehicleSpotlightTileMask(
+                std::span<const VehicleSpotlight>(lights.data(), activeLightCount), tileProjection,
+                tileViewport, vehicleSpotlightTileMaskCapacity, 0.75);
+        }
+    }
+    if (tileMask.enabled && gpuTileMask) {
+        ++lightUploadStats.vehicleSpotlightGpuTileSets;
+        lightUploadStats.vehicleSpotlightGpuTileCountTotal +=
+            static_cast<std::uint64_t>(tileMask.columns) * tileMask.rows;
+        lightUploadStats.vehicleSpotlightGpuTileAssignmentsTotal += tileMask.assignedReferences;
+    } else if (tileMask.enabled) {
         ++lightUploadStats.vehicleSpotlightTileSets;
         lightUploadStats.vehicleSpotlightTileCountTotal +=
             static_cast<std::uint64_t>(tileMask.columns) * tileMask.rows;
@@ -3625,12 +4465,14 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
     } else if (activeLightCount > 0) {
         ++lightUploadStats.vehicleSpotlightTileFallbackSets;
     }
+    activeVehicleSpotlightCount = activeLightCount;
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
         useProgram(entry.first);
         const Uniforms& uniforms = *entry.second;
         pglUniform1i(uniforms.spotlightCount, static_cast<GLint>(activeLightCount));
+        pglUniform1i(uniforms.spotlightShadowCount, 0);
         pglUniform1i(uniforms.spotlightTileMaskEnabled, tileMask.enabled ? 1 : 0);
         pglUniform1i(uniforms.spotlightTileColumns, std::max(tileMask.columns, 1));
         pglUniform1i(uniforms.spotlightTileRows, std::max(tileMask.rows, 1));
@@ -3638,6 +4480,125 @@ void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights) {
         pglUniform1i(uniforms.spotlightTileSize, detail::VEHICLE_SPOTLIGHT_TILE_SIZE);
         pglUniform2f(uniforms.spotlightViewportOrigin, static_cast<float>(tileMask.viewportX),
                      static_cast<float>(tileMask.viewportY));
+    }
+    useProgram(previousProgram);
+}
+
+bool vehicleSpotlightShadowsSupported() {
+    return spotlightShadowShadersAvailable && modelProgram != 0 && materialProgram != 0;
+}
+
+void setSpotlightShadowDepthPass(bool enabled, float materialAlphaCutoff) {
+    if (modelProgram == 0 || materialProgram == 0) {
+        throw std::logic_error(
+            "Cannot configure spotlight shadow depth pass before renderer initialization");
+    }
+    if (!std::isfinite(materialAlphaCutoff) || materialAlphaCutoff < 0.0F ||
+        materialAlphaCutoff > 1.0F) {
+        throw std::invalid_argument("Invalid spotlight shadow material alpha cutoff");
+    }
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry :
+         {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
+        useProgram(entry.first);
+        pglUniform1i(entry.second->spotlightShadowDepthPass, enabled ? 1 : 0);
+        pglUniform1f(entry.second->spotlightShadowMaterialCutout,
+                     enabled ? materialAlphaCutoff : 0.0F);
+    }
+    useProgram(previousProgram);
+    spotlightShadowDepthPassActive = enabled;
+}
+
+void setVehicleSpotlightShadows(GLuint depthAtlas,
+                                const std::vector<VehicleSpotlightShadow>& shadows) {
+    if (!vehicleSpotlightShadowsSupported()) {
+        throw std::runtime_error("Vehicle spotlight shadow sampling is unavailable");
+    }
+    if (shadows.size() > activeVehicleSpotlightCount ||
+        activeVehicleSpotlightCount * 3 + shadows.size() * 6 >
+            std::min(vehicleSpotlightCapacity * 3,
+                     static_cast<std::size_t>(std::numeric_limits<GLint>::max()))) {
+        throw std::length_error("Vehicle spotlight shadow data exceeds light-buffer capacity");
+    }
+    if (uploadedVehicleLights.size() < activeVehicleSpotlightCount * 3) {
+        throw std::logic_error("Vehicle spotlight buffer is not available for shadow data");
+    }
+    if (!shadows.empty() && (depthAtlas == 0 || glIsTexture(depthAtlas) != GL_TRUE)) {
+        throw std::invalid_argument("Invalid vehicle spotlight shadow atlas texture");
+    }
+    for (const auto& shadow : shadows) {
+        const auto representable = [](double value) {
+            return std::isfinite(value) && std::abs(value) <= std::numeric_limits<float>::max();
+        };
+        const auto& rect = shadow.atlasRect;
+        if (!std::all_of(shadow.viewToLightClip.begin(), shadow.viewToLightClip.end(),
+                         representable) ||
+            !std::all_of(rect.begin(), rect.end(), representable) || rect[0] < 0.0F ||
+            rect[1] < 0.0F || rect[2] < 0.0F || rect[3] < 0.0F ||
+            (rect[2] == 0.0F) != (rect[3] == 0.0F) || rect[0] + rect[2] > 1.0F ||
+            rect[1] + rect[3] > 1.0F || !std::isfinite(shadow.strength) || shadow.strength < 0.0F ||
+            shadow.strength > 1.0F) {
+            throw std::invalid_argument("Invalid vehicle spotlight shadow transform or atlas tile");
+        }
+    }
+    if (!shadows.empty()) {
+        if (glGetError() != GL_NO_ERROR)
+            throw std::runtime_error("OpenGL error before vehicle spotlight shadow setup");
+        const GLenum previousUnit = currentTextureUnit;
+        selectTextureUnit(spotlightShadowAtlasTextureUnit);
+        GLint previousTexture = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+        bindTexture(GL_TEXTURE_2D, depthAtlas);
+        GLint width = 0;
+        GLint height = 0;
+        GLint depthBits = 0;
+        GLint comparison = 0;
+        GLint minFilter = 0;
+        GLint magFilter = 0;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x884A /* GL_TEXTURE_DEPTH_SIZE */, &depthBits);
+        glGetTexParameteriv(GL_TEXTURE_2D, 0x884C /* GL_TEXTURE_COMPARE_MODE */, &comparison);
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minFilter);
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &magFilter);
+        const GLenum error = glGetError();
+        const bool invalidTile = std::any_of(shadows.begin(), shadows.end(), [&](const auto& s) {
+            return s.atlasRect[2] > 0.0F &&
+                   (s.atlasRect[2] * width < 1.0F || s.atlasRect[3] * height < 1.0F);
+        });
+        if (error != GL_NO_ERROR || width <= 0 || height <= 0 || depthBits <= 0 ||
+            comparison != GL_NONE || minFilter != GL_NEAREST || magFilter != GL_NEAREST ||
+            invalidTile) {
+            bindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+            selectTextureUnit(previousUnit);
+            throw std::runtime_error("Invalid vehicle spotlight shadow atlas texture state");
+        }
+        selectTextureUnit(previousUnit);
+        std::vector<std::array<float, 4>> data(uploadedVehicleLights.begin(),
+                                               uploadedVehicleLights.begin() +
+                                                   activeVehicleSpotlightCount * 3);
+        data.resize(activeVehicleSpotlightCount * 3 + shadows.size() * 6);
+        for (std::size_t index = 0; index < shadows.size(); ++index) {
+            const auto& shadow = shadows[index];
+            const std::size_t base = activeVehicleSpotlightCount * 3 + index * 6;
+            for (std::size_t column = 0; column < 4; ++column) {
+                for (std::size_t row = 0; row < 4; ++row) {
+                    data[base + column][row] =
+                        static_cast<float>(shadow.viewToLightClip[column * 4 + row]);
+                }
+            }
+            data[base + 4] = shadow.atlasRect;
+            data[base + 5] = {shadow.strength, 0.0F, 0.0F, 0.0F};
+        }
+        uploadDynamicLightBuffer(vehicleSpotlightBuffer, data.size() * sizeof(data[0]), data.data(),
+                                 "vehicle spotlight shadows");
+        uploadedVehicleLights = std::move(data);
+    }
+    const GLuint previousProgram = currentProgram;
+    for (const auto& entry :
+         {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
+        useProgram(entry.first);
+        pglUniform1i(entry.second->spotlightShadowCount, static_cast<GLint>(shadows.size()));
     }
     useProgram(previousProgram);
 }
@@ -3736,6 +4697,16 @@ void setMapLights(const std::vector<MapPointLight>& lights, double strength) {
             lightUploadStats.mapBytes += bytes;
         }
     }
+    const auto tiles = buildMapLightTiles(activeLightCount, [&](std::size_t index) {
+        const auto& light = lights[index];
+        return MapLightTileInput{
+            {static_cast<float>(light.position[0]), static_cast<float>(light.position[1]),
+             static_cast<float>(light.position[2])},
+            {static_cast<float>(light.color[0]), static_cast<float>(light.color[1]),
+             static_cast<float>(light.color[2])},
+            static_cast<float>(light.radius)};
+    });
+    recordMapLightTiles(tiles, activeLightCount);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
@@ -3744,6 +4715,7 @@ void setMapLights(const std::vector<MapPointLight>& lights, double strength) {
         pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(activeLightCount));
         pglUniform1f(uniforms.mapLightStrength, static_cast<float>(strength));
         pglUniform1i(uniforms.staticMapMode, 0);
+        setMapLightTileUniforms(uniforms, tiles);
     }
     useProgram(previousProgram);
 }
@@ -3899,6 +4871,17 @@ void setStaticMapLights(StaticMapLightBuffer& cache, const std::vector<MapPointL
     ++lightUploadStats.mapSets;
     lightUploadStats.mapLightsTotal += count;
     lightUploadStats.mapLightsMax = std::max(lightUploadStats.mapLightsMax, count);
+    const auto tiles = buildMapLightTiles(count, [&](std::size_t index) {
+        const auto& view = viewLights[index];
+        const auto& light = sources[sourceIndices[view.sourceIndex]];
+        return MapLightTileInput{
+            {static_cast<float>(view.position[0]), static_cast<float>(view.position[1]),
+             static_cast<float>(view.position[2])},
+            {static_cast<float>(light.color[0]), static_cast<float>(light.color[1]),
+             static_cast<float>(light.color[2])},
+            static_cast<float>(light.radius)};
+    });
+    recordMapLightTiles(tiles, count);
     const GLuint previousProgram = currentProgram;
     for (const auto& entry :
          {std::pair{modelProgram, &modelUniforms}, std::pair{materialProgram, &materialUniforms}}) {
@@ -3907,6 +4890,7 @@ void setStaticMapLights(StaticMapLightBuffer& cache, const std::vector<MapPointL
         pglUniform1i(uniforms.mapLightCount, static_cast<GLint>(count));
         pglUniform1f(uniforms.mapLightStrength, static_cast<float>(strength));
         pglUniform1i(uniforms.staticMapMode, 1);
+        setMapLightTileUniforms(uniforms, tiles);
     }
     useProgram(previousProgram);
 }
@@ -4158,7 +5142,8 @@ void configureModelAlphaState(int alphaMode, bool noZwrite) {
         // Surviving cutout fragments are opaque and must occlude later draws.
         glDepthMask(GL_TRUE);
         glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0F, -1.0F);
+        glPolygonOffset(spotlightShadowDepthPassActive ? 1.0F : -1.0F,
+                        spotlightShadowDepthPassActive ? 1.0F : -1.0F);
     } else {
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);

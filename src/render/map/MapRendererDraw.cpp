@@ -2,6 +2,7 @@
 
 #include "render/map/MapRendererInternal.h"
 #include "render/map/MapSceneLoader.h"
+#include "map/SceneryMaterialRuntime.h"
 
 #include "core/Utf8Path.h"
 
@@ -101,8 +102,13 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             return;
         }
     }
+    if (!model->second.openGlReady) {
+        throw std::logic_error("Human traffic model was prepared for a non-OpenGL renderer");
+    }
     if (model->second.batchIndexes.size() != model->second.texturePaths.size() ||
-        model->second.batchIndexes.size() != model->second.textureImages.size()) {
+        model->second.batchIndexes.size() != model->second.textureImages.size() ||
+        model->second.batchIndexes.size() != model->second.geometryIndexByBatch.size() ||
+        model->second.batchIndexes.size() != model->second.materialIndexByBatch.size()) {
         throw std::logic_error("Human traffic model texture state is inconsistent");
     }
     for (std::size_t index = 0; index < model->second.batchIndexes.size(); ++index) {
@@ -219,16 +225,21 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
     glDisable(GL_BLEND);
 }
 
-void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFraction) const {
-    TraceScope trace("map", "MapRenderer::draw");
+std::size_t MapRenderer::activeTreeSeason() const {
     const auto& sharedVariables = impl_->simulationState->sharedVariables();
     const float dayOfYear = sharedVariables.get("dayofyear");
     if (!std::isfinite(dayOfYear) || dayOfYear < 1.0F || dayOfYear > 366.0F ||
         std::floor(dayOfYear) != dayOfYear) {
         throw std::invalid_argument("Simulation day of year is invalid for tree textures");
     }
-    const std::size_t treeSeason = treeSeasonIndex(impl_->treeSeasons, static_cast<int>(dayOfYear),
-                                                   sharedVariables.roadWeather().groundSnow);
+    return treeSeasonIndex(impl_->treeSeasons, static_cast<int>(dayOfYear),
+                           sharedVariables.roadWeather().groundSnow);
+}
+
+void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFraction,
+                       bool shadowPass) const {
+    TraceScope trace("map", "MapRenderer::draw");
+    const std::size_t treeSeason = activeTreeSeason();
     IndirectCullingBatch& indirectBatch = impl_->indirectCullingBatch;
     IndirectCullingScope indirectScope;
     bool indirect = false;
@@ -243,13 +254,18 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     const auto weatherBrightness =
         impl_->simulationState->sharedVariables().environmentBrightness();
     TraceScope lightingTrace("lighting", "MapRenderer::prepareSceneryLights");
-    const double mapLightStrength =
-        weatherBrightness.has_value() ? 1.0 - std::clamp(*weatherBrightness, 0.0, 1.0) : 0.0;
+    const double mapLightStrength = mapLightStrengthForEnvironmentBrightness(weatherBrightness);
     const std::vector<std::size_t>* activeLights = nullptr;
-    if (mapLightStrength > 0.0 && !impl_->activeTileKeys.empty()) {
+    if (!shadowPass && mapLightStrength > 0.0 && !impl_->activeTileKeys.empty()) {
+        TraceScope selectionTrace("lighting", "MapRenderer::selectSceneryLightTiles");
         activeLights = &impl_->sceneryMapLightIndex.activeIndices(impl_->activeTileKeys);
     }
+    if (!shadowPass) {
+        recordMapLightSelection(impl_->sceneryMapLights.size(),
+                                activeLights != nullptr ? activeLights->size() : 0);
+    }
     if (activeLights != nullptr) {
+        TraceScope preparationTrace("lighting", "MapRenderer::transformSceneryLights");
         const bool prepared = impl_->sceneryMapLightViewCache.prepare(
             impl_->sceneryMapLights, *activeLights, view, {cameraX, cameraY, cameraZ},
             mapLightSelectionLimit(), impl_->sceneryMapLightRevision);
@@ -268,10 +284,10 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         gameLog.Warning("OPENBUS_STATIC_MAP_LIGHT_BUFFER must be 0, 1, false or true; using 1");
         return true;
     }();
-    if (activeLights != nullptr && persistentMapLights) {
+    if (!shadowPass && activeLights != nullptr && persistentMapLights) {
         setStaticMapLights(impl_->sceneryMapLightBuffer, impl_->sceneryMapLights, *activeLights,
                            viewMapLights, mapLightStrength, impl_->sceneryMapLightRevision);
-    } else if (activeLights != nullptr) {
+    } else if (!shadowPass && activeLights != nullptr) {
         std::vector<MapPointLight> viewLights;
         viewLights.reserve(viewMapLights.size());
         for (const auto& viewLight : viewMapLights) {
@@ -280,12 +296,12 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             viewLights.push_back(light);
         }
         setMapLights(viewLights, mapLightStrength);
-    } else {
+    } else if (!shadowPass) {
         setMapLights({}, mapLightStrength);
     }
     lightingTrace.finish();
     const bool depthOcclusionQueries =
-        depthOcclusionQueriesRequested() && depthOcclusionQueriesAvailable();
+        !shadowPass && depthOcclusionQueriesRequested() && depthOcclusionQueriesAvailable();
     const bool transparentOcclusionQueries =
         depthOcclusionQueries &&
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_OCCLUSION_TRANSPARENT"));
@@ -295,7 +311,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     const bool waterOcclusionQueries =
         depthOcclusionQueries &&
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_OCCLUSION_WATER"));
-    impl_->nextOcclusionQuery = 0;
+    if (!shadowPass)
+        impl_->nextOcclusionQuery = 0;
     if (depthOcclusionQueriesRequested() && !depthOcclusionQueriesAvailable() &&
         !impl_->occlusionQueryUnavailableLogged) {
         gameLog.Warning("Depth occlusion queries unavailable; continuing without query culling");
@@ -666,7 +683,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
                                   {1.0, 1.0, 1.0}, 1.0, 0, false, 1.0,
                                   trackedMapMotionObject(&tile, &tile, tile.buffer));
-            if (!tile.groundTextureLayers.empty()) {
+            if (!shadowPass && !tile.groundTextureLayers.empty()) {
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 glDepthFunc(GL_LEQUAL);
@@ -754,6 +771,9 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         TraceScope phase("map", "MapRenderer::draw.splines");
         OcclusionPassState occlusionState;
         for (const Impl::ModelBatch& road : impl_->roadBatches) {
+            if (shadowPass &&
+                (road.alphaMode == 2 || road.alphaMode == 3 || road.noZwrite || road.noZcheck))
+                continue;
             if (!impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
                 continue;
             }
@@ -949,61 +969,47 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 }
                 const auto weatherBrightness =
                     impl_->simulationState->sharedVariables().environmentBrightness();
-                if (weatherBrightness) {
-                    sceneryMaterial.nightmapStrength = static_cast<float>(1.0 - *weatherBrightness);
+                Impl::SceneryScriptState* scriptState =
+                    instance.scriptStateIndex < impl_->sceneryScriptStates.size()
+                        ? impl_->sceneryScriptStates[instance.scriptStateIndex].get()
+                        : nullptr;
+                const openbus::map::SceneryMaterialRuntimeConfig runtimeConfig{
+                    batch.lightmapStrengthVariable,
+                    batch.visibilityVariable,
+                    batch.texcoordTransXVariable,
+                    batch.texcoordTransYVariable,
+                    batch.alphaScaleVariable,
+                    batch.auxiliaryMaterialSelection ? &*batch.auxiliaryMaterialSelection : nullptr,
+                    sceneryMaterial.lightmapStrength,
+                    sceneryMaterial.nightmapStrength};
+                const auto runtimeMaterial = openbus::map::resolveSceneryMaterialRuntime(
+                    runtimeConfig, scriptState != nullptr ? &scriptState->variables : nullptr,
+                    weatherBrightness);
+                sceneryMaterial.lightmapStrength = runtimeMaterial.lightmapStrength;
+                sceneryMaterial.nightmapStrength = runtimeMaterial.nightmapStrength;
+                if (runtimeMaterial.texcoordOffsetX) {
+                    sceneryMaterial.texcoordOffsetX = *runtimeMaterial.texcoordOffsetX;
+                }
+                if (runtimeMaterial.texcoordOffsetY) {
+                    sceneryMaterial.texcoordOffsetY = *runtimeMaterial.texcoordOffsetY;
                 }
                 int alphaMode = batch.alphaMode;
-                double alphaScale = batch.alphaScaleVariable.empty() ? 1.0 : 0.0;
-                if (instance.scriptStateIndex < impl_->sceneryScriptStates.size()) {
-                    Impl::SceneryScriptState& scriptState =
-                        *impl_->sceneryScriptStates[instance.scriptStateIndex];
-                    bool selectedItem = false;
-                    const std::string* lightmapStrengthVariable = &batch.lightmapStrengthVariable;
-                    if (batch.auxiliaryMaterialSelection) {
-                        const ModelMaterialState& selected = selectModelMaterial(
-                            *batch.auxiliaryMaterialSelection, [&](const std::string& name) {
-                                return scriptState.variables.get(name);
-                            });
-                        selectedItem = &selected != &*batch.auxiliaryMaterialSelection;
-                        if (selectedItem) {
-                            const auto lightmap =
-                                batch.itemLightmaps.find(selected.lightmapTextureName);
-                            sceneryMaterial.lightmap =
-                                lightmap == batch.itemLightmaps.end() ? 0 : lightmap->second;
-                            sceneryMaterial.useLightmap = sceneryMaterial.lightmap != 0;
-                            lightmapStrengthVariable = &selected.lightmapStrengthVariable;
-                            const auto nightmap =
-                                batch.itemNightmaps.find(selected.nightmapTextureName);
-                            sceneryMaterial.nightmap =
-                                nightmap == batch.itemNightmaps.end() ? 0 : nightmap->second;
-                            sceneryMaterial.useNightmap = sceneryMaterial.nightmap != 0;
-                        }
-                    }
-                    if (selectedItem || !batch.visibilityVariable.empty())
-                        sceneryMaterial.nightmapStrength = 1.0F;
-                    else if (scriptState.variables.hasExplicitSceneryNightlight())
-                        sceneryMaterial.nightmapStrength =
-                            std::clamp(scriptState.variables.get("nightlighta"), 0.0F, 1.0F);
-                    if (!batch.texcoordTransXVariable.empty()) {
-                        sceneryMaterial.texcoordOffsetX = static_cast<float>(
-                            scriptState.variables.get(batch.texcoordTransXVariable));
-                    }
-                    if (!batch.texcoordTransYVariable.empty()) {
-                        sceneryMaterial.texcoordOffsetY = static_cast<float>(
-                            scriptState.variables.get(batch.texcoordTransYVariable));
-                    }
-                    sceneryMaterial.lightmapStrength =
-                        lightmapStrengthVariable->empty()
-                            ? 1.0F
-                            : std::clamp(scriptState.variables.get(*lightmapStrengthVariable), 0.0F,
-                                         1.0F);
-                    if (!batch.alphaScaleVariable.empty()) {
-                        alphaScale = std::clamp(scriptState.variables.get(batch.alphaScaleVariable),
-                                                0.0F, 1.0F);
-                    }
+                double alphaScale = runtimeMaterial.alphaScale;
+                if (runtimeMaterial.selectedItem != nullptr) {
+                    const auto& selected = *runtimeMaterial.selectedItem;
+                    const auto lightmap = batch.itemLightmaps.find(selected.lightmapTextureName);
+                    sceneryMaterial.lightmap =
+                        lightmap == batch.itemLightmaps.end() ? 0 : lightmap->second;
+                    sceneryMaterial.useLightmap = sceneryMaterial.lightmap != 0;
+                    const auto nightmap = batch.itemNightmaps.find(selected.nightmapTextureName);
+                    sceneryMaterial.nightmap =
+                        nightmap == batch.itemNightmaps.end() ? 0 : nightmap->second;
+                    sceneryMaterial.useNightmap = sceneryMaterial.nightmap != 0;
+                }
+                if (scriptState != nullptr) {
                     if (batch.textTextureIndex >= 0) {
                         sceneryMaterial.textTexture = refreshSceneryTexture(
-                            scriptState, true, batch.textTextureIndex, sceneryMaterial);
+                            *scriptState, true, batch.textTextureIndex, sceneryMaterial);
                         sceneryMaterial.useTextTexture = sceneryMaterial.textTexture != 0;
                         if (sceneryMaterial.useTextTexture) {
                             // Text glyphs include partial alpha for antialiasing and a
@@ -1015,11 +1021,11 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                         }
                     } else if (batch.scriptTextureIndex >= 0) {
                         sceneryMaterial.freeTexture = refreshSceneryTexture(
-                            scriptState, false, batch.scriptTextureIndex, sceneryMaterial);
+                            *scriptState, false, batch.scriptTextureIndex, sceneryMaterial);
                         sceneryMaterial.useFreeTexture = sceneryMaterial.freeTexture != 0;
                     } else if (!batch.freeTextureVariable.empty()) {
                         const std::string selectedTexture =
-                            scriptState.variables.getString(batch.freeTextureVariable);
+                            scriptState->variables.getString(batch.freeTextureVariable);
                         if (!selectedTexture.empty()) {
                             auto& resolvedTextures =
                                 impl_->resolvedFreeTexturesByBatch[instance.batchIndex];
@@ -1120,6 +1126,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             }
         }
         for (const SceneryDraw* scenery : opaqueScenery) {
+            if (shadowPass && (scenery->batch->noZwrite || scenery->batch->noZcheck))
+                continue;
             glDepthMask(scenery->batch->noZwrite ? GL_FALSE : GL_TRUE);
             // OMSI shadow overlays commonly request both flags: they must not
             // write depth, but still need depth testing so they cannot bleed
@@ -1139,6 +1147,19 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             if (skipDepthCheck) {
                 glEnable(GL_DEPTH_TEST);
             }
+        }
+        if (shadowPass) {
+            for (const SceneryDraw* scenery : transparentScenery) {
+                const bool cutout = scenery->alphaMode == 3 ||
+                                    (scenery->alphaMode == 2 && scenery->material.useTransmap);
+                if (!cutout || scenery->material.useTextTexture || scenery->batch->noZwrite ||
+                    scenery->batch->noZcheck) {
+                    continue;
+                }
+                drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material, 3,
+                                    nullptr, scenery->visibilityFade, scenery->alphaScale);
+            }
+            return;
         }
         std::stable_sort(transparentScenery.begin(), transparentScenery.end(),
                          [](const SceneryDraw* first, const SceneryDraw* second) {
@@ -1214,7 +1235,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     } else {
         drawSceneryTypes(0);
         drawTerrain();
-        drawWater();
+        if (!shadowPass)
+            drawWater();
         drawSceneryTypes(1);
         drawSplines();
         drawSceneryTypes(2);

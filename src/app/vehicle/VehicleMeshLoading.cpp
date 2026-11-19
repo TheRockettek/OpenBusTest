@@ -3,6 +3,7 @@
 #include "app/vehicle/Vehicle.h"
 #include "app/vehicle/VehiclePartLoading.h"
 #include "app/vehicle/VehiclePartLoading.h"
+#include "assets/VehicleMeshGeometry.h"
 #include "config/ScriptTextureLimits.h"
 
 bool Vehicle::areObjectsLoaded() const {
@@ -33,7 +34,10 @@ bool Vehicle::loadSharedDisplayLists() {
         part.viewDepthCacheGeneration = 0;
         part.cachedViewDepth = 0.0;
         for (Batch& batch : part.batches) {
-            batch.sharedGeometryBuffer = true;
+            if (!openGLGeometryEnabled) {
+                batch.buffer = 0;
+            }
+            batch.sharedGeometryBuffer = openGLGeometryEnabled && batch.buffer != 0;
             batch.transparentSortCache = {};
             batch.transparentSortCacheReplacementIndex = 0;
             batch.dynamicTexture = 0;
@@ -90,6 +94,10 @@ void Vehicle::cacheSharedDisplayLists() {
     if (displayLists.empty() || sharedDisplayListsCached) {
         return;
     }
+    if (!openGLGeometryEnabled) {
+        sharedDisplayListsCached = true;
+        return;
+    }
     for (DisplayPart& part : displayLists) {
         for (Batch& batch : part.batches) {
             batch.sharedGeometryBuffer = batch.buffer != 0;
@@ -122,10 +130,6 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     if (!parsed) {
         return;
     }
-    const auto& positions = parsed->positions;
-    const auto& normals = parsed->normals;
-    const auto& texCoords = parsed->texCoords;
-    const auto& vertexColors = parsed->vertexColors;
     const auto& triangles = parsed->triangles;
     const auto& materials = parsed->materials;
     const auto& boundsCenter = parsed->boundsCenter;
@@ -162,79 +166,9 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                          const MaterialState& materialState) {
         TraceScope batchTrace("obj", "loadObj.makeBatch");
         std::vector<Vertex> vertices;
-        if (source.size() > std::numeric_limits<std::size_t>::max() / 3) {
-            throw std::runtime_error("triangle vertex count overflow");
-        }
-        vertices.reserve(source.size() * 3);
-        const auto convertPosition = [](const ObjPosition& position) {
-            return std::array<double, 3>{position.y, -position.x, position.z};
-        };
-        const auto normalizeVector = [](std::array<double, 3> value) {
-            const double length =
-                std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
-            if (length <= 1.0e-8) {
-                return std::array<double, 3>{0.0, 0.0, 1.0};
-            }
-            for (double& component : value) {
-                component /= length;
-            }
-            return value;
-        };
-        const auto validIndex = [](int index, std::size_t count) {
-            return index > 0 && static_cast<std::size_t>(index) <= count;
-        };
         {
             TraceScope vertexTrace("obj", "loadObj.buildVertices");
-            for (const ObjTriangle* triangle : source) {
-                std::array<double, 3> fallbackNormal = {0.0, 0.0, 1.0};
-                if (validIndex(triangle->indices[0].position, positions.size()) &&
-                    validIndex(triangle->indices[1].position, positions.size()) &&
-                    validIndex(triangle->indices[2].position, positions.size())) {
-                    const std::array<double, 3> first = convertPosition(
-                        positions[static_cast<std::size_t>(triangle->indices[0].position - 1)]);
-                    const std::array<double, 3> second = convertPosition(
-                        positions[static_cast<std::size_t>(triangle->indices[1].position - 1)]);
-                    const std::array<double, 3> third = convertPosition(
-                        positions[static_cast<std::size_t>(triangle->indices[2].position - 1)]);
-                    const std::array<double, 3> edgeA = {second[0] - first[0], second[1] - first[1],
-                                                         second[2] - first[2]};
-                    const std::array<double, 3> edgeB = {third[0] - first[0], third[1] - first[1],
-                                                         third[2] - first[2]};
-                    fallbackNormal = normalizeVector({edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
-                                                      edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
-                                                      edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]});
-                }
-                for (const ObjIndex& index : triangle->indices) {
-                    if (!validIndex(index.position, positions.size())) {
-                        continue;
-                    }
-                    const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
-                    const ObjPosition& position = positions[positionIndex];
-                    const std::array<double, 4> vertexColor =
-                        positionIndex < vertexColors.size()
-                            ? vertexColors[positionIndex]
-                            : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
-                    std::array<double, 3> normal = fallbackNormal;
-                    if (validIndex(index.normal, normals.size())) {
-                        const ObjNormal& sourceNormal =
-                            normals[static_cast<std::size_t>(index.normal - 1)];
-                        normal = normalizeVector({sourceNormal.y, -sourceNormal.x, sourceNormal.z});
-                    }
-                    const ObjTexCoord* texCoord = nullptr;
-                    if (validIndex(index.texCoord, texCoords.size())) {
-                        texCoord = &texCoords[static_cast<std::size_t>(index.texCoord - 1)];
-                    }
-                    vertices.push_back(
-                        {static_cast<float>(position.y), static_cast<float>(-position.x),
-                         static_cast<float>(position.z),
-                         texCoord ? static_cast<float>(texCoord->u) : 0.0f,
-                         texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f, 0.0f,
-                         static_cast<float>(normal[0]), static_cast<float>(normal[1]),
-                         static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
-                         static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
-                         static_cast<float>(vertexColor[3])});
-                }
-            }
+            vertices = openbus::rendering::prepareVehicleMeshGeometry(*parsed, source);
         }
         if (vertices.empty())
             return;
@@ -266,6 +200,8 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
         batch.emissionColor = emissionColor;
         batch.specularPower = specularPower;
         batch.hasNormals = true;
+        batch.textureAddressS = materialState.textureAddressS;
+        batch.textureAddressT = materialState.textureAddressT;
         batch.textureWrapS = textureAddressModeToGl(materialState.textureAddressS);
         batch.textureWrapT = textureAddressModeToGl(materialState.textureAddressT);
         batch.alphaMode = alphaMode;
@@ -291,6 +227,8 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                    first.emissionColor == second.emissionColor &&
                    first.specularPower == second.specularPower &&
                    first.textured == second.textured && first.hasNormals == second.hasNormals &&
+                   first.textureAddressS == second.textureAddressS &&
+                   first.textureAddressT == second.textureAddressT &&
                    first.textureWrapS == second.textureWrapS &&
                    first.textureWrapT == second.textureWrapT &&
                    first.lightmap.name == second.lightmap.name &&
@@ -321,14 +259,16 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
             merged.vertices.insert(merged.vertices.end(), batch.vertices.begin(),
                                    batch.vertices.end());
             merged.vertexCount = merged.vertices.size();
-            TraceScope uploadTrace("obj", "loadObj.mergeBatch");
-            pglBindBuffer(GL_ARRAY_BUFFER, merged.buffer);
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(merged.vertices.size() * sizeof(Vertex)),
-                          merged.vertices.data(), GL_STATIC_DRAW);
+            if (openGLGeometryEnabled) {
+                TraceScope uploadTrace("obj", "loadObj.mergeBatch");
+                pglBindBuffer(GL_ARRAY_BUFFER, merged.buffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(merged.vertices.size() * sizeof(Vertex)),
+                              merged.vertices.data(), GL_STATIC_DRAW);
+            }
             return;
         }
-        {
+        if (openGLGeometryEnabled) {
             TraceScope uploadTrace("obj", "loadObj.uploadVbo");
             pglGenBuffers(1, &batch.buffer);
             pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
@@ -410,10 +350,12 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                 openbus::rendering::deleteRendererBuffers(1, &source.buffer);
                 source.buffer = 0;
             }
-            pglBindBuffer(GL_ARRAY_BUFFER, target->buffer);
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(target->vertices.size() * sizeof(Vertex)),
-                          target->vertices.data(), GL_STATIC_DRAW);
+            if (openGLGeometryEnabled) {
+                pglBindBuffer(GL_ARRAY_BUFFER, target->buffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(target->vertices.size() * sizeof(Vertex)),
+                              target->vertices.data(), GL_STATIC_DRAW);
+            }
         }
         batches = std::move(consolidated);
         for (Batch& batch : batches) {
@@ -671,6 +613,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
         }
     }
     cacheReflectionTextureIndices(destination->back());
+    invalidateDiligentAsset();
     if (verboseObjLoadLogs) {
         for (const Batch& batch : destination->back().batches) {
             gameLog.Debug("OBJ batch: " + part.objPath.filename().string() +

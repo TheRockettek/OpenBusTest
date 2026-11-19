@@ -38,15 +38,11 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
         variableVisibleParts.resize(displayLists.size());
         visibleClickablePartIndices.clear();
         visibleOpaquePickPartIndices.clear();
-        visibleReflectionTextureIndices.clear();
-        reflectionRequiredSizes.clear();
         indirectCandidatePartIndices.clear();
         indirectCandidatePartIndices.reserve(displayLists.size());
     }
     const auto& modelView = openbus::rendering::modelViewMatrix();
     const auto& projection = openbus::rendering::projectionMatrix();
-    const double viewportWidthPixels = static_cast<double>(std::max(viewportWidth, 1));
-    const double viewportHeightPixels = static_cast<double>(std::max(viewportHeight, 1));
     std::optional<ViewFrustum> localFrustum;
     auto& frustum = sharedFrustum != nullptr ? *sharedFrustum : localFrustum;
     {
@@ -74,82 +70,107 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
             if (lodMatches && part.pickOccluder) {
                 visibleOpaquePickPartIndices.push_back(partIndex);
             }
-            const std::vector<int>& partReflectionIndices = reflectionTextureIndicesForPart(part);
-            if (partReflectionIndices.empty()) {
-                continue;
-            }
-            const std::array<double, 3> center = animatedPartCenter(part);
-            if (openbus::rendering::sphereBelowMinimumViewportFraction(
-                    modelView, projection, center, part.radius, minimumObjectViewportFraction)) {
-                continue;
-            }
-            const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
-            const std::array<double, 4> eye = transformPoint(modelView, local);
-            if (frustumCulling) {
-                if (!frustum) {
-                    TraceScope phase("render", "Vehicle::prepareFrameVisibility.frustum");
-                    frustum = buildViewFrustum(projection);
-                }
-                if (sphereOutsideFrustum(*frustum, eye, part.radius)) {
-                    continue;
-                }
-            }
-            const Matrix4 animation = animationTransformForPart(part);
-            const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),
-                                                    std::max(part.size[1] * 0.5, 0.0),
-                                                    std::max(part.size[2] * 0.5, 0.0)};
-            double minimumNdcX = std::numeric_limits<double>::max();
-            double maximumNdcX = std::numeric_limits<double>::lowest();
-            double minimumNdcY = std::numeric_limits<double>::max();
-            double maximumNdcY = std::numeric_limits<double>::lowest();
-            bool hasProjectedCorner = false;
-            bool intersectsNearPlane = false;
+        }
+    }
+    prepareReflectionVisibility(context, viewportWidth, viewportHeight,
+                                minimumObjectViewportFraction, modelView, projection, &frustum);
+}
 
-            for (int corner = 0; corner < 8; ++corner) {
-                const std::array<double, 4> cornerLocal = {
-                    part.center[0] + ((corner & 1) == 0 ? -halfSize[0] : halfSize[0]),
-                    part.center[1] + ((corner & 2) == 0 ? -halfSize[1] : halfSize[1]),
-                    part.center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
-                std::array<double, 4> animated = transformPoint(animation, cornerLocal);
-                animated[2] += modelOffsetZ;
-                const std::array<double, 4> cornerEye = transformPoint(modelView, animated);
-                const double depth = -cornerEye[2];
-                if (depth <= openbus::rendering::kReflectionNearPlane) {
-                    intersectsNearPlane = true;
-                    continue;
-                }
-                const double clipX = projection[0] * cornerEye[0] + projection[4] * cornerEye[1] +
-                                     projection[8] * cornerEye[2] + projection[12] * cornerEye[3];
-                const double clipY = projection[1] * cornerEye[0] + projection[5] * cornerEye[1] +
-                                     projection[9] * cornerEye[2] + projection[13] * cornerEye[3];
-                minimumNdcX = std::min(minimumNdcX, clipX / depth);
-                maximumNdcX = std::max(maximumNdcX, clipX / depth);
-                minimumNdcY = std::min(minimumNdcY, clipY / depth);
-                maximumNdcY = std::max(maximumNdcY, clipY / depth);
-                hasProjectedCorner = true;
+void Vehicle::prepareReflectionVisibility(RenderViewContext context, int viewportWidth,
+                                          int viewportHeight, double minimumObjectViewportFraction,
+                                          const openbus::rendering::Matrix4& modelView,
+                                          const openbus::rendering::Matrix4& projection,
+                                          std::optional<ViewFrustum>* sharedFrustum) {
+    visibleReflectionTextureIndices.clear();
+    reflectionRequiredSizes.clear();
+    const double viewportWidthPixels = static_cast<double>(std::max(viewportWidth, 1));
+    const double viewportHeightPixels = static_cast<double>(std::max(viewportHeight, 1));
+    std::optional<ViewFrustum> localFrustum;
+    auto& frustum = sharedFrustum != nullptr ? *sharedFrustum : localFrustum;
+
+    for (const DisplayPart& part : displayLists) {
+        const bool visible =
+            part.visibleVariable.empty() ||
+            variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
+        if (!visible || !openbus::rendering::viewpointMatches(part.viewpoint, context)) {
+            continue;
+        }
+        if (activeLod >= 0 && part.lodIndex >= 0 && part.lodIndex != activeLod) {
+            continue;
+        }
+        const std::vector<int>& partReflectionIndices = reflectionTextureIndicesForPart(part);
+        if (partReflectionIndices.empty()) {
+            continue;
+        }
+        const std::array<double, 3> center = animatedPartCenter(part);
+        if (openbus::rendering::sphereBelowMinimumViewportFraction(
+                modelView, projection, center, part.radius, minimumObjectViewportFraction)) {
+            continue;
+        }
+        const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
+        const std::array<double, 4> eye = transformPoint(modelView, local);
+        if (frustumCulling) {
+            if (!frustum) {
+                frustum = buildViewFrustum(projection);
             }
-            if (!hasProjectedCorner) {
+            if (sphereOutsideFrustum(*frustum, eye, part.radius)) {
                 continue;
             }
-            const double projectedWidth =
-                intersectsNearPlane
-                    ? viewportWidthPixels
-                    : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidthPixels, 0.0,
-                                 viewportWidthPixels);
-            const double projectedHeight =
-                intersectsNearPlane
-                    ? viewportHeightPixels
-                    : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeightPixels, 0.0,
-                                 viewportHeightPixels);
-            const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
-            const int requiredSize = std::max(openbus::rendering::kMinReflectionTargetSize,
-                                              static_cast<int>(std::ceil(screenBoundedDiameter)));
+        }
 
-            for (const int reflectionIndex : partReflectionIndices) {
-                visibleReflectionTextureIndices.insert(reflectionIndex);
-                reflectionRequiredSizes[reflectionIndex] =
-                    std::max(reflectionRequiredSizes[reflectionIndex], requiredSize);
+        const Matrix4 animation = animationTransformForPart(part);
+        const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),
+                                                std::max(part.size[1] * 0.5, 0.0),
+                                                std::max(part.size[2] * 0.5, 0.0)};
+        double minimumNdcX = std::numeric_limits<double>::max();
+        double maximumNdcX = std::numeric_limits<double>::lowest();
+        double minimumNdcY = std::numeric_limits<double>::max();
+        double maximumNdcY = std::numeric_limits<double>::lowest();
+        bool hasProjectedCorner = false;
+        bool intersectsNearPlane = false;
+        for (int corner = 0; corner < 8; ++corner) {
+            const std::array<double, 4> cornerLocal = {
+                part.center[0] + ((corner & 1) == 0 ? -halfSize[0] : halfSize[0]),
+                part.center[1] + ((corner & 2) == 0 ? -halfSize[1] : halfSize[1]),
+                part.center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
+            std::array<double, 4> animated = transformPoint(animation, cornerLocal);
+            animated[2] += modelOffsetZ;
+            const std::array<double, 4> cornerEye = transformPoint(modelView, animated);
+            const double depth = -cornerEye[2];
+            if (depth <= openbus::rendering::kReflectionNearPlane) {
+                intersectsNearPlane = true;
+                continue;
             }
+            const double clipX = projection[0] * cornerEye[0] + projection[4] * cornerEye[1] +
+                                 projection[8] * cornerEye[2] + projection[12] * cornerEye[3];
+            const double clipY = projection[1] * cornerEye[0] + projection[5] * cornerEye[1] +
+                                 projection[9] * cornerEye[2] + projection[13] * cornerEye[3];
+            minimumNdcX = std::min(minimumNdcX, clipX / depth);
+            maximumNdcX = std::max(maximumNdcX, clipX / depth);
+            minimumNdcY = std::min(minimumNdcY, clipY / depth);
+            maximumNdcY = std::max(maximumNdcY, clipY / depth);
+            hasProjectedCorner = true;
+        }
+        if (!hasProjectedCorner) {
+            continue;
+        }
+        const double projectedWidth =
+            intersectsNearPlane
+                ? viewportWidthPixels
+                : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidthPixels, 0.0,
+                             viewportWidthPixels);
+        const double projectedHeight =
+            intersectsNearPlane
+                ? viewportHeightPixels
+                : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeightPixels, 0.0,
+                             viewportHeightPixels);
+        const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
+        const int requiredSize = std::max(openbus::rendering::kMinReflectionTargetSize,
+                                          static_cast<int>(std::ceil(screenBoundedDiameter)));
+        for (const int reflectionIndex : partReflectionIndices) {
+            visibleReflectionTextureIndices.insert(reflectionIndex);
+            reflectionRequiredSizes[reflectionIndex] =
+                std::max(reflectionRequiredSizes[reflectionIndex], requiredSize);
         }
     }
 }

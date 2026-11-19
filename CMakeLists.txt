@@ -45,6 +45,30 @@ option(OPENBUS_BUILD_BGFX_LIGHTING_PROBE
     "Build the opt-in bgfx OpenGL/GLSL lighting preview"
     OFF)
 
+option(OPENBUS_BUILD_VULKAN_PROBE
+    "Build an opt-in Vulkan swapchain smoke probe"
+    OFF)
+
+option(OPENBUS_BUILD_DILIGENT_VULKAN_PROBE
+    "Build an opt-in Diligent Engine Vulkan interop probe"
+    OFF)
+
+option(OPENBUS_BUILD_DILIGENT_RENDERER
+    "Build the production Diligent Vulkan renderer"
+    ON)
+
+if(NOT OPENBUS_BUILD_DILIGENT_RENDERER)
+    message(FATAL_ERROR "The OpenBus production executable requires the Diligent renderer.")
+endif()
+
+if((OPENBUS_BUILD_DILIGENT_VULKAN_PROBE OR OPENBUS_BUILD_DILIGENT_RENDERER) AND
+   NOT CMAKE_C_COMPILER AND
+   CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+   CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(CMAKE_C_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH
+        "C compiler used by DiligentCore")
+endif()
+
 if(OPENBUS_ENABLE_PERF_TRACE)
     set(OPENBUS_PERF_TRACE_DEFINE 1)
 else()
@@ -93,6 +117,62 @@ if(NOT TARGET OpenBus::GLFW)
     add_library(OpenBus::GLFW ALIAS glfw)
 endif()
 
+if(OPENBUS_BUILD_VULKAN_PROBE)
+    FetchContent_Declare(openbus_vulkan_headers
+        GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+        GIT_TAG vulkan-sdk-1.4.357.0
+    )
+    FetchContent_GetProperties(openbus_vulkan_headers)
+    if(NOT openbus_vulkan_headers_POPULATED)
+        cmake_policy(PUSH)
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(openbus_vulkan_headers)
+        cmake_policy(POP)
+    endif()
+
+    FetchContent_Declare(openbus_volk
+        GIT_REPOSITORY https://github.com/zeux/volk.git
+        GIT_TAG vulkan-sdk-1.4.357.0
+    )
+    FetchContent_GetProperties(openbus_volk)
+    if(NOT openbus_volk_POPULATED)
+        cmake_policy(PUSH)
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(openbus_volk)
+        cmake_policy(POP)
+    endif()
+endif()
+
+if(OPENBUS_BUILD_DILIGENT_VULKAN_PROBE OR OPENBUS_BUILD_DILIGENT_RENDERER)
+    if(NOT WIN32)
+        message(FATAL_ERROR
+            "The experimental Diligent Vulkan build currently supports Windows only.")
+    endif()
+
+    set(DILIGENT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(DILIGENT_NO_DIRECT3D11 ON CACHE BOOL "" FORCE)
+    set(DILIGENT_NO_DIRECT3D12 ON CACHE BOOL "" FORCE)
+    set(DILIGENT_NO_OPENGL ON CACHE BOOL "" FORCE)
+    set(DILIGENT_NO_VULKAN OFF CACHE BOOL "" FORCE)
+    set(DILIGENT_NO_WEBGPU ON CACHE BOOL "" FORCE)
+    set(DILIGENT_NO_ARCHIVER ON CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(diligentcore
+        GIT_REPOSITORY https://github.com/DiligentGraphics/DiligentCore.git
+        GIT_TAG v2.5.6
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES_RECURSE TRUE
+    )
+    FetchContent_MakeAvailable(diligentcore)
+    if(TARGET Diligent-GraphicsEngineVk-shared)
+        set_property(TARGET Diligent-GraphicsEngineVk-shared PROPERTY EXCLUDE_FROM_ALL TRUE)
+    endif()
+endif()
+
 FetchContent_Declare(gli
     GIT_REPOSITORY https://github.com/g-truc/gli.git
     GIT_TAG 0.8.2.0
@@ -134,20 +214,25 @@ if(NOT imgui_POPULATED)
     cmake_policy(POP)
 endif()
 
-add_library(openbus_imgui STATIC
+add_library(openbus_imgui_core STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
-target_include_directories(openbus_imgui PUBLIC
+target_include_directories(openbus_imgui_core PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
+target_compile_definitions(openbus_imgui_core PRIVATE GLFW_INCLUDE_NONE)
+target_link_libraries(openbus_imgui_core PUBLIC OpenBus::GLFW)
+
+add_library(openbus_imgui STATIC
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
 target_compile_definitions(openbus_imgui PRIVATE GLFW_INCLUDE_NONE)
-target_link_libraries(openbus_imgui PUBLIC OpenBus::GLFW OpenGL::GL)
+target_link_libraries(openbus_imgui PUBLIC openbus_imgui_core OpenGL::GL)
 
 if(NOT TARGET glfw)
     message(FATAL_ERROR

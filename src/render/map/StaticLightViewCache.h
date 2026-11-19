@@ -28,9 +28,16 @@ class StaticLightViewCache {
         next.reserve(count);
         const auto append = [&](std::size_t index) {
             const auto& light = sources.at(sourceIndices[index]);
-            const auto position = transformPoint(
-                view, {light.position[0], light.position[1], light.position[2], 1.0});
-            next.push_back({{position[0], position[1], position[2]}, index});
+            std::array<double, 3> position = {};
+            for (std::size_t column = 0; column < 3; ++column) {
+                for (std::size_t row = 0; row < 3; ++row) {
+                    position[row] += view[row + column * 4] * light.position[column];
+                }
+            }
+            for (std::size_t row = 0; row < 3; ++row) {
+                position[row] += view[row + 12];
+            }
+            next.push_back({position, index});
         };
         if (count == sourceIndices.size()) {
             for (std::size_t index = 0; index < count; ++index) {

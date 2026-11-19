@@ -28,7 +28,7 @@
 namespace openbus::core {
 namespace {
 
-constexpr std::array<std::string_view, 20> keys = {"display.mode",
+constexpr std::array<std::string_view, 21> keys = {"display.mode",
                                                    "display.width",
                                                    "display.height",
                                                    "display.refresh_rate",
@@ -47,7 +47,8 @@ constexpr std::array<std::string_view, 20> keys = {"display.mode",
                                                    "advanced.vehicle_frustum_culling",
                                                    "textures.generate_mipmaps",
                                                    "textures.map_texture_scale",
-                                                   "lighting.scenery_light_limit"};
+                                                   "lighting.scenery_light_limit",
+                                                   "debug.temporal_view"};
 
 std::string_view trim(std::string_view value) {
     const auto first = value.find_first_not_of(" \t\r");
@@ -93,6 +94,16 @@ void assign(GraphicsPreferences& preferences, std::string_view key, std::string_
             throw std::invalid_argument("mode must be off, fxaa, msaa or smaa");
         }
         preferences.antiAliasingMode = std::string(value);
+        return;
+    }
+    if (key == keys[20]) {
+        if (value != "off" && value != "motion_vectors" && value != "motion_magnitude" &&
+            value != "motion_validity" && value != "linear_depth") {
+            throw std::invalid_argument(
+                "temporal debug view must be off, motion_vectors, motion_magnitude, "
+                "motion_validity or linear_depth");
+        }
+        preferences.temporalDebugView = std::string(value);
         return;
     }
     const double number = parseNumber(value);
@@ -213,6 +224,8 @@ std::string valueFor(const GraphicsPreferences& preferences, std::string_view ke
         stream << preferences.mapTextureScale;
     if (key == keys[19])
         stream << preferences.sceneryLightLimit;
+    if (key == keys[20])
+        stream << preferences.temporalDebugView;
     return stream.str();
 }
 
@@ -373,6 +386,8 @@ GraphicsPreferences mergeGraphicsPreferences(const GraphicsPreferences& baseline
         disk.minimumObjectSizeMainPercent = edited.minimumObjectSizeMainPercent;
     if (edited.minimumObjectSizeMirrorsPercent != baseline.minimumObjectSizeMirrorsPercent)
         disk.minimumObjectSizeMirrorsPercent = edited.minimumObjectSizeMirrorsPercent;
+    if (edited.temporalDebugView != baseline.temporalDebugView)
+        disk.temporalDebugView = edited.temporalDebugView;
     return disk;
 }
 

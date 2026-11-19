@@ -50,7 +50,7 @@ std::string Vehicle::resolveCtcTextureName(const std::string& textureName) const
     return openbus::app::vehicle::resolveCtcTextureName(textureName, ctcTextureReplacements);
 }
 
-void Vehicle::updateMaterialChange(Batch& batch) {
+void Vehicle::updateMaterialChange(Batch& batch, bool updateGlBuffer) {
     if (batch.materialSelectionGeneration == materialSelectionGeneration) {
         return;
     }
@@ -61,6 +61,16 @@ void Vehicle::updateMaterialChange(Batch& batch) {
     TraceScope phase("texture", "updateMaterialChange");
     const MaterialState& selected = selectModelMaterial(
         batch.baseMaterial, [this](const std::string& name) { return variables.get(name); });
+    const bool auxiliaryTextureChanged = batch.lightmap.name != selected.lightmapTextureName ||
+                                         batch.nightmap.name != selected.nightmapTextureName ||
+                                         batch.transmap.name != selected.transmapTextureName ||
+                                         batch.bumpmap.name != selected.bumpmapTextureName;
+    const bool environmentTextureChanged =
+        batch.environmentTextureName != selected.environmentTextureName;
+    const bool freeTextureChanged = batch.freeTextureName != selected.freeTextureName ||
+                                    batch.freeTextureVariable != selected.freeTextureVariable ||
+                                    batch.scriptTextureIndex != selected.scriptTextureIndex ||
+                                    batch.textTextureIndex != selected.textTextureIndex;
     batch.selectedMaterialItem = &selected != &batch.baseMaterial;
     const auto auxiliary = [](AuxiliaryTexture& texture, const std::string& name) {
         if (texture.name != name) {
@@ -102,6 +112,8 @@ void Vehicle::updateMaterialChange(Batch& batch) {
     batch.noZwrite = selected.noZwrite;
     batch.noZcheck = selected.noZcheck;
     batch.alphaScaleVariable = selected.alphaScaleVariable;
+    batch.textureAddressS = selected.textureAddressS;
+    batch.textureAddressT = selected.textureAddressT;
     batch.textureWrapS = textureAddressModeToGl(selected.textureAddressS);
     batch.textureWrapT = textureAddressModeToGl(selected.textureAddressT);
 
@@ -116,9 +128,13 @@ void Vehicle::updateMaterialChange(Batch& batch) {
         textureName == batch.textureName &&
         (texturePath == batch.texturePath || batch.textureLoadAttempted);
     if (sameRequestedTexture && layer == batch.textureLayer) {
+        if (auxiliaryTextureChanged || environmentTextureChanged || freeTextureChanged) {
+            invalidateDiligentAsset();
+        }
         batch.materialSelectionGeneration = materialSelectionGeneration;
         return;
     }
+    invalidateDiligentAsset();
     batch.textureName = textureName;
     batch.textureCacheEntry.reset();
     batch.textureRequest.reset();
@@ -134,7 +150,7 @@ void Vehicle::updateMaterialChange(Batch& batch) {
         for (Vertex& vertex : batch.vertices) {
             vertex.layer = static_cast<float>(layer);
         }
-        if (!batch.vertices.empty()) {
+        if (updateGlBuffer && !batch.vertices.empty()) {
             pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
             pglBufferData(GL_ARRAY_BUFFER,
                           static_cast<std::ptrdiff_t>(batch.vertices.size() * sizeof(Vertex)),

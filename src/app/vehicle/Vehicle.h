@@ -15,6 +15,7 @@
 #include "audio/SoundEngine.h"
 #include "audio/VehicleSoundBank.h"
 #include "config/BusConfigLoader.h"
+#include "config/TextureAddressMode.h"
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/PerfTrace.h"
@@ -33,6 +34,7 @@
 #include "render/GlCompat.h"
 #include "render/InteriorLighting.h"
 #include "render/MatrixMath.h"
+#include "render/ModelVertex.h"
 #include "render/OpenGLFunctions.h"
 #include "render/RenderPrimitives.h"
 #include "render/RendererReflection.h"
@@ -78,6 +80,7 @@ enum class VehicleRenderPass {
     All,
     Opaque,
     Transparent,
+    Shadow,
 };
 
 // Names used unqualified throughout the vehicle and render-loop implementation.
@@ -111,6 +114,10 @@ using ParsedObj = openbus::rendering::ParsedObj;
 using Image = openbus::rendering::Image;
 using CompressedDds = openbus::rendering::CompressedDds;
 
+namespace openbus::app::vehicle {
+struct DiligentVehicleBatchSourceSet;
+}
+
 using openbus::rendering::buildViewFrustum;
 using openbus::rendering::identityMatrix;
 using openbus::rendering::invertAffineMatrix;
@@ -126,6 +133,13 @@ using openbus::rendering::ViewFrustum;
 
 struct Vehicle {
     std::uint64_t motionObjectId = openbus::rendering::allocateMotionObjectId();
+    std::uint64_t diligentAssetGeneration = 1;
+
+    void invalidateDiligentAsset() noexcept {
+        if (++diligentAssetGeneration == 0) {
+            diligentAssetGeneration = 1;
+        }
+    }
 
     struct DrawProfileStats {
         struct TransparentSortBatch {
@@ -174,10 +188,7 @@ struct Vehicle {
         std::shared_ptr<ObjRequest> objRequest;
     };
 
-    struct Vertex {
-        float x, y, z, u, v, layer, nx, ny, nz;
-        float r = 1.0F, g = 1.0F, b = 1.0F, a = 1.0F;
-    };
+    using Vertex = openbus::rendering::ModelVertex;
 
     struct AuxiliaryTexture {
         std::string name;
@@ -288,6 +299,8 @@ struct Vehicle {
         bool textureAlphaOnly = false;
         GLenum textureWrapS = GL_REPEAT;
         GLenum textureWrapT = GL_REPEAT;
+        TextureAddressMode textureAddressS = TextureAddressMode::Repeat;
+        TextureAddressMode textureAddressT = TextureAddressMode::Repeat;
         bool hasNormals = false;
         bool textureLoadAttempted = false;
         bool textureLoadStarted = false;
@@ -414,9 +427,6 @@ struct Vehicle {
     mutable std::size_t hoveredClickablePartIndex = std::numeric_limits<std::size_t>::max();
     mutable std::size_t hoveredClickableBatchIndex = std::numeric_limits<std::size_t>::max();
     mutable std::size_t hoveredClickableTriangle = 0;
-    mutable std::vector<openbus::rendering::PrimitiveVertex> clickableDebugBoxVertices;
-    mutable std::vector<openbus::rendering::PrimitiveVertex> clickableDebugWireVertices;
-    mutable std::vector<openbus::rendering::PrimitiveVertex> clickableDebugTriangleVertices;
     std::unordered_set<int> visibleReflectionTextureIndices;
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
@@ -506,6 +516,7 @@ struct Vehicle {
     bool sharedDisplayListsCached = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
+    bool openGLGeometryEnabled = true;
     int activeLod = -1;
     double animationTimeStep = 0.0;
     std::uint64_t animationGeneration = 1;
@@ -518,7 +529,7 @@ struct Vehicle {
 
     std::string resolveCtcTextureName(const std::string& textureName) const;
 
-    void updateMaterialChange(Batch& batch);
+    void updateMaterialChange(Batch& batch, bool updateGlBuffer = true);
 
     float alphaScale(const Batch& batch) const;
 
@@ -555,6 +566,11 @@ struct Vehicle {
     void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight,
                                 double minimumObjectViewportFraction,
                                 std::optional<ViewFrustum>* sharedFrustum = nullptr);
+    void prepareReflectionVisibility(RenderViewContext context, int viewportWidth,
+                                     int viewportHeight, double minimumObjectViewportFraction,
+                                     const openbus::rendering::Matrix4& modelView,
+                                     const openbus::rendering::Matrix4& projection,
+                                     std::optional<ViewFrustum>* sharedFrustum = nullptr);
 
     bool needsReflectionTexture(std::size_t reflectionIndex) const;
 
@@ -586,10 +602,7 @@ struct Vehicle {
 
     std::string clickableDebugDescription(const DisplayPart& part, std::size_t partIndex,
                                           RenderViewContext context) const;
-
     void logClickableDebugInfo(RenderViewContext context) const;
-
-    void drawClickableDebug(RenderViewContext context) const;
 
     std::string mouseEventAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                              RenderViewContext context) const;
@@ -611,11 +624,13 @@ struct Vehicle {
                      bool deferTrafficInitialization = false,
                      VehicleSetupOptions selectedSetupOptions = {},
                      bool passengerServiceRequired = false, double configuredTextureScale = 1.0,
-                     bool configuredFrustumCulling = true)
+                     bool configuredFrustumCulling = true,
+                     bool configuredOpenGLGeometryEnabled = true)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey + "|" + selectedSetupOptions.appearanceKey),
           sharedDefinition(definition), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ), setupOptions(std::move(selectedSetupOptions)),
+          openGLGeometryEnabled(configuredOpenGLGeometryEnabled),
           wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
         TraceScope constructionTrace("startup", "Vehicle::Vehicle.initialize");
         textureScale = configuredTextureScale;
@@ -861,6 +876,9 @@ struct Vehicle {
     bool areObjectsLoaded() const;
 
     bool areTexturesLoaded() const;
+
+    bool prepareDiligentTextureRequests();
+    bool prepareDiligentBatchSources(openbus::app::vehicle::DiligentVehicleBatchSourceSet& sources);
 
     bool isCaptureReady() const;
 

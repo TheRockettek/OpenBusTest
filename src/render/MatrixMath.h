@@ -7,6 +7,8 @@
 
 #include <array>
 
+struct ModelAnimation;
+
 namespace openbus::rendering {
 
 [[nodiscard]] Matrix4 identityMatrix();
@@ -46,5 +48,21 @@ struct ViewFrustum {
 
 [[nodiscard]] Matrix4 makeMeshTransform(const std::array<double, 9>& meshRotation,
                                         const std::array<double, 3>& origin);
+
+[[nodiscard]] Matrix4 modelAnimationOriginMatrix(const ModelAnimation& animation);
+
+[[nodiscard]] Matrix4 modelAnimationTransform(const ModelAnimation& animation, double amount);
+
+class ModelAnimationTransformBuilder final {
+  public:
+    ModelAnimationTransformBuilder();
+
+    void append(const ModelAnimation& animation, double amount);
+
+    [[nodiscard]] const Matrix4& matrix() const noexcept;
+
+  private:
+    Matrix4 matrix_;
+};
 
 } // namespace openbus::rendering

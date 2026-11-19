@@ -1,6 +1,5 @@
 #include "app/RenderLoopInternal.h"
 #include "app/CustomWeatherUi.h"
-#include "app/ImGuiLayer.h"
 #include "app/ScopedSwapInterval.h"
 #include "app/SteamPresence.h"
 #include "app/traffic/PlayerTimetableDiagnostics.h"
@@ -11,6 +10,11 @@
 #include "map/MapAssetValidation.h"
 #include "physics/BusConfiguration.h"
 #include "render/AssetRequestManager.h"
+
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+#include "app/DiligentFrameRenderer.h"
+#include "app/DiligentGraphicsPreferences.h"
+#endif
 
 #include <imgui.h>
 
@@ -125,7 +129,7 @@ std::string environmentValue(const char* name) {
 
 bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                 StartupSelection& selection) {
-    const openbus::app::ScopedSwapInterval menuVsync(glfwSwapInterval, 1, vsyncEnabled_);
+    const openbus::app::ScopedSwapInterval menuVsync(*framePresenter_, true, vsyncEnabled_);
     imguiEnabled_ = true;
     mainMenuGraphicsOpen_ = false;
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -232,9 +236,8 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         }
         const auto [framebufferWidth, framebufferHeight] = framebufferSize();
         const auto [windowWidth, windowHeight] = windowSize();
-        glViewport(0, 0, framebufferWidth, framebufferHeight);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        imguiLayer_->beginFrame();
+        clearUiOnlyFrame(framebufferWidth, framebufferHeight);
+        beginUiFrame();
 
         if (waitingForInitialMapWindow) {
             try {
@@ -254,8 +257,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
                     ImGui::TextUnformatted("Initial map tiles are ready.");
                     ImGui::End();
-                    imguiLayer_->render();
-                    glfwSwapBuffers(window_);
+                    presentUiOnlyFrame();
                     return true;
                 }
             } catch (const std::exception& error) {
@@ -280,8 +282,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                     "Preparing map index, shared textures, and spawn-area assets...");
                 ImGui::TextUnformatted("The setup menu will close when the spawn area is ready.");
                 ImGui::End();
-                imguiLayer_->render();
-                glfwSwapBuffers(window_);
+                presentUiOnlyFrame();
                 continue;
             }
         }
@@ -552,8 +553,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             ImGui::End();
         }
         drawPauseMenuUi();
-        imguiLayer_->render();
-        glfwSwapBuffers(window_);
+        presentUiOnlyFrame();
     }
     mainMenuGraphicsOpen_ = false;
     return false;
@@ -715,9 +715,8 @@ void RenderLoop::showStartupStatus(const std::string& status) {
     glfwPollEvents();
     const auto [framebufferWidth, framebufferHeight] = framebufferSize();
     const auto [windowWidth, windowHeight] = windowSize();
-    glViewport(0, 0, framebufferWidth, framebufferHeight);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    imguiLayer_->beginFrame();
+    clearUiOnlyFrame(framebufferWidth, framebufferHeight);
+    beginUiFrame();
     ImGui::SetNextWindowSize(ImVec2(520.0F, 145.0F), ImGuiCond_Always);
     ImGui::SetNextWindowPos(
         ImVec2(static_cast<float>(windowWidth) * 0.5F, static_cast<float>(windowHeight) * 0.5F),
@@ -729,8 +728,7 @@ void RenderLoop::showStartupStatus(const std::string& status) {
     ImGui::TextWrapped("%s", status.c_str());
     ImGui::TextUnformatted("Please wait...");
     ImGui::End();
-    imguiLayer_->render();
-    glfwSwapBuffers(window_);
+    presentUiOnlyFrame();
 }
 
 void RenderLoop::loadMapVehicleOptions() {
@@ -1895,11 +1893,10 @@ void RenderLoop::drawPauseMenuUi() {
 
             ImGui::Separator();
             ImGui::TextUnformatted("Anti-aliasing");
-            const char* antiAliasingLabel =
-                preferences.antiAliasingMode == "fxaa"  ? "FXAA"
-                : preferences.antiAliasingMode == "msaa" ? "MSAA 4x"
-                : preferences.antiAliasingMode == "smaa" ? "SMAA"
-                                                          : "Off";
+            const char* antiAliasingLabel = preferences.antiAliasingMode == "fxaa"   ? "FXAA"
+                                            : preferences.antiAliasingMode == "msaa" ? "MSAA 4x"
+                                            : preferences.antiAliasingMode == "smaa" ? "SMAA"
+                                                                                     : "Off";
             if (ImGui::BeginCombo("Anti-aliasing mode", antiAliasingLabel)) {
                 if (ImGui::Selectable("Off", preferences.antiAliasingMode == "off")) {
                     preferences.antiAliasingMode = "off";
@@ -1916,11 +1913,11 @@ void RenderLoop::drawPauseMenuUi() {
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("Live on save");
+            ImGui::TextDisabled("Filters live on save; MSAA sample count needs restart");
             ImGui::TextWrapped("MSAA resolves color by coverage while motion, validity, and depth "
-                               "come from the nearest covered sample. If 4x is unavailable, the "
-                               "renderer tries 2x, then falls back to FXAA. FXAA is the lighter "
-                               "choice for slower scenes.");
+                               "come from the nearest covered sample. Diligent selects its sample "
+                               "count at startup; unsupported requests fall back to FXAA. FXAA is "
+                               "the lighter choice for slower scenes.");
 
             ImGui::Separator();
             ImGui::TextUnformatted("World render scale");
@@ -2071,8 +2068,9 @@ void RenderLoop::drawPauseMenuUi() {
             ImGui::SameLine();
             ImGui::TextDisabled("Restart required");
             if (!textureAnisotropySupported_) {
-                ImGui::TextWrapped("Anisotropic filtering is not supported by this OpenGL "
-                                   "device; the requested setting will be ignored.");
+                ImGui::TextWrapped(
+                    "Anisotropic filtering is not supported by this Diligent device; the "
+                    "requested setting will be ignored.");
             } else {
                 ImGui::Text("Device maximum: %.0fx; active: %.0fx", maximumTextureAnisotropy_,
                             appliedTextureAnisotropy_);
@@ -2123,13 +2121,23 @@ void RenderLoop::drawPauseMenuUi() {
                     graphicsPreferences_.lines = std::move(diskPreferences.lines);
                     if (openbus::getEnvironment("OPENBUS_VSYNC") == nullptr) {
                         vsyncEnabled_ = preferences.vsync;
-                        glfwSwapInterval(vsyncEnabled_ ? 1 : 0);
+                        framePresenter_->setVerticalSync(vsyncEnabled_);
                     }
                     if (openbus::getEnvironment("OPENBUS_FPS_CAP") == nullptr) {
                         frameTiming_.setFrameRateCap(preferences.fpsCap);
                     }
-                    openbus::rendering::setAntiAliasingMode(
-                        preferences.antiAliasingMode);
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+                    if (auto* diligentRenderer =
+                            dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(
+                                framePresenter_.get())) {
+                        const auto options = openbus::app::makeDiligentGraphicsOptions(preferences);
+                        diligentRenderer->setDefaultColorFilter(options.colorFilter,
+                                                                options.multisampling.samples > 1);
+                    } else
+#endif
+                    {
+                        openbus::rendering::setAntiAliasingMode(preferences.antiAliasingMode);
+                    }
                     if (openbus::getEnvironment("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT") ==
                         nullptr) {
                         mainViewMinimumObjectViewportFraction_ =
@@ -2546,6 +2554,37 @@ void RenderLoop::drawDebugMenuUi() {
             static_cast<double>(debugCalendarHour_ * 3600 + debugCalendarMinute_ * 60)};
     }
     ImGui::EndDisabled();
+    ImGui::TextWrapped("Changing the date updates the simulation clock and traffic population, "
+                       "but does not reload Chrono tile or timetable overlays. Reload the map "
+                       "to apply a different Chrono scenario.");
+
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    if (framePresenter_ != nullptr) {
+        static constexpr const char* debugViews[] = {
+            "Scene color", "Motion vectors", "Motion magnitude", "Motion validity", "Linear depth"};
+        int selectedView = static_cast<int>(diligentDebugView_);
+        if (ImGui::Combo("Temporal debug view", &selectedView, debugViews,
+                         static_cast<int>(std::size(debugViews)))) {
+            diligentDebugView_ = static_cast<openbus::rendering::DiligentDebugView>(selectedView);
+            try {
+                auto diskPreferences =
+                    openbus::core::loadGraphicsPreferences(graphicsPreferencesPath_);
+                diskPreferences.values.temporalDebugView =
+                    std::string(openbus::app::preferenceForDiligentDebugView(diligentDebugView_));
+                openbus::core::saveGraphicsPreferences(graphicsPreferencesPath_, diskPreferences);
+                graphicsPreferences_.values.temporalDebugView =
+                    diskPreferences.values.temporalDebugView;
+                graphicsPreferencesBaseline_.temporalDebugView =
+                    diskPreferences.values.temporalDebugView;
+                graphicsPreferences_.lines = std::move(diskPreferences.lines);
+                graphicsPreferencesError_.clear();
+            } catch (const std::exception& error) {
+                graphicsPreferencesError_ = error.what();
+                gameLog.Error("Could not save graphics preferences: " + graphicsPreferencesError_);
+            }
+        }
+    }
+#endif
 
     if (playerTimetable_.state &&
         playerTimetable_.state->selection.courseIndex < passengerTimetableCourses_.size()) {

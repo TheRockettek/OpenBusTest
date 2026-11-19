@@ -5,6 +5,7 @@
 #include "map/MapSplineProfile.h"
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -52,6 +53,9 @@ class MapRoadConnectionIndex {
     void addSpline(const MapSplinePlacement& spline, int tileX, int tileY,
                    std::optional<double> cantHalfWidth = std::nullopt);
     void finalize();
+    [[nodiscard]] std::uint64_t sourceSignature() const noexcept {
+        return sourceSignature_;
+    }
     // Frames are expressed in the requested tile's unscaled metric frame, with its grid
     // origin retained, ready for buildMapRoadSectionGeometry's final projection.
     MapRoadSplineJoins joinsFor(const MapSplinePlacement& spline, int tileX, int tileY) const;
@@ -67,6 +71,7 @@ class MapRoadConnectionIndex {
     std::unordered_map<int, Placement> placements_;
     std::unordered_set<int> ambiguousIds_;
     std::unordered_map<int, MapRoadSplineJoins> joins_;
+    std::uint64_t sourceSignature_ = 14695981039346656037ULL;
 };
 
 // Builds one visible .sli cross-section strip in world coordinates. Rendering and collision

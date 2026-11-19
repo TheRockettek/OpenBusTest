@@ -3,12 +3,18 @@
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
 #include "app/SteamPresence.h"
+#include "render/RendererFramePresenter.h"
 
 #include <imgui.h>
+
+#include <cstdint>
 
 void RenderLoop::scrollCallback(GLFWwindow* window, double, double yOffset) {
     auto* renderer = static_cast<RenderLoop*>(glfwGetWindowUserPointer(window));
     if (renderer == nullptr) {
+        return;
+    }
+    if (renderer->gameMouseInputCaptured_) {
         return;
     }
     if (renderer->freeCameraEnabled_) {
@@ -148,11 +154,50 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         glfwPollEvents();
     }
     if (imguiEnabled_) {
-        imguiLayer_->beginFrame(playerVehicle_ == nullptr);
+        const bool menuOwnsMouseCursor = playerVehicle_ == nullptr || paused_ || pauseMenuOpen_ ||
+                                         mainMenuGraphicsOpen_ || displayPreviewPending_ ||
+                                         debugMenuOpen_ || openPlayerTimetablePopup_;
+        beginUiFrame(menuOwnsMouseCursor);
     }
+    const bool uiWantsKeyboard = imguiEnabled_ && ImGui::GetIO().WantCaptureKeyboard;
+    const bool uiWantsText = imguiEnabled_ && ImGui::GetIO().WantTextInput;
     const bool keyboardAvailable =
-        !imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard || pauseMenuOpen_ || debugMenuOpen_;
-    const bool typingText = imguiEnabled_ && ImGui::GetIO().WantTextInput;
+        !imguiEnabled_ || !uiWantsKeyboard || pauseMenuOpen_ || debugMenuOpen_;
+    const bool gameKeyboardAvailable = !imguiEnabled_ || (!uiWantsKeyboard && !uiWantsText);
+    const bool gameKeyboardCaptured = !gameKeyboardAvailable;
+    gameMouseInputCaptured_ = imguiEnabled_ && ImGui::GetIO().WantCaptureMouse;
+    if (gameKeyboardCaptured && !gameKeyboardInputCaptured_ && playerVehicle_ != nullptr &&
+        playerVehicle_->scripts) {
+        const auto& bindings = vehicleKeyBindings();
+        for (std::size_t index = 0;
+             index < bindings.size() && index < dispatchedVehicleKeyStates_.size(); ++index) {
+            if (!dispatchedVehicleKeyStates_[index]) {
+                continue;
+            }
+            const VehicleKeyBinding& binding = bindings[index];
+            if (binding.action != "mouse_control_toggle" &&
+                binding.action != "debug_dump_variables" && binding.key != GLFW_KEY_F2 &&
+                binding.key != GLFW_KEY_F3 && binding.key != GLFW_KEY_F11 &&
+                binding.key != GLFW_KEY_P) {
+                playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
+            }
+            dispatchedVehicleKeyStates_[index] = false;
+        }
+    }
+    gameKeyboardInputCaptured_ = gameKeyboardCaptured;
+    if (gameMouseInputCaptured_) {
+        const auto releaseMouse = [this](const std::string& event) {
+            if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeMouseRelease(event);
+            }
+        };
+        mouseInteraction_.cancel(releaseMouse);
+        pendingMouseClick_ = false;
+        mouseInteractionPending_ = false;
+        mouseThrottle_ = 0.0;
+        mouseSteering_ = 0.0;
+        mouseBrake_ = 0.0;
+    }
     const bool pauseMenuTogglePressed = glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS;
     if (fixedTimeStep < 0.0 && keyboardAvailable && pauseMenuTogglePressed &&
         !previousPauseMenuToggleState_) {
@@ -169,7 +214,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     previousPauseMenuToggleState_ = pauseMenuTogglePressed;
 
     const bool pauseTogglePressed = glfwGetKey(window_, GLFW_KEY_P) == GLFW_PRESS;
-    if (fixedTimeStep < 0.0 && keyboardAvailable && !typingText && pauseTogglePressed &&
+    if (fixedTimeStep < 0.0 && keyboardAvailable && gameKeyboardAvailable && pauseTogglePressed &&
         !previousPauseToggleState_) {
         const bool resume = paused_;
         setPausedState(!paused_);
@@ -191,7 +236,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
     frameTimeStep_ = timegap;
-    mouseInteractionPending_ = !paused_;
+    mouseInteractionPending_ = !paused_ && !gameMouseInputCaptured_;
     int width = 1;
     int height = 1;
     double cursorX = 0.0;
@@ -199,6 +244,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.windowAndVariables");
         glfwGetFramebufferSize(window_, &width, &height);
+        framePresenter_->resize(static_cast<std::uint32_t>(std::max(width, 0)),
+                                static_cast<std::uint32_t>(std::max(height, 0)));
         framebufferWidth_ = std::max(width, 1);
         framebufferHeight_ = std::max(height, 1);
         glfwGetCursorPos(window_, &cursorX, &cursorY);
@@ -218,8 +265,10 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.keyboardInput");
         const auto& bindings = vehicleKeyBindings();
-        if (previousVehicleKeyStates_.size() != bindings.size()) {
+        if (previousVehicleKeyStates_.size() != bindings.size() ||
+            dispatchedVehicleKeyStates_.size() != bindings.size()) {
             previousVehicleKeyStates_.assign(bindings.size(), false);
+            dispatchedVehicleKeyStates_.assign(bindings.size(), false);
         }
         for (std::size_t index = 0; index < bindings.size(); ++index) {
             const VehicleKeyBinding& binding = bindings[index];
@@ -229,7 +278,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             const bool dumpVariables = binding.action == "debug_dump_variables";
             const bool freeCameraToggle = binding.key == GLFW_KEY_F3;
             const bool trafficSplineDebugToggle = binding.key == GLFW_KEY_F2;
-            if (changed && !typingText) {
+            if (changed && gameKeyboardAvailable) {
                 if (mouseControlToggle && pressed && playerVehicle_ != nullptr) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
                     if (mouseControlEnabled_) {
@@ -247,23 +296,24 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                                   (pressed ? " pressed" : " released"));
                 }
             }
-            if (!typingText && !mouseControlToggle && !dumpVariables && !freeCameraToggle &&
-                binding.key != GLFW_KEY_P && !trafficSplineDebugToggle && !paused_ &&
-                playerVehicle_ != nullptr && playerVehicle_->scripts &&
+            if (changed && gameKeyboardAvailable && !mouseControlToggle && !dumpVariables &&
+                !freeCameraToggle && binding.key != GLFW_KEY_P && !trafficSplineDebugToggle &&
+                !paused_ && playerVehicle_ != nullptr && playerVehicle_->scripts &&
                 openbus::input::shouldDispatchKeyBinding(binding.flags, pressed,
                                                          previousVehicleKeyStates_[index])) {
                 playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed, changed);
+                dispatchedVehicleKeyStates_[index] = pressed;
             }
             previousVehicleKeyStates_[index] = pressed;
         }
         const bool freeCameraTogglePressed = glfwGetKey(window_, GLFW_KEY_F3) == GLFW_PRESS;
-        if (!typingText && freeCameraTogglePressed && !previousFreeCameraToggleState_ &&
+        if (gameKeyboardAvailable && freeCameraTogglePressed && !previousFreeCameraToggleState_ &&
             playerVehicle_ != nullptr) {
             setFreeCameraEnabled(!freeCameraEnabled_);
         }
         previousFreeCameraToggleState_ = freeCameraTogglePressed;
         const bool profileTogglePressed = glfwGetKey(window_, GLFW_KEY_F10) == GLFW_PRESS;
-        if (!typingText && profileTogglePressed && !previousProfileToggleState_) {
+        if (gameKeyboardAvailable && profileTogglePressed && !previousProfileToggleState_) {
 #if OPENBUS_ENABLE_PERF_TRACE
             const bool wasRecording = openbus::rendering::IsRecording();
             const bool recording = openbus::rendering::SetRecording(!wasRecording);
@@ -294,8 +344,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                     break;
                 }
             }
-            if (!typingText && !freeCameraEnabled_ && keyDown && !previousViewKeyStates_[index] &&
-                !vehicleBindingPressedForKey) {
+            if (gameKeyboardAvailable && !freeCameraEnabled_ && keyDown &&
+                !previousViewKeyStates_[index] && !vehicleBindingPressedForKey) {
                 if (index == 0 || index <= vehicleCameras_.size()) {
                     cameraView_ = static_cast<int>(index);
                     viewLookYaw_ = 0.0;
@@ -309,7 +359,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.cameraNavigation");
         const bool mouseLookTogglePressed = glfwGetKey(window_, GLFW_KEY_F4) == GLFW_PRESS;
-        if (!typingText && mouseLookTogglePressed && !previousMouseLookToggleState_) {
+        if (gameKeyboardAvailable && mouseLookTogglePressed && !previousMouseLookToggleState_) {
             mouseLookEnabled_ = !mouseLookEnabled_;
             draggingCamera_ = false;
             previousCursorX_ = cursorX;
@@ -339,7 +389,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         if (!mouseLookEnabled_) {
             for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
                 const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
-                if (!typingText && !freeCameraEnabled_ && pressed &&
+                if (gameKeyboardAvailable && !freeCameraEnabled_ && pressed &&
                     !previousCameraNavigationStates_[index]) {
                     selectVehicleCamera(index == 0 ? -1 : 1);
                 }
@@ -349,7 +399,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.freeCameraMovement");
-        if (!typingText && freeCameraEnabled_ && playerVehicle_ != nullptr) {
+        if (gameKeyboardAvailable && freeCameraEnabled_ && playerVehicle_ != nullptr) {
             const double forward =
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS) -
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS);
@@ -366,18 +416,15 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.captureInput");
         const bool captureKeyPressed = glfwGetKey(window_, GLFW_KEY_F12) == GLFW_PRESS;
-        if (!typingText && captureKeyPressed && !previousCaptureKeyState_) {
+        if (gameKeyboardAvailable && captureKeyPressed && !previousCaptureKeyState_) {
             captureRequested_ = true;
         }
         previousCaptureKeyState_ = captureKeyPressed;
     }
     {
         const bool clickableDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS;
-        if (!typingText && clickableDebugKeyPressed && !previousClickableDebugKeyState_) {
-            clickableDebugOverlay_ = !clickableDebugOverlay_;
-            gameLog.Log(std::string("Clickable component overlay ") +
-                        (clickableDebugOverlay_ ? "enabled" : "disabled"));
-            if (clickableDebugOverlay_ && playerVehicle_ != nullptr) {
+        if (gameKeyboardAvailable && clickableDebugKeyPressed && !previousClickableDebugKeyState_) {
+            if (playerVehicle_ != nullptr) {
                 const RenderViewContext context = isExteriorView()
                                                       ? RenderViewContext::PlayerExterior
                                                       : RenderViewContext::PlayerInterior;
@@ -388,7 +435,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool collisionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_C) == GLFW_PRESS;
-        if (!typingText && collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
+        if (gameKeyboardAvailable && collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
             collisionDebugOverlay_ = !collisionDebugOverlay_;
             gameLog.Log(std::string("Collision wireframe overlay ") +
                         (collisionDebugOverlay_
@@ -400,7 +447,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool tileBoundaryDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F11) == GLFW_PRESS;
-        if (!typingText && tileBoundaryDebugKeyPressed && !previousTileBoundaryDebugKeyState_) {
+        if (gameKeyboardAvailable && tileBoundaryDebugKeyPressed &&
+            !previousTileBoundaryDebugKeyState_) {
             tileBoundaryDebugOverlay_ = !tileBoundaryDebugOverlay_;
             gameLog.Log(
                 std::string("Active map tile boundary overlay ") +
@@ -410,7 +458,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool trafficSplineDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F2) == GLFW_PRESS;
-        if (!typingText && trafficSplineDebugKeyPressed && !previousTrafficSplineDebugKeyState_) {
+        if (gameKeyboardAvailable && trafficSplineDebugKeyPressed &&
+            !previousTrafficSplineDebugKeyState_) {
             trafficSplineDebugOverlay_ = !trafficSplineDebugOverlay_;
             gameLog.Log(
                 std::string("AI and human traffic spline overlay ") +
@@ -435,14 +484,14 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         const bool raisePlayerKeyPressed = glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS;
-        if (!typingText && raisePlayerKeyPressed && !previousRaisePlayerKeyState_) {
+        if (gameKeyboardAvailable && raisePlayerKeyPressed && !previousRaisePlayerKeyState_) {
             raisePlayerRequestPending_ = true;
         }
         previousRaisePlayerKeyState_ = raisePlayerKeyPressed;
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.mouseControl");
-        if (mouseControlEnabled_) {
+        if (mouseControlEnabled_ && !gameMouseInputCaptured_) {
             int windowWidth = 1;
             int windowHeight = 1;
             glfwGetWindowSize(window_, &windowWidth, &windowHeight);
@@ -456,7 +505,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.mouseInput");
-        if (mouseLookEnabled_) {
+        if (mouseLookEnabled_ && !gameMouseInputCaptured_) {
             const double cursorDeltaX = cursorX - previousCursorX_;
             const double cursorDeltaY = cursorY - previousCursorY_;
             if (freeCameraEnabled_) {
@@ -471,7 +520,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                 viewLookPitch_ = std::clamp(viewLookPitch_ - cursorDeltaY * 0.005, -1.35, 1.35);
             }
         }
-        const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        const bool rightMouse = !gameMouseInputCaptured_ &&
+                                glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         if (rightMouse && !draggingFov_) {
             previousFovCursorY_ = cursorY;
         } else if (rightMouse) {
@@ -489,6 +539,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         draggingFov_ = rightMouse;
         previousFovCursorY_ = cursorY;
         const bool middleMouse =
+            !gameMouseInputCaptured_ &&
             glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
         if (!mouseLookEnabled_ && middleMouse && !draggingCamera_) {
             previousCursorX_ = cursorX;
@@ -513,7 +564,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         draggingCamera_ = middleMouse;
         previousCursorX_ = cursorX;
         previousCursorY_ = cursorY;
-        const bool leftMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        const bool leftMouse = !gameMouseInputCaptured_ &&
+                               glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         leftMousePressed_ = leftMouse;
         if (!mouseControlEnabled_ && leftMouse && !previousLeftMouseState_ && !rightMouse &&
             !middleMouse) {
@@ -522,13 +574,6 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             pendingMouseClickY_ = cursorY;
         }
         previousLeftMouseState_ = leftMouse;
-    }
-    {
-        TraceScope phase("render", "RenderLoop::beginFrame.setupView");
-        viewport_ = {0, 0, width, height};
-        glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
-        setPerspective(static_cast<double>(width), static_cast<double>(height),
-                       currentFieldOfView());
     }
 }
 
@@ -546,8 +591,8 @@ void RenderLoop::setPausedState(bool paused) {
         if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
             const auto& bindings = vehicleKeyBindings();
             for (std::size_t index = 0;
-                 index < bindings.size() && index < previousVehicleKeyStates_.size(); ++index) {
-                if (!previousVehicleKeyStates_[index]) {
+                 index < bindings.size() && index < dispatchedVehicleKeyStates_.size(); ++index) {
+                if (!dispatchedVehicleKeyStates_[index]) {
                     continue;
                 }
                 const VehicleKeyBinding& binding = bindings[index];
@@ -557,6 +602,7 @@ void RenderLoop::setPausedState(bool paused) {
                     binding.key != GLFW_KEY_P) {
                     playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
                 }
+                dispatchedVehicleKeyStates_[index] = false;
             }
         }
         pendingMouseClick_ = false;
@@ -578,7 +624,10 @@ double RenderLoop::throttle() const {
         return 0.0;
     }
     if (mouseControlEnabled_) {
-        return mouseThrottle_;
+        return gameMouseInputCaptured_ ? 0.0 : mouseThrottle_;
+    }
+    if (gameKeyboardInputCaptured_) {
+        return 0.0;
     }
     const VehicleKeyBinding* binding = findVehicleKeyBinding("throttle");
     return binding != nullptr && vehicleBindingPressed(window_, *binding) ? 1.0 : 0.0;
@@ -589,7 +638,10 @@ double RenderLoop::steering() const {
         return 0.0;
     }
     if (mouseControlEnabled_) {
-        return mouseSteering_;
+        return gameMouseInputCaptured_ ? 0.0 : mouseSteering_;
+    }
+    if (gameKeyboardInputCaptured_) {
+        return 0.0;
     }
     const VehicleKeyBinding* leftBinding = findVehicleKeyBinding("steering_left");
     const VehicleKeyBinding* rightBinding = findVehicleKeyBinding("steering_right");
@@ -603,7 +655,10 @@ double RenderLoop::brake() const {
         return 0.0;
     }
     if (mouseControlEnabled_) {
-        return mouseBrake_;
+        return gameMouseInputCaptured_ ? 0.0 : mouseBrake_;
+    }
+    if (gameKeyboardInputCaptured_) {
+        return 0.0;
     }
     const VehicleKeyBinding* binding = findVehicleKeyBinding("brake");
     return binding != nullptr && vehicleBindingPressed(window_, *binding) ? 1.0 : 0.0;

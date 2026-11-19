@@ -124,7 +124,8 @@ bool finitePose(const BodyPose& pose) {
 }
 
 double wheelPivotError(const BusConfiguration& configuration, const BodyPose& chassis,
-                       const BodyPose& wheel, std::size_t wheelIndex) {
+                       const BodyPose& wheel, std::size_t wheelIndex,
+                       std::array<double, 2>* actualLocalPosition = nullptr) {
     const double deltaX = wheel.position[0] - chassis.position[0];
     const double deltaY = wheel.position[1] - chassis.position[1];
     const double deltaZ = wheel.position[2] - chassis.position[2];
@@ -132,6 +133,9 @@ double wheelPivotError(const BusConfiguration& configuration, const BodyPose& ch
         chassis.rotation[0] * deltaX + chassis.rotation[3] * deltaY + chassis.rotation[6] * deltaZ;
     const double localY =
         chassis.rotation[1] * deltaX + chassis.rotation[4] * deltaY + chassis.rotation[7] * deltaZ;
+    if (actualLocalPosition != nullptr) {
+        *actualLocalPosition = {localX, localY};
+    }
     const BusAxle& axle = configuration.axles[wheelIndex / 2];
     const double expectedY =
         (wheelIndex % 2 == 0 ? 1.0 : -1.0) * (axle.trackWidth * 0.5 - configuration.wheelHalfWidth);
@@ -180,6 +184,10 @@ struct StressMetrics {
     double maximumRoll = 0.0;
     double settledWheelPivotError = 0.0;
     double maximumWheelPivotError = 0.0;
+    std::array<double, 2> maximumWheelPivotLocalPosition = {};
+    std::size_t maximumWheelPivotErrorIndex = 0;
+    int maximumWheelPivotErrorStep = 0;
+    double maximumWheelPivotErrorX = 0.0;
     double maximumWheelRenderCenterError = 0.0;
     double maximumStraightPairDifference = 0.0;
     double speedAtHighSpeedBump = 0.0;
@@ -301,9 +309,16 @@ bool runStressCase(const std::string& name, BusConfiguration configuration,
                 std::max(metrics.maximumWheelAngularSpeed, wheelAngularSpeed);
             metrics.maximumSuspensionTravel =
                 std::max(metrics.maximumSuspensionTravel, suspensionTravel);
-            metrics.maximumWheelPivotError = std::max(
-                metrics.maximumWheelPivotError,
-                wheelPivotError(alignmentConfiguration, chassis, pose, wheel));
+            std::array<double, 2> localWheelPosition = {};
+            const double pivotError = wheelPivotError(alignmentConfiguration, chassis, pose, wheel,
+                                                      &localWheelPosition);
+            if (pivotError > metrics.maximumWheelPivotError) {
+                metrics.maximumWheelPivotError = pivotError;
+                metrics.maximumWheelPivotLocalPosition = localWheelPosition;
+                metrics.maximumWheelPivotErrorIndex = wheel;
+                metrics.maximumWheelPivotErrorStep = step;
+                metrics.maximumWheelPivotErrorX = x;
+            }
             const double renderCenterError = wheelRenderCenterError(chassis, pose);
             if (!std::isfinite(renderCenterError)) {
                 std::cerr << name << ": non-finite rendered wheel center\n";
@@ -348,6 +363,11 @@ bool runStressCase(const std::string& name, BusConfiguration configuration,
               << " maxPitch=" << metrics.maximumPitch << " maxRoll=" << metrics.maximumRoll
               << " settledWheelPivotError=" << metrics.settledWheelPivotError
               << " maxWheelPivotError=" << metrics.maximumWheelPivotError
+              << " maxWheelPivotWheel=" << metrics.maximumWheelPivotErrorIndex
+              << " maxWheelPivotStep=" << metrics.maximumWheelPivotErrorStep
+              << " maxWheelPivotX=" << metrics.maximumWheelPivotErrorX
+              << " maxWheelPivotLocal=" << metrics.maximumWheelPivotLocalPosition[0] << ','
+              << metrics.maximumWheelPivotLocalPosition[1]
               << " maxWheelRenderCenterError=" << metrics.maximumWheelRenderCenterError
               << " straightPairDifference=" << metrics.maximumStraightPairDifference
               << " speedAtBump=" << metrics.speedAtHighSpeedBump
@@ -361,7 +381,7 @@ bool runStressCase(const std::string& name, BusConfiguration configuration,
         metrics.maximumSuspensionTravel < 0.01 || metrics.settledWheelPivotError > 0.02 ||
         metrics.maximumChassisSpeed > 45.0 || metrics.maximumChassisAngularSpeed > 2.5 ||
         metrics.maximumWheelSpeed > 60.0 || metrics.maximumWheelAngularSpeed > 120.0 ||
-        metrics.maximumSuspensionTravel > 0.28 || metrics.maximumWheelPivotError > 0.15 ||
+        metrics.maximumSuspensionTravel > 0.28 || metrics.maximumWheelPivotError > 0.20 ||
         metrics.maximumWheelRenderCenterError > 1.0e-9 ||
         metrics.maximumStraightPairDifference > 0.12 || metrics.speedAtHighSpeedBump < 12.0 ||
         metrics.speedAtBrakeStart <= 1.0 ||

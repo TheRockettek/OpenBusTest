@@ -94,6 +94,7 @@ using GenQueriesProc = void(APIENTRY*)(GLsizei, GLuint*);
 using DeleteQueriesProc = void(APIENTRY*)(GLsizei, const GLuint*);
 using BeginQueryProc = void(APIENTRY*)(GLenum, GLuint);
 using EndQueryProc = void(APIENTRY*)(GLenum);
+using QueryCounterProc = void(APIENTRY*)(GLuint, GLenum);
 using GetQueryObjectuivProc = void(APIENTRY*)(GLuint, GLenum, GLuint*);
 using GetQueryObjectui64vProc = void(APIENTRY*)(GLuint, GLenum, std::uint64_t*);
 using BeginConditionalRenderProc = void(APIENTRY*)(GLuint, GLenum);
@@ -156,6 +157,7 @@ extern GenQueriesProc pglGenQueries;
 extern DeleteQueriesProc pglDeleteQueries;
 extern BeginQueryProc pglBeginQuery;
 extern EndQueryProc pglEndQuery;
+extern QueryCounterProc pglQueryCounter;
 extern GetQueryObjectuivProc pglGetQueryObjectuiv;
 extern GetQueryObjectui64vProc pglGetQueryObjectui64v;
 extern BeginConditionalRenderProc pglBeginConditionalRender;
@@ -193,3 +195,118 @@ using DrawArraysIndirectProc = void(APIENTRY*)(GLenum, const void*);
 using DrawElementsIndirectProc = void(APIENTRY*)(GLenum, GLenum, const void*);
 extern DrawArraysIndirectProc pglDrawArraysIndirect;
 extern DrawElementsIndirectProc pglDrawElementsIndirect;
+
+using BindTextureProc = decltype(&glBindTexture);
+using BlendFuncProc = decltype(&glBlendFunc);
+using ClearProc = decltype(&glClear);
+using ClearDepthProc = decltype(&glClearDepth);
+using ColorMaskProc = decltype(&glColorMask);
+using DeleteTexturesProc = decltype(&glDeleteTextures);
+using DepthFuncProc = decltype(&glDepthFunc);
+using DepthMaskProc = decltype(&glDepthMask);
+using DisableProc = decltype(&glDisable);
+using DrawArraysProc = decltype(&glDrawArrays);
+using DrawBufferProc = decltype(&glDrawBuffer);
+using DrawElementsProc = decltype(&glDrawElements);
+using EnableProc = decltype(&glEnable);
+using FinishProc = decltype(&glFinish);
+using FrontFaceProc = decltype(&glFrontFace);
+using GenTexturesProc = decltype(&glGenTextures);
+using GetBooleanvProc = decltype(&glGetBooleanv);
+using GetDoublevProc = decltype(&glGetDoublev);
+using GetErrorProc = decltype(&glGetError);
+using GetFloatvProc = decltype(&glGetFloatv);
+using GetIntegervProc = decltype(&glGetIntegerv);
+using GetStringProc = decltype(&glGetString);
+using GetTexLevelParameterivProc = decltype(&glGetTexLevelParameteriv);
+using GetTexParameterivProc = decltype(&glGetTexParameteriv);
+using IsEnabledProc = decltype(&glIsEnabled);
+using IsTextureProc = decltype(&glIsTexture);
+using LineWidthProc = decltype(&glLineWidth);
+using PixelStoreiProc = decltype(&glPixelStorei);
+using PointSizeProc = decltype(&glPointSize);
+using PolygonOffsetProc = decltype(&glPolygonOffset);
+using ReadBufferProc = decltype(&glReadBuffer);
+using ScissorProc = decltype(&glScissor);
+using TexImage2DProc = decltype(&glTexImage2D);
+using TexParameterfProc = decltype(&glTexParameterf);
+using TexParameteriProc = decltype(&glTexParameteri);
+using TexSubImage2DProc = decltype(&glTexSubImage2D);
+using ViewportProc = decltype(&glViewport);
+
+// Route legacy OpenGL 1.1 calls through GLFW-loaded pointers.
+extern BindTextureProc pglBindTexture;
+extern BlendFuncProc pglBlendFunc;
+extern ClearProc pglClear;
+extern ClearDepthProc pglClearDepth;
+extern ColorMaskProc pglColorMask;
+extern DeleteTexturesProc pglDeleteTextures;
+extern DepthFuncProc pglDepthFunc;
+extern DepthMaskProc pglDepthMask;
+extern DisableProc pglDisable;
+extern DrawArraysProc pglDrawArrays;
+extern DrawBufferProc pglDrawBuffer;
+extern DrawElementsProc pglDrawElements;
+extern EnableProc pglEnable;
+extern FinishProc pglFinish;
+extern FrontFaceProc pglFrontFace;
+extern GenTexturesProc pglGenTextures;
+extern GetBooleanvProc pglGetBooleanv;
+extern GetDoublevProc pglGetDoublev;
+extern GetErrorProc pglGetError;
+extern GetFloatvProc pglGetFloatv;
+extern GetIntegervProc pglGetIntegerv;
+extern GetStringProc pglGetString;
+extern GetTexLevelParameterivProc pglGetTexLevelParameteriv;
+extern GetTexParameterivProc pglGetTexParameteriv;
+extern IsEnabledProc pglIsEnabled;
+extern IsTextureProc pglIsTexture;
+extern LineWidthProc pglLineWidth;
+extern PixelStoreiProc pglPixelStorei;
+extern PointSizeProc pglPointSize;
+extern PolygonOffsetProc pglPolygonOffset;
+extern ReadBufferProc pglReadBuffer;
+extern ScissorProc pglScissor;
+extern TexImage2DProc pglTexImage2D;
+extern TexParameterfProc pglTexParameterf;
+extern TexParameteriProc pglTexParameteri;
+extern TexSubImage2DProc pglTexSubImage2D;
+extern ViewportProc pglViewport;
+
+#define glBindTexture pglBindTexture
+#define glBlendFunc pglBlendFunc
+#define glClear pglClear
+#define glClearDepth pglClearDepth
+#define glColorMask pglColorMask
+#define glDeleteTextures pglDeleteTextures
+#define glDepthFunc pglDepthFunc
+#define glDepthMask pglDepthMask
+#define glDisable pglDisable
+#define glDrawArrays pglDrawArrays
+#define glDrawBuffer pglDrawBuffer
+#define glDrawElements pglDrawElements
+#define glEnable pglEnable
+#define glFinish pglFinish
+#define glFrontFace pglFrontFace
+#define glGenTextures pglGenTextures
+#define glGetBooleanv pglGetBooleanv
+#define glGetDoublev pglGetDoublev
+#define glGetError pglGetError
+#define glGetFloatv pglGetFloatv
+#define glGetIntegerv pglGetIntegerv
+#define glGetString pglGetString
+#define glGetTexLevelParameteriv pglGetTexLevelParameteriv
+#define glGetTexParameteriv pglGetTexParameteriv
+#define glIsEnabled pglIsEnabled
+#define glIsTexture pglIsTexture
+#define glLineWidth pglLineWidth
+#define glPixelStorei pglPixelStorei
+#define glPointSize pglPointSize
+#define glPolygonOffset pglPolygonOffset
+#define glReadBuffer pglReadBuffer
+#define glScissor pglScissor
+#define glTexImage2D pglTexImage2D
+#define glTexParameterf pglTexParameterf
+#define glTexParameteri pglTexParameteri
+#define glTexSubImage2D pglTexSubImage2D
+#define glViewport pglViewport

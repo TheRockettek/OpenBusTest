@@ -15,9 +15,13 @@ struct FreeCameraPose {
 };
 
 void setPerspective(double width, double height, double fieldOfView);
+[[nodiscard]] Matrix4 makePerspectiveMatrix(double width, double height, double fieldOfView);
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ);
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
             double upX, double upY, double upZ);
+[[nodiscard]] Matrix4 makeLookDirectionMatrix(const std::array<double, 3>& eye,
+                                              const std::array<double, 3>& direction,
+                                              const std::array<double, 3>& up);
 void applyPose(const BodyPose& pose);
 VehiclePlacement makeYawPlacementFromPose(const BodyPose& pose);
 // Converts a ground-referenced static placement to the model root height

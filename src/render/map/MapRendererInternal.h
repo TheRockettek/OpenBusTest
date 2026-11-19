@@ -15,6 +15,7 @@
 #include "core/PerfTrace.h"
 #include "core/Variables.h"
 #include "map/MapRoadGeometry.h"
+#include "map/MapRoadRenderGeometry.h"
 #include "map/MapSceneryPlacement.h"
 #include "map/MapSplineGeometry.h"
 #include "map/MapSplineProfile.h"
@@ -23,9 +24,11 @@
 #include "map/MapWaterGeometry.h"
 #include "render/ComputeCulling.h"
 #include "render/CoreRenderer.h"
+#include "render/HumanMeshGeometry.h"
 #include "render/HumanSkinning.h"
 #include "render/GlCompat.h"
 #include "render/MatrixMath.h"
+#include "render/ModelVertex.h"
 #include "render/OpenGLFunctions.h"
 #include "render/RenderPrimitives.h"
 #include "map/SceneryMaterialBinding.h"
@@ -85,59 +88,7 @@ void recordSkipped(SkipSummaries& summaries, const std::string& reason, const st
 
 void logSkipped(const SkipSummaries& summaries);
 
-struct ModelVertex {
-    float x;
-    float y;
-    float z;
-    float u;
-    float v;
-    float layer;
-    float nx;
-    float ny;
-    float nz;
-    float r = 1.0F;
-    float g = 1.0F;
-    float b = 1.0F;
-    float a = 1.0F;
-};
-
-static_assert(sizeof(ModelVertex) == 13 * sizeof(float));
-
-struct TerrainVertex {
-    float x;
-    float y;
-    float z;
-    float u;
-    float v;
-    float layer;
-    float nx;
-    float ny;
-    float nz;
-    float r = 1.0F;
-    float g = 1.0F;
-    float b = 1.0F;
-    float a = 1.0F;
-};
-
-static_assert(sizeof(TerrainVertex) == 13 * sizeof(float));
-
-struct RoadMeshGeometry {
-    std::vector<ModelVertex> vertices;
-    std::vector<std::uint32_t> indices;
-    std::filesystem::path texturePath;
-    double minX = std::numeric_limits<double>::infinity();
-    double minY = std::numeric_limits<double>::infinity();
-    double maxX = -std::numeric_limits<double>::infinity();
-    double maxY = -std::numeric_limits<double>::infinity();
-    double minZ = std::numeric_limits<double>::infinity();
-    double maxZ = -std::numeric_limits<double>::infinity();
-    int tileX = 0;
-    int tileY = 0;
-    int alphaMode = 0;
-    bool textured = false;
-    bool supportsMoisture = false;
-    bool weatherClassified = false;
-};
+using RoadMeshGeometry = openbus::map::RoadMeshGeometry;
 
 std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
                                         const std::filesystem::path& omsiRoot,
@@ -159,28 +110,13 @@ std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot
 
 std::uint64_t tileKey(int x, int y);
 
-double vertexBoundingRadius(const std::vector<ModelVertex>& vertices);
-
 // Tests a world-space bounding sphere against a frustum built with buildViewFrustum().
 [[nodiscard]] bool outsideMapFrustum(const ViewFrustum& frustum, const Matrix4& modelView,
                                      const std::array<double, 3>& center, double radius);
 
-std::vector<ModelVertex> makeTreePreview(double height, double width);
-
 std::filesystem::path resolveSplineProfile(const openbus::map::MapDefinition& map,
                                            const std::filesystem::path& omsiRoot,
                                            const std::string& assetPath);
-
-std::filesystem::path findSplineTexture(const std::filesystem::path& profilePath,
-                                        const std::filesystem::path& omsiRoot,
-                                        const std::string& textureName);
-
-void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlacement& spline,
-                       const std::vector<openbus::map::MapSplineSample>& centerline,
-                       const openbus::map::MapSplineProfileSection& section,
-                       const openbus::map::MapRoadSplineJoins& joins,
-                       std::optional<double> cantHalfWidth,
-                       const openbus::map::MapCoordinates& coordinates);
 
 Matrix4 makeSceneryInstanceTransform(double x, double y, double z,
                                      const std::array<double, 6>& rotationDegrees,
@@ -195,6 +131,7 @@ using namespace map_detail;
 struct MapRenderer::Impl {
     openbus::map::MapCoordinates coordinates;
     double sceneryProjectionRadiusScale = 1.0;
+    bool openGLResourcesEnabled = true;
     struct CullingSlot {
         std::size_t index = 0;
         std::uint64_t generation = 0;
@@ -242,6 +179,7 @@ struct MapRenderer::Impl {
     };
 
     struct ModelBatch {
+        std::filesystem::path sourceConfigPath;
         GLuint buffer = 0;
         GLuint indexBuffer = 0;
         GLuint skinWeightBuffer = 0;
@@ -267,6 +205,8 @@ struct MapRenderer::Impl {
         std::array<double, 3> color = {1.0, 1.0, 1.0};
         double alpha = 1.0;
         int alphaMode = 0;
+        TextureAddressMode textureAddressS = TextureAddressMode::Repeat;
+        TextureAddressMode textureAddressT = TextureAddressMode::Repeat;
         int renderType = 2;
         bool noZwrite = false;
         bool noZcheck = false;
@@ -293,6 +233,10 @@ struct MapRenderer::Impl {
         std::vector<std::size_t> batchIndexes;
         std::vector<std::filesystem::path> texturePaths;
         std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
+        std::vector<HumanMeshGeometry> preparedGeometry;
+        std::vector<std::size_t> geometryIndexByBatch;
+        std::vector<int> materialIndexByBatch;
+        bool openGlReady = false;
         HumanGaitParameters gait;
         std::optional<HumanJoints> joints;
         std::optional<double> seatHeight;
@@ -314,6 +258,7 @@ struct MapRenderer::Impl {
     };
 
     struct SceneryInstance {
+        std::uint64_t motionObjectId = 0;
         std::size_t batchIndex = 0;
         std::optional<int> mapObjectId;
         double x = 0.0;

@@ -17,6 +17,9 @@ class FrameTiming {
     [[nodiscard]] double averageRenderFps() const noexcept {
         return averageRenderFps_;
     }
+    [[nodiscard]] double frameRateCap() const noexcept {
+        return frameRateCap_;
+    }
     [[nodiscard]] double displayedFps() const noexcept {
         return displayedFps_;
     }

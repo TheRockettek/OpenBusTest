@@ -665,12 +665,21 @@ void runProbe(const std::filesystem::path& root, bool conditional, bool attachme
     renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
     check(renderer.activeTileCoordinates() == originalWindow,
           "Current active window must remain until the requested tiles are ready");
-    for (int attempt = 0; attempt < 50; ++attempt) {
-        renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    writeTinyTerrain(root / "tile_4.terrain", 17.0F, 60.0F);
     const std::filesystem::path probeLog = root / "probe.log";
+    const auto terrainRetryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool terrainRetryObserved = false;
+    while (std::chrono::steady_clock::now() < terrainRetryDeadline) {
+        renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
+        if (logContains(probeLog, "terrain preparation failed for", "retrying in")) {
+            terrainRetryObserved = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(terrainRetryObserved, "Broken terrain must be reported before it is repaired");
+    writeTinyTerrain(root / "tile_4.terrain", 17.0F, 60.0F);
+    check(openbus::map::loadTerrainGrid(root / "tile_4.terrain").intervals == 1,
+          "Repaired terrain must be readable before the streaming retry");
     const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     bool assetRetryObserved = false;
     while (std::chrono::steady_clock::now() < retryDeadline) {

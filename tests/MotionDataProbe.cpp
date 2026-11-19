@@ -1,4 +1,5 @@
 #include "render/MotionData.h"
+#include "app/traffic/PassengerMotionKeys.h"
 
 #include <cmath>
 #include <iostream>
@@ -97,6 +98,46 @@ void testHistoryResetConditions() {
     history.beginFrame(4, 1.048, 1024, 600, translation(-151.0), identityMatrix);
     require(history.frame().historyValid, "history should recover after a reset frame");
     history.completeFrame();
+
+    history.invalidate();
+    history.beginFrame(5, 0.5, 1024, 600, identityMatrix, identityMatrix);
+    require(!history.frame().historyValid,
+            "history invalidation must permit a new simulation clock epoch");
+    history.completeFrame();
+}
+
+void testVehicleTransformDiscontinuity() {
+    MotionHistory history;
+    const Matrix4 identityMatrix = identity();
+    const MotionObjectKey vehicleGroup{27, 2};
+
+    history.beginFrame(1, 1.0, 800, 600, identityMatrix, identityMatrix);
+    const auto first = history.previousModelView(translation(0.0), vehicleGroup, true, 5.0);
+    require(!first.valid, "a vehicle's first rendered transform must have invalid history");
+    history.completeFrame();
+
+    history.beginFrame(2, 1.016, 800, 600, identityMatrix, identityMatrix);
+    const auto normalMovement =
+        history.previousModelView(translation(4.0), vehicleGroup, true, 5.0);
+    require(normalMovement.valid,
+            "vehicle movement within the displacement threshold must retain history");
+    history.completeFrame();
+
+    history.beginFrame(3, 1.032, 800, 600, identityMatrix, identityMatrix);
+    const auto teleported =
+        history.previousModelView(translation(20.0), vehicleGroup, true, 5.0);
+    require(!teleported.valid,
+            "vehicle movement beyond the displacement threshold must invalidate history");
+    require(std::abs(teleported.previousModelView[12] - 20.0) < 1.0e-9,
+            "a discontinuity must use the current transform as its previous-transform fallback");
+    history.completeFrame();
+
+    history.beginFrame(4, 1.048, 800, 600, identityMatrix, identityMatrix);
+    const auto recovered =
+        history.previousModelView(translation(21.0), vehicleGroup, true, 5.0);
+    require(recovered.valid,
+            "vehicle history must recover from the discontinuity using its new baseline");
+    history.completeFrame();
 }
 
 void testDisplayResolutionReset() {
@@ -114,13 +155,61 @@ void testDisplayResolutionReset() {
     history.completeFrame();
 }
 
+void testFrameIdsMustIncrease() {
+    MotionHistory history;
+    const Matrix4 identityMatrix = identity();
+    history.beginFrame(5, 1.0, 800, 600, identityMatrix, identityMatrix);
+    history.completeFrame();
+
+    bool duplicateRejected = false;
+    try {
+        history.beginFrame(5, 1.016, 800, 600, identityMatrix, identityMatrix);
+    } catch (const std::invalid_argument&) {
+        duplicateRejected = true;
+    }
+    require(duplicateRejected, "duplicate rendered frame IDs must be rejected");
+
+    bool backwardRejected = false;
+    try {
+        history.beginFrame(4, 1.016, 800, 600, identityMatrix, identityMatrix);
+    } catch (const std::invalid_argument&) {
+        backwardRejected = true;
+    }
+    require(backwardRejected, "backward rendered frame IDs must be rejected");
+
+    history.beginFrame(7, 1.032, 800, 600, identityMatrix, identityMatrix);
+    require(!history.frame().historyValid,
+            "a skipped rendered frame ID must invalidate temporal history");
+    history.completeFrame();
+}
+
+void testPassengerMotionKeys() {
+    using openbus::app::seatedPassengerMotionObjectKey;
+    using openbus::app::waitingPassengerMotionObjectKey;
+
+    const auto waiting = waitingPassengerMotionObjectKey(12, 4);
+    require(waiting == waitingPassengerMotionObjectKey(12, 4) &&
+                waiting != waitingPassengerMotionObjectKey(13, 4) &&
+                waiting != waitingPassengerMotionObjectKey(12, 5) && !waiting.isStatic(),
+            "waiting passenger motion keys must be stable and unique per stop/arrival");
+
+    const auto seated = seatedPassengerMotionObjectKey(42, 3);
+    require(seated == seatedPassengerMotionObjectKey(42, 3) &&
+                seated != seatedPassengerMotionObjectKey(42, 4) &&
+                seated != seatedPassengerMotionObjectKey(43, 3) && !seated.isStatic(),
+            "seated passenger motion keys must be stable and unique per vehicle/seat");
+}
+
 } // namespace
 
 int main() {
     try {
         testCameraAndObjectMotion();
         testHistoryResetConditions();
+        testVehicleTransformDiscontinuity();
         testDisplayResolutionReset();
+        testFrameIdsMustIncrease();
+        testPassengerMotionKeys();
         std::cout << "Motion data history checks passed\n";
         return 0;
     } catch (const std::exception& error) {

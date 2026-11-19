@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <numbers>
+#include <stdexcept>
 #include <tuple>
 
 namespace {
@@ -302,16 +303,21 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
     if (!loaded) {
         return;
     }
+    if (!openGLGeometryEnabled) {
+        throw std::logic_error("OpenGL vehicle draw requested for CPU-only vehicle geometry");
+    }
     const bool reflectionPass = openbus::rendering::reflectionPassActive();
+    const bool shadowPass = renderPass == VehicleRenderPass::Shadow;
     const bool renderOpaque = renderPass != VehicleRenderPass::Transparent;
     const bool classifyTransparent =
-        !reflectionPass || openbus::rendering::reflectionTransparentEnabled();
-    const bool renderTransparent = renderPass != VehicleRenderPass::Opaque && classifyTransparent;
+        !shadowPass && (!reflectionPass || openbus::rendering::reflectionTransparentEnabled());
+    const bool renderTransparent =
+        renderPass != VehicleRenderPass::Opaque && !shadowPass && classifyTransparent;
     const double cullingMinimumFraction =
         reflectionPass && !classifyTransparent
             ? minimumObjectViewportFraction
             : openbus::rendering::projectedSizeFadeStart(minimumObjectViewportFraction);
-    if (!reflectionPass && renderPass != VehicleRenderPass::Transparent) {
+    if (!reflectionPass && !shadowPass && renderPass != VehicleRenderPass::Transparent) {
         updateAnimationStates();
     }
     // Texture uploads must happen on the OpenGL thread, so decoding and GL
@@ -340,7 +346,7 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         glEnable(GL_DEPTH_TEST);
         setOneSidedFrontFaceConvention();
         glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0f, -1.0f);
+        glPolygonOffset(shadowPass ? 1.0f : -1.0f, shadowPass ? 1.0f : -1.0f);
     }
 
     {
@@ -378,6 +384,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 }
                 DisplayPart& part = displayLists[partIndex];
                 part.indirectEligible = false;
+                if (shadowPass && part.isShadow)
+                    continue;
                 if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex] ||
                     !openbus::rendering::viewpointMatches(part.viewpoint, context)) {
                     if (profileRecording) {
@@ -537,6 +545,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             TraceScope phase("render", "Vehicle::draw.classifyParts");
             for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
                 DisplayPart& part = displayLists[partIndex];
+                if (shadowPass && part.isShadow)
+                    continue;
                 const bool viewpointMatches =
                     openbus::rendering::viewpointMatches(part.viewpoint, context);
                 if (!viewpointMatches || !visible(part, partIndex)) {
@@ -546,9 +556,14 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 for (Batch& batch : part.batches) {
                     updateMaterialChange(batch);
                     const bool textTexture = batch.textTextureIndex >= 0;
+                    const bool shadowCutout =
+                        shadowPass && (batch.alphaMode == 1 || batch.alphaMode == 3 ||
+                                       (batch.alphaMode == 2 && !batch.transmap.name.empty() &&
+                                        batch.materialTextures.empty()));
                     hasOpaqueBatch =
-                        hasOpaqueBatch || (part.visibilityFade >= 1.0 && batch.alphaMode == 0 &&
-                                           !batch.noZwrite && !textTexture);
+                        hasOpaqueBatch ||
+                        (part.visibilityFade >= 1.0 && (batch.alphaMode == 0 || shadowCutout) &&
+                         !batch.noZwrite && (!shadowPass || !batch.noZcheck) && !textTexture);
                     if (classifyTransparent && (batch.alphaMode != 0 || batch.noZwrite ||
                                                 textTexture || part.visibilityFade < 1.0)) {
                         transparentBatches.push_back(
@@ -602,19 +617,32 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 if (alpha <= 0.0) {
                     continue;
                 }
-                if (batch.alphaMode != 0 || batch.noZwrite || batch.textTextureIndex >= 0) {
+                const bool shadowCutout =
+                    shadowPass && (batch.alphaMode == 1 || batch.alphaMode == 3 ||
+                                   (batch.alphaMode == 2 && !batch.transmap.name.empty() &&
+                                    batch.materialTextures.empty()));
+                if ((batch.alphaMode != 0 && !shadowCutout) || batch.noZwrite ||
+                    (shadowPass && batch.noZcheck) || batch.textTextureIndex >= 0) {
                     continue;
                 }
                 selectIndirect(batch);
-                drawBatch(batch, alpha);
-                if (!reflectionPass) {
+                if (shadowPass) {
+                    const int alphaMode = batch.alphaMode == 2 ? 3 : batch.alphaMode;
+                    openbus::rendering::setSpotlightShadowDepthPass(true, alphaMode == 1   ? 0.5F
+                                                                          : alphaMode == 3 ? 0.99F
+                                                                                           : 0.0F);
+                    drawBatch(batch, alpha, false, nullptr, alphaMode, true);
+                } else {
+                    drawBatch(batch, alpha);
+                }
+                if (!reflectionPass && !shadowPass) {
                     drawEnvironmentMap(batch, alpha);
                 }
             }
             popMatrix();
         }
     }
-    if (renderOpaque) {
+    if (renderOpaque && !shadowPass) {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         glDepthMask(GL_FALSE);

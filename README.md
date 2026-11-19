@@ -1,9 +1,11 @@
 # OpenBus
 
 OpenBus is a C++ bus simulator prototype built on the [Open Dynamics Engine
-(ODE)](https://www.ode.org/). It combines fixed-step bus physics with OpenGL
-vehicle rendering and partial OMSI map rendering. This is a prototype, not a
-fully OMSI-compatible simulator.
+(ODE)](https://www.ode.org/). It combines fixed-step bus physics with a
+Diligent Vulkan production renderer and partial OMSI map rendering. Legacy
+OpenGL renderer code remains in shared modules and opt-in probes; it is not the
+production presentation path. This is a prototype, not a fully OMSI-compatible
+simulator.
 
 ## Compatibility and validation status
 
@@ -501,7 +503,7 @@ The engine is split into one static library per module (see
 | `src/scripting` | `openbus_scripting` | Script runtime (native bytecode and Lua backends), script textures | config, assets, osc/Lua (private) |
 | `src/audio` | `openbus_audio` | OpenAL sound engine and vehicle sound banks | config |
 | `src/input` | `openbus_input` | Keyboard/vehicle key bindings | core, GLFW |
-| `src/render` | `openbus_render` | OpenGL renderer, asset requests, camera/matrix math, reflections; `render/map` builds and draws the map scene | assets, config, map, physics, scripting |
+| `src/render` | `openbus_render` | Shared render services and legacy OpenGL renderer; `render/map` also provides map-scene data consumed by the Diligent production renderer | assets, config, map, physics, scripting |
 | `src/app` | `OpenBus` executable | Entry point, render loop (`RenderLoop*.cpp`), HUD and per-vehicle rendering in `app/vehicle` | all modules |
 
 Large subsystems keep their public header small and place implementation details
@@ -524,7 +526,8 @@ from engine modules.
 - zlib
 - libtiff
 - ODE
-- GLFW and OpenGL
+- GLFW; OpenGL is still needed by legacy renderer probes/backends, but the
+  production `OpenBus.exe` does not link or import the OpenGL system library
 - OpenAL
 - Lua 5.1 on Linux (Windows uses the bundled Lua 5.1 runtime)
 - libcurl development files on Linux (Windows uses WinHTTP)
@@ -872,8 +875,8 @@ Run the prototype:
 .\build-ode\OpenBus.exe
 ```
 
-The executable opens a simple OpenGL preview window while the physics runs at
-the configured fixed rate.
+The executable opens a Diligent Vulkan-rendered window while the physics runs
+at the configured fixed rate.
 
 ### OMSI configuration audit
 
@@ -1418,15 +1421,20 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Scenery view selection and transforms are reused for repeated draws with the
   same view, active sources, and light limit. A different camera, tile
   selection, source count, or content revision invalidates that cache.
-- All registered scenery lights participate by default, including their
-  inverse-square tails beyond their configured radius. The spatial index also
-  records tiles overlapped by each radius, but is not used to discard those
-  tails. Map-wide registration increases startup work and may substantially
-  increase GPU lighting cost compared with evaluating only streamed tiles.
+- Scenery lights are registered map-wide, then selected from the active tiles
+  and their indexed influence associations. Selected lights retain
+  inverse-square tails beyond their configured radius; tails from sources not
+  selected by the tile index are not evaluated. The configured scenery-light
+  limit may further restrict the selected set.
 - `OPENBUS_VEHICLE_SPOTLIGHT_TILE_CULLING=1` enables experimental screen-space
   tile masks for vehicle spotlights. Dense or unsupported masks fall back to
   the global light loop without removing lights. This is disabled by default:
   the tested night scenes have not shown a reliable performance benefit.
+  With it enabled, `OPENBUS_VEHICLE_SPOTLIGHT_GPU_CULLING=1` experimentally
+  assigns the CPU-projected bounds to masks using OpenGL 4.3 compute; unsupported
+  contexts, capacity limits, or dispatch failures use CPU-built masks. This
+  path also defaults to off and does not cull scenery lights. See
+  [the lighting baseline](Docs/LIGHTING_SCALING_BASELINE.md) for measurements.
 - Mirror transparency is rendered by default, including in the run/profile
   launchers, which preserve an explicitly supplied value. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
@@ -1484,12 +1492,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   for comparable frame-time percentiles. Raw trace files include an
   `openbusTraceConfig` object with the main-thread frame stride, minimum scope
   duration, and event cap used for the capture.
-- Set `OPENBUS_GPU_TIMING=1` to enable asynchronous OpenGL timer queries for
-  main-view and reflection rendering. Results are polled only after OpenGL
-  reports them available, then logged as two-second average/maximum summaries.
-  A full query ring drops new samples rather than stalling. Reflection samples
-  cover each target's clear and draw, while the main-view sample starts after
-  reflection rendering and includes subsequent main-view draws and overlays.
+- The legacy OpenGL renderer supports `OPENBUS_GPU_TIMING=1` for asynchronous
+  timer-query diagnostics. This setting does not instrument the production
+  Diligent Vulkan renderer.
   Separate `LIGHTING_UPLOAD` lines report the number of buffer replacements
   and bytes submitted for vehicle lights, map view lists, and static map
   sources over each interval, including reflection views. They also report
@@ -1510,6 +1515,26 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   `render_benchmark_gpu_timing.csv`. For benchmark runs, use `--gpu-timing` or
   `--gpu-timing-sample-every-n-frames 5`; the latter also enables timing and
   overrides the inherited GPU sample stride.
+- `OpenBusLightingBenchmark` is a synthetic scenery-light microbenchmark, not a
+  game-scene benchmark. Build it with
+  `cmake --build build-benchmark-ninja --target OpenBusLightingBenchmark`, then
+  run `build-benchmark-ninja\OpenBusLightingBenchmark.exe --lights 3000
+  --width 320 --height 180 --warmup 10 --frames 40`. It reports actual
+  framebuffer dimensions, submitted and selected counts, CPU static-view
+  preparation and initial setter time, upload bytes, and mean/p95 GPU draw
+  time. `--storage direct` selects
+  the direct buffer instead of the default persistent static-light path.
+  Add `--vehicle-lights 100` to include synthetic moving spotlights;
+  `--move-vehicles 0` keeps them stationary. Moving-light setter timings are
+  reported separately. Use `--layout sparse` to spread the sources over a
+  larger area; the default is `--layout dense`.
+  Timer results are read synchronously for the synthetic draw and moving-light
+  GPU update; they are not representative of normal asynchronous frame
+  execution or isolated lighting-only shader time. Spotlights are not connected
+  to AI scheduling. The benchmark does not include reflections, shadows,
+  actual scene registration, or real map view-selection costs. See
+  [the lighting baseline](Docs/LIGHTING_SCALING_BASELINE.md) for measurements
+  and limitations.
 - CPU traces include texture-upload scopes for vehicle, map, dynamic script/text,
   and reflection-target uploads. These measure render-thread time around GL
   resource calls, not GPU execution; use the GPU timer queries above or a GPU
@@ -1532,9 +1557,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   accepts `true`, `yes`, or `on`) before launch to enable OpenAL Doppler using
   listener and moving-loop velocity estimates. Velocities are reset after long
   frame gaps and capped to avoid pitch spikes on camera/position teleports.
-- Model geometry is uploaded to OpenGL vertex buffer objects (VBOs) and drawn
-  with shader-backed `glDrawArrays` calls using GLSL 3.30 core shaders. The
-  application requests an OpenGL 4.3 core context, falling back to 3.3 core.
+- Production model geometry is uploaded to Diligent Vulkan resources and drawn
+  through the Diligent scene renderer. Legacy OpenGL model-draw code remains
+  only in shared renderer code and legacy probes.
 - Window and door glass remains material-driven in the VBO path; the temporary
   flat glass fallback is no longer used for normal model materials.
 - Normal MAN DL05 wheel meshes are removed from the static model pass and
@@ -1857,6 +1882,12 @@ influence sphere, and resume immediately when the light becomes relevant again.
 Other views, including reflections, are tested independently. The selected
 settings are recorded in the benchmark CSVs, while `AI_SPOTLIGHT_SCHEDULE`
 logs report observed average and maximum intervals.
+Dynamic vehicle spotlight shadows are enabled by default when supported;
+`OPENBUS_SPOTLIGHT_SHADOWS=0` disables them. The experimental atlas supports
+up to 64 prioritized lights and adapts its update budget to frame rate. Cached
+AI shadows and reflection coverage still require visual validation, and dense
+scenes can incur substantial shadow-rendering overhead; see
+[`Docs/LIGHTING_SCALING_BASELINE.md`](Docs/LIGHTING_SCALING_BASELINE.md).
 `--trace-min-duration-us` can raise the trace scope threshold when a detailed
 trace would otherwise hit the event cap; the selected threshold is recorded
 with the benchmark results.
@@ -1867,6 +1898,11 @@ frame, and frame-time CSVs record the GPU timing status and sample stride.
 `--gpu-timing` enables timer queries; `--gpu-timing-sample-every-n-frames N`
 also enables them and samples every N main frames (1-10,000), independently of
 the full-frame CPU trace.
+`render_benchmark_lighting_upload.csv` records each logged `LIGHTING_UPLOAD`
+interval in log order, including per-category candidate counts, upload volumes,
+tile occupancy and fallback reasons. Intervals can include startup, warmup and
+reflection views; they are not restricted to measured frames. Fields absent in
+older logs are left blank.
 Use `--reflection-interval N`, `--texture-scale 0.5`, and
 `--no-material-batching` to compare those configurations; all settings are
 recorded in the run, frame-time, scope, and frame CSVs. Texture scale must be

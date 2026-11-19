@@ -1,9 +1,13 @@
 #pragma once
 
+#include "assets/TextureLoader.h"
+#include "config/TextureAddressMode.h"
 #include "map/MapConfigLoader.h"
 #include "map/MapSplineProfile.h"
 #include "map/MapTrafficRuntime.h"
+#include "render/HumanMeshGeometry.h"
 #include "render/HumanSkinning.h"
+#include "render/MapLighting.h"
 #include "render/MotionData.h"
 
 #include <array>
@@ -12,11 +16,18 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 class SimulationState;
+class Variables;
+class ScriptRuntime;
 struct ModelConfig;
+
+namespace openbus::map {
+class MapRoadConnectionIndex;
+}
 
 namespace openbus::rendering {
 
@@ -42,6 +53,49 @@ struct MapRenderStats {
     std::size_t totalRoadBatches = 0;
     std::size_t totalWaterBatches = 0;
     std::size_t totalTextures = 0;
+};
+
+struct MapSceneryAssetSources {
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> assets;
+    std::vector<std::filesystem::path> seasonalTextures;
+};
+
+struct MapSceneryPlacementSnapshot {
+    std::uint64_t motionObjectId = 0;
+    std::filesystem::path configPath;
+    Matrix4 worldTransform = {};
+    std::array<double, 3> worldPosition = {};
+    double boundingRadius = 0.0;
+    int sourceTileX = 0;
+    int sourceTileY = 0;
+    // Non-owning; valid while the owning MapRenderer and its script state are alive.
+    const ::Variables* variables = nullptr;
+    // Non-owning; valid while the owning MapRenderer and its script state are alive.
+    ::ScriptRuntime* scriptRuntime = nullptr;
+};
+
+struct HumanTrafficMaterialSource {
+    std::array<double, 3> color = {1.0, 1.0, 1.0};
+    double alpha = 1.0;
+    int alphaMode = 0;
+    std::array<float, 3> specularColor = {};
+    std::array<float, 3> emissionColor = {};
+    float specularPower = 8.0F;
+    TextureAddressMode textureAddressS = TextureAddressMode::Repeat;
+    TextureAddressMode textureAddressT = TextureAddressMode::Repeat;
+    bool noZwrite = false;
+    bool noZcheck = false;
+    bool cullBackFaces = false;
+};
+
+struct HumanTrafficRenderSource {
+    std::uint64_t sourceGeneration = 1;
+    HumanMeshGeometry geometry;
+    std::unordered_map<int, std::shared_ptr<const Image>> textures;
+    std::unordered_map<int, HumanTrafficMaterialSource> materials;
+    HumanGaitParameters gait;
+    HumanJoints joints;
+    std::optional<double> seatHeight;
 };
 
 struct TrafficSignalDebugStats {
@@ -90,7 +144,8 @@ class MapRenderer {
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
                 double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
                 const std::filesystem::path& omsiRoot, SimulationState& simulationState,
-                AssetRequestManager& assetRequests, bool prepareInitialWindowAsync = false);
+                AssetRequestManager& assetRequests, bool prepareInitialWindowAsync = false,
+                bool enableOpenGLUploads = true);
     ~MapRenderer();
 
     MapRenderer(const MapRenderer&) = delete;
@@ -103,10 +158,21 @@ class MapRenderer {
     void updatePoleStates(const std::vector<MapPoleState>& states);
     bool leftHandTraffic() const noexcept;
     double tileSize() const noexcept;
+    [[nodiscard]] int activeTileRadius() const noexcept;
+    [[nodiscard]] MapSceneryAssetSources activeSceneryAssetSources() const;
+    [[nodiscard]] std::vector<MapSceneryPlacementSnapshot> activeSceneryPlacements() const;
+    [[nodiscard]] const openbus::map::MapDefinition& mapDefinition() const noexcept;
+    [[nodiscard]] const std::filesystem::path& omsiRoot() const noexcept;
+    [[nodiscard]] std::size_t baseGroundTextureIndex() const noexcept;
+    // Returns the finalized map-wide index when initial map indexing has completed.
+    [[nodiscard]] std::shared_ptr<const openbus::map::MapRoadConnectionIndex>
+    roadConnectionIndex() const noexcept;
+    [[nodiscard]] std::size_t activeTreeSeason() const;
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     std::vector<std::array<double, 3>> activeTileBoundaryVertices(double fallbackHeight) const;
     MapRenderStats renderStats() const;
     std::vector<std::array<double, 3>> sceneryLightDebugPositions() const;
+    std::vector<MapPointLight> activeSceneryLights() const;
     std::vector<std::array<double, 3>> sceneryObjectDebugPositions(int objectId) const;
     std::uint64_t trafficDebugGeometryRevision() const noexcept;
     TrafficSignalDebugStats trafficSignalDebugStats() const;
@@ -172,6 +238,9 @@ class MapRenderer {
                                double gaitWeight, std::optional<HumanSeatPose> seat = std::nullopt,
                                const ModelMaterial* passengerLighting = nullptr,
                                MotionObjectKey motionObject = {}) const;
+    // Returns no source while model or texture preparation is still pending.
+    std::optional<HumanTrafficRenderSource>
+    humanTrafficRenderSource(const std::filesystem::path& humanConfigPath);
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
     trafficSignalControllers() const;
     std::vector<openbus::map::MapTrafficSignalRequest>
@@ -182,7 +251,8 @@ class MapRenderer {
     std::size_t updateTrafficActors(double elapsedSeconds);
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;
     std::optional<double> terrainHeightAt(double worldX, double worldY) const;
-    void draw(bool renderTypeFourOnly = false, double minimumObjectViewportFraction = 0.0) const;
+    void draw(bool renderTypeFourOnly = false, double minimumObjectViewportFraction = 0.0,
+              bool shadowPass = false) const;
     // Called after every view has drawn, including reflections.
     void finishFrame() const;
 
@@ -190,14 +260,16 @@ class MapRenderer {
     friend class MapSceneLoader;
 
     void initializeActiveScripts();
-    bool finishHumanTrafficModelLoad(const std::string& cacheKey) const;
+    bool finishHumanTrafficModelLoad(const std::string& cacheKey, bool uploadOpenGl = true) const;
     void loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
                                   const std::filesystem::path& modelConfigPath,
                                   const ModelConfig& configuration, const HumanGaitParameters& gait,
                                   const std::optional<HumanJoints>& joints,
-                                  const std::optional<double>& seatHeight) const;
+                                  const std::optional<double>& seatHeight,
+                                  bool uploadOpenGl = true) const;
 
     openbus::map::MapDefinition mapDefinition_;
+    std::size_t groundTextureIndex_ = 0;
     struct Impl;
     std::unique_ptr<Impl> impl_;
     std::unique_ptr<MapSceneLoader> sceneLoader_;

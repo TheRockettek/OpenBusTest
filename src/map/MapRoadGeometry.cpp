@@ -1,6 +1,7 @@
 #include "map/MapRoadGeometry.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -72,6 +73,49 @@ void MapRoadConnectionIndex::addSpline(const MapSplinePlacement& spline, int til
                                        std::optional<double> cantHalfWidth) {
     // Validate before changing the index so a rejected width cannot invalidate existing joins.
     static_cast<void>(mapSplineCantHeightOffset(0.0, 0.0, cantHalfWidth));
+    const auto appendSignature = [this](std::uint64_t value) {
+        for (std::size_t byte = 0; byte < sizeof(value); ++byte) {
+            sourceSignature_ ^= (value >> (byte * 8U)) & 0xFFU;
+            sourceSignature_ *= 1099511628211ULL;
+        }
+    };
+    const auto appendDouble = [&appendSignature](double value) {
+        appendSignature(std::bit_cast<std::uint64_t>(value));
+    };
+    const auto appendString = [&appendSignature](const std::string& value) {
+        appendSignature(value.size());
+        for (const unsigned char character : value) {
+            appendSignature(character);
+        }
+    };
+    appendSignature(static_cast<std::uint32_t>(spline.splineId));
+    appendSignature(static_cast<std::uint32_t>(spline.previousSplineId));
+    appendSignature(static_cast<std::uint32_t>(spline.nextSplineId));
+    appendSignature(static_cast<std::uint32_t>(tileX));
+    appendSignature(static_cast<std::uint32_t>(tileY));
+    appendSignature(spline.geometryValid ? 1U : 0U);
+    appendSignature(spline.elevated ? 1U : 0U);
+    appendSignature(spline.mirrored ? 1U : 0U);
+    appendSignature(spline.chainOffsetValid ? 1U : 0U);
+    appendString(spline.assetPath);
+    appendDouble(spline.localX);
+    appendDouble(spline.localY);
+    appendDouble(spline.elevation);
+    appendDouble(spline.rotationDegrees);
+    appendDouble(spline.length);
+    appendDouble(spline.radius);
+    appendDouble(spline.gradientStart);
+    appendDouble(spline.gradientEnd);
+    appendDouble(spline.cantStart);
+    appendDouble(spline.cantEnd);
+    appendDouble(spline.skewStart);
+    appendDouble(spline.skewEnd);
+    appendDouble(spline.heightDelta);
+    appendDouble(spline.chainOffset);
+    appendSignature(cantHalfWidth.has_value() ? 1U : 0U);
+    if (cantHalfWidth) {
+        appendDouble(*cantHalfWidth);
+    }
     joins_.clear();
     if (spline.splineId == 0 || ambiguousIds_.contains(spline.splineId)) {
         return;

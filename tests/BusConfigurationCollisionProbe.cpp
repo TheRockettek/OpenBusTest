@@ -168,10 +168,12 @@ int main() {
     const std::filesystem::path resolvedNestedModelPath =
         modelConfigurationPathForBusFromConfig(root / "nested.bus");
     const bool nestedModelMeshResolved =
-        resolvedNestedModelPath == nestedConfigDirectory / "model.cfg" &&
+        std::filesystem::equivalent(resolvedNestedModelPath,
+                                    nestedConfigDirectory / "model.cfg") &&
         !nestedModelConfiguration.diagnostics.hasErrors() &&
         nestedModelConfiguration.parts.size() == 1 &&
-        nestedModelConfiguration.parts.front().objPath == nestedMeshPath;
+        std::filesystem::equivalent(nestedModelConfiguration.parts.front().objPath,
+                                    nestedMeshPath);
 
     const auto hasCogDiagnostic = [](const VehicleConfig& config,
                                      ConfigurationDiagnostic::Severity severity,
@@ -241,8 +243,16 @@ int main() {
         !boxFallbackApplied ||
         !negativeRollingResistanceRejected || !nestedModelMeshResolved || !cogApplied ||
         !precedenceWorks || !invalidCogRejected) {
-        std::cerr << "Bus collision mesh, wheel collider fit, nocollision filtering, model "
-                     "bounding box, or nested model-root resolution failed\n";
+        std::cerr << "Bus collision probe failed: mesh=" << meshWasBuilt
+                  << " modelBounds=" << modelBoundsApplied
+                  << " wheelCollider=" << wheelColliderMatchesVisualEnvelope
+                  << " rollingResistance=" << authoredResistanceWasTransferred
+                  << " rollingResistanceExport=" << authoredResistanceAppearsInExport
+                  << " nocollisionFallback=" << boxFallbackApplied
+                  << " invalidRollingResistance=" << negativeRollingResistanceRejected
+                  << " nestedModel=" << nestedModelMeshResolved << " cog=" << cogApplied
+                  << " cogPrecedence=" << precedenceWorks
+                  << " invalidCog=" << invalidCogRejected << '\n';
         return 1;
     }
     return 0;

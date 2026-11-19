@@ -17,6 +17,14 @@ namespace openbus::rendering::detail {
 
 inline constexpr int VEHICLE_SPOTLIGHT_TILE_SIZE = 32;
 
+struct VehicleSpotlightTileBounds {
+    std::int32_t minimumX = 0;
+    std::int32_t minimumY = 0;
+    std::int32_t maximumX = -1;
+    std::int32_t maximumY = -1;
+};
+static_assert(sizeof(VehicleSpotlightTileBounds) == 4 * sizeof(std::int32_t));
+
 struct VehicleSpotlightTileMask {
     bool enabled = false;
     int viewportX = 0;
@@ -24,6 +32,7 @@ struct VehicleSpotlightTileMask {
     int columns = 0;
     int rows = 0;
     int wordsPerTile = 0;
+    std::vector<VehicleSpotlightTileBounds> bounds;
     std::vector<std::uint32_t> words;
     std::size_t assignedReferences = 0;
     std::size_t maximumLightsPerTile = 0;
@@ -33,13 +42,8 @@ inline VehicleSpotlightTileMask
 buildVehicleSpotlightTileMask(std::span<const VehicleSpotlight> lights, const Matrix4& projection,
                               const std::array<int, 4>& viewport,
                               std::size_t maximumTextureBufferTexels,
-                              double maximumAverageCoverage = 1.0) {
-    struct TileBounds {
-        int minimumX = 0;
-        int minimumY = 0;
-        int maximumX = -1;
-        int maximumY = -1;
-    };
+                              double maximumAverageCoverage = 1.0, bool materializeWords = true) {
+    using TileBounds = VehicleSpotlightTileBounds;
 
     VehicleSpotlightTileMask result;
     result.viewportX = viewport[0];
@@ -231,12 +235,11 @@ buildVehicleSpotlightTileMask(std::span<const VehicleSpotlight> lights, const Ma
         return static_cast<std::size_t>(bounds.maximumX - bounds.minimumX + 1) *
                static_cast<std::size_t>(bounds.maximumY - bounds.minimumY + 1);
     };
-    std::vector<TileBounds> bounds;
-    bounds.reserve(lights.size());
+    result.bounds.reserve(lights.size());
     std::size_t estimatedReferences = 0;
     for (const VehicleSpotlight& light : lights) {
         const TileBounds lightBounds = projectedBounds(light);
-        bounds.push_back(lightBounds);
+        result.bounds.push_back(lightBounds);
         const std::size_t lightTileCount = coveredTileCount(lightBounds);
         if (estimatedReferences > std::numeric_limits<std::size_t>::max() - lightTileCount) {
             return result;
@@ -248,9 +251,14 @@ buildVehicleSpotlightTileMask(std::span<const VehicleSpotlight> lights, const Ma
     }
 
     result.wordsPerTile = static_cast<int>(wordsPerTile);
+    result.assignedReferences = estimatedReferences;
+    result.enabled = true;
+    if (!materializeWords) {
+        return result;
+    }
     result.words.assign(tileCount * wordsPerTile, 0);
-    for (std::size_t lightIndex = 0; lightIndex < bounds.size(); ++lightIndex) {
-        const TileBounds& lightBounds = bounds[lightIndex];
+    for (std::size_t lightIndex = 0; lightIndex < result.bounds.size(); ++lightIndex) {
+        const TileBounds& lightBounds = result.bounds[lightIndex];
         if (lightBounds.maximumX < lightBounds.minimumX ||
             lightBounds.maximumY < lightBounds.minimumY) {
             continue;
@@ -270,10 +278,8 @@ buildVehicleSpotlightTileMask(std::span<const VehicleSpotlight> lights, const Ma
         for (std::size_t word = 0; word < wordsPerTile; ++word) {
             count += std::popcount(result.words[tile * wordsPerTile + word]);
         }
-        result.assignedReferences += count;
         result.maximumLightsPerTile = std::max(result.maximumLightsPerTile, count);
     }
-    result.enabled = true;
     return result;
 }
 

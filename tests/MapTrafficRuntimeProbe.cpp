@@ -9,6 +9,7 @@
 #include "app/traffic/PlayerTimetableController.h"
 #include "app/vehicle/PassengerState.h"
 #include "app/vehicle/PassengerRequestVariables.h"
+#include "app/PassengerCoinGeometry.h"
 
 #include <algorithm>
 #include <array>
@@ -24,6 +25,7 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -2043,6 +2045,16 @@ void verifyPassengerServiceBehavior() {
             rejectedInvalidCoinCount = true;
         }
         require(rejectedInvalidCoinCount, "invalid coin counters are rejected");
+        std::vector<openbus::rendering::PrimitiveVertex> ticketVertices;
+        const std::array<double, 3> ticketPosition{1.0, 2.0, 0.0};
+        openbus::app::appendPassengerTicketCard(ticketVertices, ticketPosition, 0.0, true,
+                                                 false);
+        require(ticketVertices.empty(), "ticket cards are omitted when the actor is not submitted");
+        openbus::app::appendPassengerTicketCard(ticketVertices, ticketPosition, 0.0, false,
+                                                 true);
+        require(ticketVertices.empty(), "ticket cards are omitted when no ticket is visible");
+        openbus::app::appendPassengerTicketCard(ticketVertices, ticketPosition, 0.0, true, true);
+        require(ticketVertices.size() == 12, "visible tickets render with their passenger actor");
         const MapTrafficPose bus{{10.0, 20.0, 1.0}, 0.0};
         const auto right = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, false, 0);
         const auto left = openbus::app::passengerDoorQueuePose(bus, 3.0, 2.4, true, 0);

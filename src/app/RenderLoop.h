@@ -10,11 +10,16 @@
 #include "app/traffic/ReflectionTrafficViews.h"
 #include "app/traffic/TrafficFleet.h"
 #include "render/CameraMath.h"
+#include "render/MotionData.h"
+#include "render/SpotlightShadowCamera.h"
 #include "map/MapConfigLoader.h"
 #include "map/MapTrafficRuntime.h"
 #include "input/MouseInteraction.h"
 #include "render/CoreRenderer.h"
 #include "render/HumanGait.h"
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+#include "render/diligent/DiligentColorPresent.h"
+#endif
 #include "audio/SoundEngine.h"
 #include "config/VehicleConfigLoader.h"
 #include "config/VehicleCatalog.h"
@@ -48,13 +53,13 @@ struct GLFWmonitor;
 
 struct GLFWwindow;
 struct GLFWcursor;
-class ImGuiLayer;
 struct Vehicle;
 
 namespace openbus::rendering {
 class AssetRequestManager;
 class MapRenderer;
-class ReflectionRenderer;
+class RendererFramePresenter;
+struct HumanTrafficRenderSource;
 } // namespace openbus::rendering
 
 namespace openbus::app {
@@ -193,6 +198,7 @@ class RenderLoop {
     MapCalendarRequest currentMapCalendar() const;
     void ResetMapClockEpoch(double simulationTime);
     void ResetMapClockEpoch(double previousSimulationTime, double newSimulationTime);
+    void invalidateTemporalHistory();
     void SetMapTrafficStartHour(double startHour);
     void SetMapTrafficSpawnInView(bool enabled);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
@@ -314,14 +320,24 @@ class RenderLoop {
     passengerQueuePose(int stopId, const openbus::app::WaitingPassenger& passenger) const;
     void rebaseMapTrafficClock(double previousSimulationTime, double newSimulationTime,
                                double newStartHour);
-    void renderReflectionViews(const BusSimulation& simulation, const World& world);
     void drawOnFootUi();
     void drawPlayerTimetableUi();
     void drawPlayerTimetableSelectionUi();
     void drawPauseMenuUi();
+    void beginUiFrame(bool manageMouseCursor = true);
+    void clearUiOnlyFrame(int framebufferWidth, int framebufferHeight);
+    void presentUiOnlyFrame();
     void previewDisplaySettings();
     void revertDisplaySettingsPreview();
     void drawDebugMenuUi();
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    void initializeDiligentBackend();
+#endif
+    void shutdownRendererBackend();
+    void prepareDiligentSceneAssets(const BusSimulation& simulation);
+    void drawDiligentScene(const BusSimulation& simulation);
+    openbus::rendering::Matrix4 buildCameraViewMatrix(const BusSimulation& simulation,
+                                                      const BodyPose& chassis) const;
     void setPausedState(bool paused);
     void applyPlayerTripAiPolicy(const openbus::map::MapAiTimetableCourseTrip& trip,
                                  bool additionalBus);
@@ -336,6 +352,11 @@ class RenderLoop {
 
     openbus::app::SteamPresence& steamPresence_;
     GLFWwindow* window_;
+    std::unique_ptr<openbus::rendering::RendererFramePresenter> framePresenter_;
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    openbus::rendering::DiligentDebugView diligentDebugView_ =
+        openbus::rendering::DiligentDebugView::None;
+#endif
     bool vsyncEnabled_ = true;
     openbus::core::GraphicsPreferencesFile graphicsPreferences_;
     openbus::core::GraphicsPreferences graphicsPreferencesBaseline_;
@@ -357,8 +378,9 @@ class RenderLoop {
     float maximumTextureAnisotropy_ = 1.0F;
     float appliedTextureAnisotropy_ = 1.0F;
     bool textureAnisotropySupported_ = false;
-    std::unique_ptr<ImGuiLayer> imguiLayer_;
     bool imguiEnabled_ = false;
+    bool gameKeyboardInputCaptured_ = false;
+    bool gameMouseInputCaptured_ = false;
     bool spawnBusRequestPending_ = false;
     bool enterMapBusRequestPending_ = false;
     bool leaveMapBusRequestPending_ = false;
@@ -435,6 +457,8 @@ class RenderLoop {
     double viewLookPitch_ = 0.0;
     double lastStatsTitleTime_ = 0.0;
     openbus::app::FrameTiming frameTiming_;
+    openbus::rendering::MotionHistory diligentMotionHistory_;
+    std::uint64_t diligentFrameId_ = 0;
     double cameraDistance_ = 24.0;
     openbus::rendering::FreeCameraPose freeCameraPose_{};
     OnFootState onFootState_{};
@@ -474,6 +498,7 @@ class RenderLoop {
     double mouseSteering_ = 0.0;
     double mouseBrake_ = 0.0;
     std::vector<bool> previousVehicleKeyStates_;
+    std::vector<bool> dispatchedVehicleKeyStates_;
     std::array<bool, 10> previousViewKeyStates_ = {};
     std::array<bool, 2> previousCameraNavigationStates_ = {};
     bool previousCaptureKeyState_ = false;
@@ -482,7 +507,6 @@ class RenderLoop {
     bool previousLeftMouseState_ = false;
     bool leftMousePressed_ = false;
     bool previousClickableDebugKeyState_ = false;
-    bool clickableDebugOverlay_ = false;
     bool previousCollisionDebugKeyState_ = false;
     bool collisionDebugOverlay_ = false;
     bool previousTileBoundaryDebugKeyState_ = false;
@@ -490,6 +514,16 @@ class RenderLoop {
     bool tileBoundaryDebugBuilt_ = false;
     std::uint64_t tileBoundaryDebugRevision_ = 0;
     std::uint64_t lightingFrameIndex_ = 0;
+    struct DiligentSpotlightShadowSlot {
+        std::uint64_t vehicleId = 0;
+        double selection = -1.0;
+        std::uint64_t lastUpdateFrame = 0;
+        std::optional<openbus::rendering::SpotlightShadowCamera> camera;
+        float visibility = 0.0F;
+        bool valid = false;
+    };
+    std::array<DiligentSpotlightShadowSlot, 4> diligentSpotlightShadowSlots_ = {};
+    std::size_t spotlightShadowUpdateBudget_ = 8;
     std::uint64_t aiSpotlightRefreshesSinceLog_ = 0;
     std::uint64_t aiSpotlightIntervalFramesSinceLog_ = 0;
     std::uint64_t aiSpotlightIntervalSamplesSinceLog_ = 0;
@@ -564,7 +598,6 @@ class RenderLoop {
     std::vector<openbus::rendering::PrimitiveVertex> trafficSplineDebugVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficBehaviorDebugBuffer_;
     std::uint64_t trafficBehaviorDebugRevision_ = 0;
-    std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
     double aiScriptAccumulator_ = 0.0;
@@ -576,7 +609,6 @@ class RenderLoop {
     std::vector<VehicleViewEntry> vehicleTicketSellingViews_;
     SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
-    std::unique_ptr<openbus::rendering::ReflectionRenderer> reflectionRenderer_;
     std::unique_ptr<openbus::rendering::MapRenderer> mapRenderer_;
     SoundEngine soundEngine_;
     openbus::rendering::ViewpointContext soundViewpoint_ =
@@ -689,6 +721,10 @@ class RenderLoop {
     std::vector<HumanTrafficState> humanTrafficActors_;
     std::vector<openbus::app::PassengerPedestrianHandoff> alightedPassengers_;
     std::vector<std::filesystem::path> scheduledPassengerHumanModels_;
+    std::unordered_map<std::string,
+                       std::shared_ptr<const openbus::rendering::HumanTrafficRenderSource>>
+        diligentHumanRenderSources_;
+    std::unordered_map<std::string, double> diligentHumanBoundingRadii_;
     std::vector<std::optional<double>> scheduledPassengerHumanAges_;
     std::vector<std::optional<double>> scheduledPassengerHumanMassesKg_;
     openbus::map::MapTicketPackDefinition passengerTicketPack_;

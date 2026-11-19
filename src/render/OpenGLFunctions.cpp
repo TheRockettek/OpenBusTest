@@ -64,6 +64,7 @@ GenQueriesProc pglGenQueries = nullptr;
 DeleteQueriesProc pglDeleteQueries = nullptr;
 BeginQueryProc pglBeginQuery = nullptr;
 EndQueryProc pglEndQuery = nullptr;
+QueryCounterProc pglQueryCounter = nullptr;
 GetQueryObjectuivProc pglGetQueryObjectuiv = nullptr;
 GetQueryObjectui64vProc pglGetQueryObjectui64v = nullptr;
 BeginConditionalRenderProc pglBeginConditionalRender = nullptr;
@@ -76,6 +77,43 @@ GetBufferSubDataProc pglGetBufferSubData = nullptr;
 GetIntegeriProc pglGetIntegeri = nullptr;
 DrawArraysIndirectProc pglDrawArraysIndirect = nullptr;
 DrawElementsIndirectProc pglDrawElementsIndirect = nullptr;
+BindTextureProc pglBindTexture = nullptr;
+BlendFuncProc pglBlendFunc = nullptr;
+ClearProc pglClear = nullptr;
+ClearDepthProc pglClearDepth = nullptr;
+ColorMaskProc pglColorMask = nullptr;
+DeleteTexturesProc pglDeleteTextures = nullptr;
+DepthFuncProc pglDepthFunc = nullptr;
+DepthMaskProc pglDepthMask = nullptr;
+DisableProc pglDisable = nullptr;
+DrawArraysProc pglDrawArrays = nullptr;
+DrawBufferProc pglDrawBuffer = nullptr;
+DrawElementsProc pglDrawElements = nullptr;
+EnableProc pglEnable = nullptr;
+FinishProc pglFinish = nullptr;
+FrontFaceProc pglFrontFace = nullptr;
+GenTexturesProc pglGenTextures = nullptr;
+GetBooleanvProc pglGetBooleanv = nullptr;
+GetDoublevProc pglGetDoublev = nullptr;
+GetErrorProc pglGetError = nullptr;
+GetFloatvProc pglGetFloatv = nullptr;
+GetIntegervProc pglGetIntegerv = nullptr;
+GetStringProc pglGetString = nullptr;
+GetTexLevelParameterivProc pglGetTexLevelParameteriv = nullptr;
+GetTexParameterivProc pglGetTexParameteriv = nullptr;
+IsEnabledProc pglIsEnabled = nullptr;
+IsTextureProc pglIsTexture = nullptr;
+LineWidthProc pglLineWidth = nullptr;
+PixelStoreiProc pglPixelStorei = nullptr;
+PointSizeProc pglPointSize = nullptr;
+PolygonOffsetProc pglPolygonOffset = nullptr;
+ReadBufferProc pglReadBuffer = nullptr;
+ScissorProc pglScissor = nullptr;
+TexImage2DProc pglTexImage2D = nullptr;
+TexParameterfProc pglTexParameterf = nullptr;
+TexParameteriProc pglTexParameteri = nullptr;
+TexSubImage2DProc pglTexSubImage2D = nullptr;
+ViewportProc pglViewport = nullptr;
 
 namespace {
 
@@ -88,6 +126,46 @@ double configuredMapTextureScale = 1.0;
 } // namespace
 
 bool loadOpenGLFunctions() {
+    pglBindTexture = reinterpret_cast<BindTextureProc>(glfwGetProcAddress("glBindTexture"));
+    pglBlendFunc = reinterpret_cast<BlendFuncProc>(glfwGetProcAddress("glBlendFunc"));
+    pglClear = reinterpret_cast<ClearProc>(glfwGetProcAddress("glClear"));
+    pglClearDepth = reinterpret_cast<ClearDepthProc>(glfwGetProcAddress("glClearDepth"));
+    pglColorMask = reinterpret_cast<ColorMaskProc>(glfwGetProcAddress("glColorMask"));
+    pglDeleteTextures =
+        reinterpret_cast<DeleteTexturesProc>(glfwGetProcAddress("glDeleteTextures"));
+    pglDepthFunc = reinterpret_cast<DepthFuncProc>(glfwGetProcAddress("glDepthFunc"));
+    pglDepthMask = reinterpret_cast<DepthMaskProc>(glfwGetProcAddress("glDepthMask"));
+    pglDisable = reinterpret_cast<DisableProc>(glfwGetProcAddress("glDisable"));
+    pglDrawArrays = reinterpret_cast<DrawArraysProc>(glfwGetProcAddress("glDrawArrays"));
+    pglDrawBuffer = reinterpret_cast<DrawBufferProc>(glfwGetProcAddress("glDrawBuffer"));
+    pglDrawElements = reinterpret_cast<DrawElementsProc>(glfwGetProcAddress("glDrawElements"));
+    pglEnable = reinterpret_cast<EnableProc>(glfwGetProcAddress("glEnable"));
+    pglFinish = reinterpret_cast<FinishProc>(glfwGetProcAddress("glFinish"));
+    pglFrontFace = reinterpret_cast<FrontFaceProc>(glfwGetProcAddress("glFrontFace"));
+    pglGenTextures = reinterpret_cast<GenTexturesProc>(glfwGetProcAddress("glGenTextures"));
+    pglGetBooleanv = reinterpret_cast<GetBooleanvProc>(glfwGetProcAddress("glGetBooleanv"));
+    pglGetDoublev = reinterpret_cast<GetDoublevProc>(glfwGetProcAddress("glGetDoublev"));
+    pglGetError = reinterpret_cast<GetErrorProc>(glfwGetProcAddress("glGetError"));
+    pglGetFloatv = reinterpret_cast<GetFloatvProc>(glfwGetProcAddress("glGetFloatv"));
+    pglGetIntegerv = reinterpret_cast<GetIntegervProc>(glfwGetProcAddress("glGetIntegerv"));
+    pglGetString = reinterpret_cast<GetStringProc>(glfwGetProcAddress("glGetString"));
+    pglGetTexLevelParameteriv = reinterpret_cast<GetTexLevelParameterivProc>(
+        glfwGetProcAddress("glGetTexLevelParameteriv"));
+    pglGetTexParameteriv =
+        reinterpret_cast<GetTexParameterivProc>(glfwGetProcAddress("glGetTexParameteriv"));
+    pglIsEnabled = reinterpret_cast<IsEnabledProc>(glfwGetProcAddress("glIsEnabled"));
+    pglIsTexture = reinterpret_cast<IsTextureProc>(glfwGetProcAddress("glIsTexture"));
+    pglLineWidth = reinterpret_cast<LineWidthProc>(glfwGetProcAddress("glLineWidth"));
+    pglPixelStorei = reinterpret_cast<PixelStoreiProc>(glfwGetProcAddress("glPixelStorei"));
+    pglPointSize = reinterpret_cast<PointSizeProc>(glfwGetProcAddress("glPointSize"));
+    pglPolygonOffset = reinterpret_cast<PolygonOffsetProc>(glfwGetProcAddress("glPolygonOffset"));
+    pglReadBuffer = reinterpret_cast<ReadBufferProc>(glfwGetProcAddress("glReadBuffer"));
+    pglScissor = reinterpret_cast<ScissorProc>(glfwGetProcAddress("glScissor"));
+    pglTexImage2D = reinterpret_cast<TexImage2DProc>(glfwGetProcAddress("glTexImage2D"));
+    pglTexParameterf = reinterpret_cast<TexParameterfProc>(glfwGetProcAddress("glTexParameterf"));
+    pglTexParameteri = reinterpret_cast<TexParameteriProc>(glfwGetProcAddress("glTexParameteri"));
+    pglTexSubImage2D = reinterpret_cast<TexSubImage2DProc>(glfwGetProcAddress("glTexSubImage2D"));
+    pglViewport = reinterpret_cast<ViewportProc>(glfwGetProcAddress("glViewport"));
     pglGetStringi = reinterpret_cast<GetStringiProc>(glfwGetProcAddress("glGetStringi"));
     pglDrawArraysIndirect =
         reinterpret_cast<DrawArraysIndirectProc>(glfwGetProcAddress("glDrawArraysIndirect"));
@@ -111,8 +189,8 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<CompressedTexImage2DProc>(glfwGetProcAddress("glCompressedTexImage2D"));
     pglCompressedTexImage3D =
         reinterpret_cast<CompressedTexImage3DProc>(glfwGetProcAddress("glCompressedTexImage3D"));
-    pglTexImage2DMultisample = reinterpret_cast<TexImage2DMultisampleProc>(
-        glfwGetProcAddress("glTexImage2DMultisample"));
+    pglTexImage2DMultisample =
+        reinterpret_cast<TexImage2DMultisampleProc>(glfwGetProcAddress("glTexImage2DMultisample"));
     pglGenerateMipmap =
         reinterpret_cast<GenerateMipmapProc>(glfwGetProcAddress("glGenerateMipmap"));
     pglActiveTexture = reinterpret_cast<ActiveTextureProc>(glfwGetProcAddress("glActiveTexture"));
@@ -179,6 +257,7 @@ bool loadOpenGLFunctions() {
     pglDeleteQueries = reinterpret_cast<DeleteQueriesProc>(glfwGetProcAddress("glDeleteQueries"));
     pglBeginQuery = reinterpret_cast<BeginQueryProc>(glfwGetProcAddress("glBeginQuery"));
     pglEndQuery = reinterpret_cast<EndQueryProc>(glfwGetProcAddress("glEndQuery"));
+    pglQueryCounter = reinterpret_cast<QueryCounterProc>(glfwGetProcAddress("glQueryCounter"));
     pglGetQueryObjectuiv =
         reinterpret_cast<GetQueryObjectuivProc>(glfwGetProcAddress("glGetQueryObjectuiv"));
     pglGetQueryObjectui64v =
@@ -194,14 +273,22 @@ bool loadOpenGLFunctions() {
             glfwGetProcAddress("glDebugMessageCallbackKHR"));
     }
     const bool available =
-        pglGenBuffers && pglBindBuffer && pglBufferData && pglTexBuffer && pglDeleteBuffers &&
-        pglCompressedTexImage2D && pglGetStringi && pglActiveTexture && pglBlendFuncSeparate &&
-        pglBlendEquationSeparate && pglGenVertexArrays && pglBindVertexArray &&
-        pglDeleteVertexArrays && pglEnableVertexAttribArray && pglDisableVertexAttribArray &&
-        pglVertexAttribPointer && pglCreateShader && pglShaderSource && pglCompileShader &&
-        pglGetShaderiv && pglGetShaderInfoLog && pglDeleteShader && pglCreateProgram &&
-        pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
-        pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglGetUniformBlockIndex &&
+        pglBindTexture && pglBlendFunc && pglClear && pglClearDepth && pglColorMask &&
+        pglDeleteTextures && pglDepthFunc && pglDepthMask && pglDisable && pglDrawArrays &&
+        pglDrawBuffer && pglDrawElements && pglEnable && pglFinish && pglFrontFace &&
+        pglGenTextures && pglGetBooleanv && pglGetDoublev && pglGetError && pglGetFloatv &&
+        pglGetIntegerv && pglGetString && pglGetTexLevelParameteriv && pglGetTexParameteriv &&
+        pglIsEnabled && pglIsTexture && pglLineWidth && pglPixelStorei && pglPointSize &&
+        pglPolygonOffset && pglReadBuffer && pglScissor && pglTexImage2D && pglTexParameterf &&
+        pglTexParameteri && pglTexSubImage2D && pglViewport && pglGenBuffers && pglBindBuffer &&
+        pglBufferData && pglTexBuffer && pglDeleteBuffers && pglCompressedTexImage2D &&
+        pglGetStringi && pglActiveTexture && pglBlendFuncSeparate && pglBlendEquationSeparate &&
+        pglGenVertexArrays && pglBindVertexArray && pglDeleteVertexArrays &&
+        pglEnableVertexAttribArray && pglDisableVertexAttribArray && pglVertexAttribPointer &&
+        pglCreateShader && pglShaderSource && pglCompileShader && pglGetShaderiv &&
+        pglGetShaderInfoLog && pglDeleteShader && pglCreateProgram && pglAttachShader &&
+        pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog && pglDeleteProgram &&
+        pglUseProgram && pglGetUniformLocation && pglGetUniformBlockIndex &&
         pglUniformBlockBinding && pglBindBufferBase && pglUniformMatrix4fv && pglUniform1i &&
         pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f && pglUniform4fv &&
         pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&

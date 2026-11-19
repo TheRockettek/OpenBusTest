@@ -81,53 +81,11 @@ void Vehicle::updateAnimationStates() {
 }
 
 Matrix4 Vehicle::animationOriginMatrix(const ModelAnimation& animation) const {
-    Matrix4 origin = identityMatrix();
-    for (const ModelAnimationOrigin& operation : animation.originOperations) {
-        Matrix4 operationMatrix = identityMatrix();
-        switch (operation.type) {
-        case ModelAnimationOriginType::Translation:
-            operationMatrix = translationMatrix(operation.value);
-            break;
-        case ModelAnimationOriginType::RotationX:
-            // OpenOMSI applies -angle around model X. Model X converts to
-            // render -Y, which is equivalent to +angle around render +Y.
-            operationMatrix = rotationMatrix(operation.value[0], 0.0, 1.0, 0.0);
-            break;
-        case ModelAnimationOriginType::RotationY:
-            // Model Y converts to render +X.
-            operationMatrix = rotationMatrix(-operation.value[0], 1.0, 0.0, 0.0);
-            break;
-        case ModelAnimationOriginType::RotationZ:
-            // Model Z converts directly to render +Z.
-            operationMatrix = rotationMatrix(-operation.value[0], 0.0, 0.0, 1.0);
-            break;
-        case ModelAnimationOriginType::FromMesh:
-            if (animation.hasMeshTransform) {
-                operationMatrix = animation.meshTransform;
-            }
-            break;
-        }
-        origin = multiplyMatrix4(origin, operationMatrix);
-    }
-    if (animation.originOperations.empty() && animation.hasOrigin) {
-        origin = translationMatrix(animation.origin);
-    }
-    return origin;
+    return openbus::rendering::modelAnimationOriginMatrix(animation);
 }
 
 Matrix4 Vehicle::animationTransform(const ModelAnimation& animation, double amount) const {
-    const Matrix4 origin = animationOriginMatrix(animation);
-    Matrix4 inverseOrigin = identityMatrix();
-    // A singular origin leaves inverseOrigin as identity, which is the desired fallback.
-    static_cast<void>(invertAffineMatrix(origin, inverseOrigin));
-    // anim_rot and anim_trans both use the animation frame's local model
-    // X axis. Model X converts to render -Y. OpenOMSI's -amount rotation
-    // therefore becomes +amount around render +Y; translation converts to
-    // negative render Y.
-    const Matrix4 local = animation.type == "anim_rot"     ? rotationMatrix(amount, 0.0, 1.0, 0.0)
-                          : animation.type == "anim_trans" ? translationMatrix({0.0, -amount, 0.0})
-                                                           : identityMatrix();
-    return multiplyMatrix4(multiplyMatrix4(origin, local), inverseOrigin);
+    return openbus::rendering::modelAnimationTransform(animation, amount);
 }
 
 Matrix4 Vehicle::animationTransformForPart(const DisplayPart& part,
@@ -146,15 +104,16 @@ Matrix4 Vehicle::animationTransformForPart(const DisplayPart& part,
         part.animationCacheGeneration = animationGeneration;
         return part.cachedAnimationTransform;
     }
-    Matrix4 local = identityMatrix();
+    openbus::rendering::ModelAnimationTransformBuilder localTransform;
     for (std::size_t index = 0; index < part.animations.size(); ++index) {
         const ModelAnimation& animation = part.animations[index];
         const double value = variables.get(animation.variable);
         const double amount = index < part.animationStates.size()
                                   ? part.animationStates[index].currentAmount
                                   : value * animation.scale + animation.offset;
-        local = multiplyMatrix4(animationTransform(animation, amount), local);
+        localTransform.append(animation, amount);
     }
+    const Matrix4& local = localTransform.matrix();
     if (!modelPartInheritsAnimationParent(part.fixed, part.animationParent) ||
         std::find(active.begin(), active.end(), &part) != active.end()) {
         if (std::find(active.begin(), active.end(), &part) != active.end()) {

@@ -4,6 +4,104 @@
 #include "assets/VehicleTextureResolver.h"
 #include "config/ScriptTextureLimits.h"
 #include "core/AssetPath.h"
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+#include "app/vehicle/DiligentVehicleSourceBridge.h"
+#endif
+
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+bool Vehicle::prepareDiligentTextureRequests() {
+    if (displayLists.empty()) {
+        return false;
+    }
+
+    const auto findTexture = [](const std::filesystem::path& root,
+                                const std::filesystem::path& path, const std::string& name) {
+        return Vehicle::findTexture(root, name.empty() ? path.string() : name);
+    };
+    const auto startRequest = [this](const std::shared_ptr<TextureCacheEntry>& entry) {
+        if (entry) {
+            startTextureRequest(entry);
+        }
+    };
+    const auto startAuxiliaryRequest = [&](Batch& batch, AuxiliaryTexture& auxiliary) {
+        if (auxiliary.name.empty() ||
+            openbus::scripting::scriptTextureReferenceIndex(auxiliary.name) >= 0) {
+            return;
+        }
+        if (!auxiliary.cacheEntry) {
+            auxiliary.cacheEntry =
+                assets->requestTexture(batch.textureRoot, {}, auxiliary.name, findTexture);
+        }
+        startRequest(auxiliary.cacheEntry);
+    };
+
+    for (DisplayPart& part : displayLists) {
+        for (Batch& batch : part.batches) {
+            updateMaterialChange(batch, false);
+
+            if (batch.materialTextures.empty()) {
+                if ((!batch.textureName.empty() || !batch.texturePath.empty()) &&
+                    !batch.textureCacheEntry) {
+                    batch.textureCacheEntry = textureEntry(batch);
+                    batch.textureRequest = batch.textureCacheEntry->request;
+                    batch.textureLoadStarted = true;
+                }
+                startRequest(batch.textureCacheEntry);
+            } else {
+                for (MaterialTextureSource& source : batch.materialTextures) {
+                    if (!source.textureCacheEntry) {
+                        source.textureCacheEntry =
+                            assets->requestTexture(source.textureRoot, source.texturePath,
+                                                   source.textureName, findTexture);
+                        source.textureRequest = source.textureCacheEntry->request;
+                        source.textureLoadStarted = true;
+                    }
+                    startRequest(source.textureCacheEntry);
+                }
+            }
+
+            for (AuxiliaryTexture* auxiliary :
+                 {&batch.lightmap, &batch.nightmap, &batch.transmap, &batch.bumpmap}) {
+                startAuxiliaryRequest(batch, *auxiliary);
+            }
+
+            if (batch.environmentStrength > 0.0 && !batch.environmentTextureName.empty()) {
+                if (!batch.environmentTextureCacheEntry) {
+                    Batch request;
+                    request.textureRoot = batch.textureRoot;
+                    request.textureName = batch.environmentTextureName;
+                    batch.environmentTextureCacheEntry = textureEntry(request);
+                }
+                startRequest(batch.environmentTextureCacheEntry);
+            }
+
+            if (batch.textTextureIndex < 0 && batch.scriptTextureIndex < 0 &&
+                !batch.freeTextureName.empty() && !batch.freeTextureVariable.empty()) {
+                const std::string selectedName = variables.getString(batch.freeTextureVariable);
+                const std::string textureName =
+                    selectedName.empty() ? batch.freeTextureName : selectedName;
+                if (batch.freeTextureAsset.name != textureName) {
+                    invalidateDiligentAsset();
+                    batch.freeTextureAsset = {};
+                    batch.freeTextureAsset.name = textureName;
+                }
+                startAuxiliaryRequest(batch, batch.freeTextureAsset);
+            }
+        }
+    }
+
+    return true;
+}
+
+bool Vehicle::prepareDiligentBatchSources(
+    openbus::app::vehicle::DiligentVehicleBatchSourceSet& sources) {
+    if (!prepareDiligentTextureRequests()) {
+        sources = {};
+        return false;
+    }
+    return openbus::app::vehicle::makeDiligentVehicleBatchSources(displayLists, sources);
+}
+#endif
 
 bool Vehicle::areTexturesLoaded() const {
     if (!areObjectsLoaded()) {
@@ -581,6 +679,16 @@ void Vehicle::ensureEnvironmentTexture(Batch& batch, bool visible) {
 
 void Vehicle::preloadTextures() {
     TraceScope trace("texture", "Vehicle::preloadTextures");
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    if (!openGLGeometryEnabled) {
+        static_cast<void>(prepareDiligentTextureRequests());
+        return;
+    }
+#else
+    if (!openGLGeometryEnabled) {
+        return;
+    }
+#endif
     const auto preload = [&](std::vector<DisplayPart>& parts) {
         for (DisplayPart& part : parts) {
             for (Batch& batch : part.batches) {

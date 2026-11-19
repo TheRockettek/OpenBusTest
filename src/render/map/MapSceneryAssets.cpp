@@ -7,6 +7,47 @@
 
 namespace openbus::rendering {
 
+MapRenderer::Impl::ModelBatch
+MapSceneLoader::makeOpenGLSceneryBatch(const openbus::map::MapSceneryBatch& source) {
+    Impl::ModelBatch batch;
+    batch.vertexCount = source.vertexCount;
+    batch.boundingRadius = source.boundingRadius;
+    batch.sceneryLodIndex = source.sceneryLodIndex;
+    batch.material.textured = source.material.textured;
+    batch.material.flipTextureY = source.material.flipTextureY;
+    batch.material.weatherLitDynamicTexture = source.material.weatherLitDynamicTexture;
+    batch.material.whiteAmbient = source.material.whiteAmbient;
+    batch.material.specularColor = source.material.specularColor;
+    batch.material.emissionColor = source.material.emissionColor;
+    batch.material.specularPower = source.material.specularPower;
+    batch.material.lightmapStrength = source.material.lightmapStrength;
+    batch.material.bumpmapStrength = source.material.bumpmapStrength;
+    batch.material.environmentStrength = source.material.environmentStrength;
+    batch.material.textureWrapS = textureAddressModeToGl(source.material.addressU);
+    batch.material.textureWrapT = textureAddressModeToGl(source.material.addressV);
+    batch.scriptTextureIndex = source.scriptTextureIndex;
+    batch.textTextureIndex = source.textTextureIndex;
+    batch.freeTextureName = source.freeTextureName;
+    batch.freeTextureVariable = source.freeTextureVariable;
+    batch.texcoordTransXVariable = source.texcoordTransXVariable;
+    batch.texcoordTransYVariable = source.texcoordTransYVariable;
+    batch.lightmapStrengthVariable = source.lightmapStrengthVariable;
+    batch.alphaScaleVariable = source.alphaScaleVariable;
+    batch.auxiliaryMaterialSelection = source.auxiliaryMaterialSelection;
+    batch.textureObjectRoot = source.textureObjectRoot;
+    batch.textureModelRoot = source.textureModelRoot;
+    batch.color = source.color;
+    batch.alpha = source.alpha;
+    batch.alphaMode = source.alphaMode;
+    batch.renderType = source.renderType;
+    batch.noZwrite = source.noZwrite;
+    batch.noZcheck = source.noZcheck;
+    batch.visibilityVariable = source.visibilityVariable;
+    batch.visibilityValue = source.visibilityValue;
+    batch.cullBackFaces = source.cullBackFaces;
+    return batch;
+}
+
 const std::vector<std::string>& MapSceneLoader::loadCarparkVehicleList(int listIndex) {
     const auto [entry, inserted] = carparkVehicleLists_.try_emplace(listIndex);
     if (!inserted) {
@@ -170,7 +211,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                                       " texture=" + preparedTree.textureName);
                     continue;
                 }
-                Impl::ModelBatch batch = preparedTree.batch;
+                Impl::ModelBatch batch = makeOpenGLSceneryBatch(preparedTree.batch);
+                batch.sourceConfigPath = configPath;
                 batch.material.texture = getTexture(preparedTree.texturePath);
                 batch.material.textured = true;
                 if (preparedTree.seasonTexturePaths) {
@@ -178,19 +220,21 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                         std::make_shared<Impl::SeasonalSceneryTextures>();
                     batch.seasonalSceneryTextures->paths = *preparedTree.seasonTexturePaths;
                 }
-                pglGenBuffers(1, &batch.buffer);
-                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                pglBufferData(
-                    GL_ARRAY_BUFFER,
-                    static_cast<std::ptrdiff_t>(preparedTree.vertices.size() * sizeof(ModelVertex)),
-                    preparedTree.vertices.data(), GL_STATIC_DRAW);
-                if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
-                    if (batch.buffer != 0) {
-                        deleteRendererBuffers(1, &batch.buffer);
+                if (impl_->openGLResourcesEnabled) {
+                    pglGenBuffers(1, &batch.buffer);
+                    pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                    pglBufferData(GL_ARRAY_BUFFER,
+                                  static_cast<std::ptrdiff_t>(preparedTree.vertices.size() *
+                                                              sizeof(ModelVertex)),
+                                  preparedTree.vertices.data(), GL_STATIC_DRAW);
+                    if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
+                        if (batch.buffer != 0) {
+                            deleteRendererBuffers(1, &batch.buffer);
+                        }
+                        recordSkipped(skipped, "tree scenery batches rejected by OpenGL upload",
+                                      openbus::pathToUtf8(configPath.filename()));
+                        continue;
                     }
-                    recordSkipped(skipped, "tree scenery batches rejected by OpenGL upload",
-                                  openbus::pathToUtf8(configPath.filename()));
-                    continue;
                 }
                 batchIndexes.push_back(impl_->sceneryBatches.size());
                 impl_->sceneryBatches.push_back(batch);
@@ -325,7 +369,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 throw std::logic_error("Prepared scenery batch vertices were not retained");
             }
             const std::vector<ModelVertex>& vertices = materialVertices->second;
-            Impl::ModelBatch batch = preparedBatch.batch;
+            Impl::ModelBatch batch = makeOpenGLSceneryBatch(preparedBatch.batch);
+            batch.sourceConfigPath = configPath;
             if (!preparedBatch.texturePath.empty()) {
                 batch.material.texture = getTexture(preparedBatch.texturePath);
                 batch.material.textured = true;
@@ -423,19 +468,21 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                     " noZwrite=" + (batch.noZwrite ? "true" : "false") +
                     " texture=" + openbus::pathToUtf8(preparedBatch.texturePath));
             }
-            pglGenBuffers(1, &batch.buffer);
-            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
-                          vertices.data(), GL_STATIC_DRAW);
-            if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
-                if (batch.buffer != 0) {
-                    deleteRendererBuffers(1, &batch.buffer);
+            if (impl_->openGLResourcesEnabled) {
+                pglGenBuffers(1, &batch.buffer);
+                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
+                              vertices.data(), GL_STATIC_DRAW);
+                if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
+                    if (batch.buffer != 0) {
+                        deleteRendererBuffers(1, &batch.buffer);
+                    }
+                    recordSkipped(skipped, "scenery model batches rejected by OpenGL upload",
+                                  openbus::pathToUtf8(
+                                      openbus::pathFromUtf8(preparedBatch.meshKey).filename()));
+                    continue;
                 }
-                recordSkipped(
-                    skipped, "scenery model batches rejected by OpenGL upload",
-                    openbus::pathToUtf8(openbus::pathFromUtf8(preparedBatch.meshKey).filename()));
-                continue;
             }
             batchIndexes.push_back(impl_->sceneryBatches.size());
             impl_->sceneryBatches.push_back(batch);

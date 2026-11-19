@@ -2,7 +2,12 @@
 
 #include "render/CameraMath.h"
 #include "render/GlCompat.h"
+#include "render/HumanSkinTypes.h"
+#include "render/MaterialConstants.h"
+#include "render/MapLighting.h"
 #include "render/MotionData.h"
+#include "render/PrimitiveVertex.h"
+#include "render/VehicleSpotlightData.h"
 #include "core/WeatherState.h"
 
 #include <array>
@@ -15,7 +20,7 @@ namespace openbus::rendering {
 
 constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
 
-enum class GpuTimingPass : std::uint8_t { MainView, Reflection };
+enum class GpuTimingPass : std::uint8_t { MainView, Reflection, SpotlightShadows };
 
 class GpuTimerScope {
   public:
@@ -31,19 +36,11 @@ class GpuTimerScope {
 
 void beginGpuTimingFrame();
 
-struct VehicleSpotlight {
-    std::array<double, 3> position = {};
-    std::array<double, 3> direction = {};
-    std::array<double, 3> color = {};
-    double range = 0.0;
-    double innerAngleDegrees = 0.0;
-    double outerAngleDegrees = 0.0;
-};
-
-struct MapPointLight {
-    std::array<double, 3> position = {};
-    std::array<double, 3> color = {};
-    double radius = 0.0;
+struct VehicleSpotlightShadow {
+    Matrix4 viewToLightClip = {};
+    // Normalized atlas origin and extent; zero extent denotes an unshadowed light.
+    std::array<float, 4> atlasRect = {};
+    float strength = 1.0F;
 };
 
 struct StaticMapLightBuffer {
@@ -67,38 +64,6 @@ struct StaticMapLightView {
     std::size_t sourceIndex = 0;
 };
 
-enum class HumanBoneSlot : std::uint8_t {
-    LeftUpperLeg = 0,
-    RightUpperLeg = 1,
-    LeftLowerLeg = 2,
-    RightLowerLeg = 3,
-    LeftUpperArm = 4,
-    RightUpperArm = 5,
-    LeftLowerArm = 6,
-    RightLowerArm = 7,
-    Hip = 8,
-    Main = 9,
-    Head = 10,
-    LeftHand = 11,
-    RightHand = 12,
-    Count = 13,
-};
-inline constexpr std::size_t HUMAN_BONE_COUNT = static_cast<std::size_t>(HumanBoneSlot::Count);
-inline constexpr std::size_t HUMAN_WEIGHT_COUNT = 16;
-
-constexpr std::size_t humanBoneSlotIndex(HumanBoneSlot slot) noexcept {
-    return static_cast<std::size_t>(slot);
-}
-
-struct PrimitiveVertex {
-    float x;
-    float y;
-    float z;
-    float r;
-    float g;
-    float b;
-};
-
 // Renderer-owned GL storage for cached primitive vertices.
 struct StaticPrimitiveBuffer {
     GLuint buffer = 0;
@@ -112,8 +77,6 @@ struct StaticPrimitiveBuffer {
                contentRevision != requestedContentRevision;
     }
 };
-
-inline constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 
 struct ModelMaterial {
     GLuint texture = 0;
@@ -164,33 +127,6 @@ struct ModelMaterial {
     float texcoordOffsetY = 0.0f;
 };
 
-struct HumanGaitParameters {
-    double phaseRadians = 0.0;
-    double weight = 0.0;
-    double heightMeters = 0.0;
-    double upperArmBetaDegrees = 66.0;
-    double armSwing = 1.0;
-    double hipSway = 1.0;
-    double waistAnimation = 0.0;
-    double shoulderXHeightFraction = 0.105;
-    double shoulderZHeightFraction = 0.76;
-    double hipXHeightFraction = 0.06;
-    double hipZHeightFraction = 0.5;
-    double kneeXHeightFraction = 0.08;
-    double kneeYHeightFraction = 0.0;
-    double kneeZHeightFraction = 0.25;
-    double elbowXHeightFraction = 0.25;
-    double elbowZHeightFraction = 0.76;
-    double handXHeightFraction = 0.40;
-    double handZHeightFraction = 0.76;
-    double fingerXHeightFraction = 0.5;
-    double fingerZHeightFraction = 0.76;
-    double neckYHeightFraction = 0.0;
-    double neckZHeightFraction = 0.85;
-    double waistYHeightFraction = 0.0;
-    double waistZHeightFraction = 0.6;
-};
-
 struct HumanSkinDraw {
     GLuint weightBuffer = 0;
     const std::array<Matrix4, HUMAN_BONE_COUNT>* palette = nullptr;
@@ -228,6 +164,15 @@ struct LightingBufferUploadStats {
     std::uint64_t vehicleSets = 0;
     std::uint64_t vehicleLightsTotal = 0;
     std::size_t vehicleLightsMax = 0;
+    std::uint64_t vehicleSelectionViews = 0;
+    std::size_t playerSpotlightDefinitionsMax = 0;
+    std::size_t aiSpotlightDefinitionsMax = 0;
+    std::uint64_t playerSpotlightCandidatesTotal = 0;
+    std::uint64_t aiSpotlightCandidatesTotal = 0;
+    std::uint64_t spotlightShadowFrames = 0;
+    std::uint64_t spotlightShadowSelectedTotal = 0;
+    std::size_t spotlightShadowSelectedMax = 0;
+    std::uint64_t spotlightShadowUpdates = 0;
     std::uint64_t vehicleSpotlightTileUploads = 0;
     std::uint64_t vehicleSpotlightTileBytes = 0;
     std::uint64_t vehicleSpotlightTileSets = 0;
@@ -235,24 +180,55 @@ struct LightingBufferUploadStats {
     std::uint64_t vehicleSpotlightTileAssignmentsTotal = 0;
     std::size_t vehicleSpotlightTileAssignmentsMax = 0;
     std::uint64_t vehicleSpotlightTileFallbackSets = 0;
+    std::uint64_t vehicleSpotlightGpuTileSets = 0;
+    std::uint64_t vehicleSpotlightGpuTileCountTotal = 0;
+    std::uint64_t vehicleSpotlightGpuTileAssignmentsTotal = 0;
     std::uint64_t mapUploads = 0;
     std::uint64_t mapBytes = 0;
     std::uint64_t staticMapUploads = 0;
     std::uint64_t staticMapBytes = 0;
     std::uint64_t mapViewPreparations = 0;
     std::uint64_t mapViewReuses = 0;
+    std::uint64_t mapSelectionCalls = 0;
+    std::size_t mapRegisteredMax = 0;
+    std::uint64_t mapTileCandidatesTotal = 0;
+    std::size_t mapTileCandidatesMax = 0;
     std::uint64_t mapSets = 0;
     std::uint64_t mapLightsTotal = 0;
     std::size_t mapLightsMax = 0;
+    std::uint64_t mapGpuTileSets = 0;
+    std::uint64_t mapGpuTileCountTotal = 0;
+    std::uint64_t mapGpuTileAssignmentsTotal = 0;
+    std::uint64_t mapGpuTileMaxSamples = 0;
+    std::size_t mapGpuTileAssignmentsMax = 0;
+    std::uint64_t mapGpuTileFallbackSets = 0;
+    std::uint64_t mapGpuTileFallbackUnavailable = 0;
+    std::uint64_t mapGpuTileFallbackVertexLighting = 0;
+    std::uint64_t mapGpuTileFallbackViewport = 0;
+    std::uint64_t mapGpuTileFallbackCapacity = 0;
+    std::uint64_t mapGpuTileFallbackDark = 0;
+    std::uint64_t mapGpuTileFallbackDensity = 0;
+    std::uint64_t mapGpuTileFallbackCompute = 0;
 };
 
 LightingBufferUploadStats lightingBufferUploadStats();
 void resetLightingBufferUploadStats();
 void recordMapLightViewPreparation(bool reused);
+void recordMapLightSelection(std::size_t registered, std::size_t tileCandidates);
+void recordVehicleSpotlightSelection(std::size_t playerDefinitions, std::size_t aiDefinitions,
+                                     std::size_t playerCandidates, std::size_t aiCandidates);
+void recordSpotlightShadowFrame(std::size_t selected, std::size_t updated);
 std::size_t mapLightSelectionLimit();
+std::size_t vehicleSpotlightSelectionLimit();
 void configureMapLightSelectionLimit(std::size_t limit);
 // Positions and directions are in the current view space.
 void setVehicleSpotlights(const std::vector<VehicleSpotlight>& lights);
+[[nodiscard]] bool vehicleSpotlightShadowsSupported();
+// Entries correspond to the first lights in the most recent spotlight upload.
+void setVehicleSpotlightShadows(GLuint depthAtlas,
+                                const std::vector<VehicleSpotlightShadow>& shadows);
+// Switches the existing material programs to depth-only shadow-caster shading.
+void setSpotlightShadowDepthPass(bool enabled, float materialAlphaCutoff = 0.0F);
 // Map-light positions are in the current view space; strength normally follows darkness.
 void setMapLights(const std::vector<MapPointLight>& lights, double strength);
 // Source indices refer to immutable registered lights; increment revision if they change.
@@ -265,6 +241,8 @@ void setStaticMapLights(StaticMapLightBuffer& cache, const std::vector<MapPointL
 void releaseStaticMapLights(StaticMapLightBuffer& cache);
 // An absent brightness preserves the renderer's default daylight appearance.
 std::array<float, 3> weatherBackgroundColor(std::optional<double> brightness);
+// Shared configured floor for OpenGL and Diligent reflection ambient lighting.
+float configuredReflectionAmbientFloor();
 void setWeatherLighting(std::optional<double> brightness, bool reflectionPass = false);
 // Visibility is the distance at which approximately 2% of scene contrast remains.
 // An absent value disables fog.

@@ -850,7 +850,10 @@ bool TextureLoader::isSafeCompressedDds(const std::filesystem::path& path) {
         return width > 0 && height > 0 && fileSize >= 148;
     }
     const std::size_t blockSize =
-        fourCC == "DXT1" ? 8 : (fourCC == "DXT3" || fourCC == "DXT5" ? 16 : 0);
+        fourCC == "DXT1" || fourCC == "ATI1" || fourCC == "AT1N"
+            ? 8
+            : (fourCC == "DXT3" || fourCC == "DXT5" || fourCC == "ATI2" || fourCC == "AT2N" ? 16
+                                                                                            : 0);
     if (width == 0 || height == 0 || blockSize == 0) {
         return false;
     }

@@ -28,6 +28,7 @@ struct GraphicsPreferences {
     double reflectionMaxFps = 0.0;
     double minimumObjectSizeMainPercent = 0.0;
     double minimumObjectSizeMirrorsPercent = 0.0;
+    std::string temporalDebugView = "off";
 
     bool operator==(const GraphicsPreferences&) const = default;
 };

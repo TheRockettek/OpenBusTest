@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
 #include <vector>
 
 namespace openbus::rendering {
@@ -46,28 +47,46 @@ void setProjectionMatrix(const Matrix4& matrix) {
 }
 
 void setPerspective(double width, double height, double fieldOfView) {
+    cachedProjectionMatrix = makePerspectiveMatrix(width, height, fieldOfView);
+}
+
+Matrix4 makePerspectiveMatrix(double width, double height, double fieldOfView) {
+    if (!std::isfinite(width) || !std::isfinite(height) || !std::isfinite(fieldOfView) ||
+        width <= 0.0 || height <= 0.0 || fieldOfView <= 0.0 || fieldOfView >= 180.0) {
+        throw std::invalid_argument("Perspective dimensions and field of view are invalid");
+    }
+
     const double aspect = width / height;
     const double nearPlane = 0.1;
     const double farPlane = CAMERA_FAR_PLANE;
     const double fov = fieldOfView * 3.141592653589793 / 180.0;
     const double top = nearPlane * std::tan(fov * 0.5);
     const double right = top * aspect;
-    cachedProjectionMatrix = {nearPlane / right,
-                              0.0,
-                              0.0,
-                              0.0,
-                              0.0,
-                              nearPlane / top,
-                              0.0,
-                              0.0,
-                              0.0,
-                              0.0,
-                              -(farPlane + nearPlane) / (farPlane - nearPlane),
-                              -1.0,
-                              0.0,
-                              0.0,
-                              -(2.0 * farPlane * nearPlane) / (farPlane - nearPlane),
-                              0.0};
+    if (!std::isfinite(aspect) || !std::isfinite(top) || !std::isfinite(right) || aspect <= 0.0 ||
+        top <= 0.0 || right <= 0.0) {
+        throw std::invalid_argument("Perspective parameters produce invalid frustum dimensions");
+    }
+    const Matrix4 projection = {nearPlane / right,
+                                0.0,
+                                0.0,
+                                0.0,
+                                0.0,
+                                nearPlane / top,
+                                0.0,
+                                0.0,
+                                0.0,
+                                0.0,
+                                -(farPlane + nearPlane) / (farPlane - nearPlane),
+                                -1.0,
+                                0.0,
+                                0.0,
+                                -(2.0 * farPlane * nearPlane) / (farPlane - nearPlane),
+                                0.0};
+    if (!std::all_of(projection.begin(), projection.end(),
+                     [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("Perspective parameters produce a non-finite matrix");
+    }
+    return projection;
 }
 
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ) {
@@ -76,9 +95,20 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
 
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
             double upX, double upY, double upZ) {
-    double forwardX = targetX - eyeX;
-    double forwardY = targetY - eyeY;
-    double forwardZ = targetZ - eyeZ;
+    cachedModelViewMatrix = makeLookDirectionMatrix(
+        {eyeX, eyeY, eyeZ}, {targetX - eyeX, targetY - eyeY, targetZ - eyeZ}, {upX, upY, upZ});
+}
+
+Matrix4 makeLookDirectionMatrix(const std::array<double, 3>& eye,
+                                const std::array<double, 3>& direction,
+                                const std::array<double, 3>& up) {
+    const auto [eyeX, eyeY, eyeZ] = eye;
+    double forwardX = direction[0];
+    double forwardY = direction[1];
+    double forwardZ = direction[2];
+    double upX = up[0];
+    double upY = up[1];
+    double upZ = up[2];
     const double forwardLength =
         std::sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ);
     if (!std::isfinite(forwardLength) || forwardLength <= 1.0e-12) {
@@ -129,7 +159,7 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
         sideZ, correctedUpZ, -forwardZ, 0.0, 0.0,   0.0,          0.0,       1.0};
     const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0,   1.0,   0.0,   0.0,
                                  0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
-    cachedModelViewMatrix = multiply(rotation, translation);
+    return multiply(rotation, translation);
 }
 
 void applyPose(const BodyPose& pose) {

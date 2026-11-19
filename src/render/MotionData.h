@@ -3,6 +3,7 @@
 #include "render/CameraMath.h"
 
 #include <cstdint>
+#include <limits>
 #include <unordered_map>
 
 namespace openbus::rendering {
@@ -44,9 +45,9 @@ class MotionHistory {
     void beginFrame(std::uint64_t frameId, double timestampSeconds, int width, int height,
                     const Matrix4& view, const Matrix4& projection, int displayWidth = 0,
                     int displayHeight = 0);
-    [[nodiscard]] MotionTransform previousModelView(const Matrix4& currentModelView,
-                                                    MotionObjectKey key = {},
-                                                    bool geometryHistoryValid = true);
+    [[nodiscard]] MotionTransform previousModelView(
+        const Matrix4& currentModelView, MotionObjectKey key = {}, bool geometryHistoryValid = true,
+        double maximumTranslationDeltaMeters = std::numeric_limits<double>::infinity());
     void completeFrame();
     void invalidate() noexcept;
 

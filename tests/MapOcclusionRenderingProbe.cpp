@@ -210,7 +210,7 @@ void runProbe(const std::filesystem::path& root) {
     glDisable(GL_DITHER);
     setPerspective(64, 64, 90);
     const auto draw = [&](bool enabled, const Matrix4& view, bool cull, bool masked,
-                          double threshold = 0.0) {
+                          double threshold = 0.0, bool expectInjectedUploadError = false) {
         setQueries(enabled);
         queries.clear();
         indirectArraysDraws = 0;
@@ -242,7 +242,10 @@ void runProbe(const std::filesystem::path& root) {
                 "Depth state was not restored");
         std::vector<std::uint8_t> pixels(64 * 64 * 4);
         glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-        require(glGetError() == GL_NO_ERROR, "Map occlusion draw produced a GL error");
+        const GLenum drawError = glGetError();
+        require(drawError == (expectInjectedUploadError ? GL_INVALID_ENUM : GL_NO_ERROR),
+                "Map occlusion draw produced an unexpected GL error");
+        require(glGetError() == GL_NO_ERROR, "Map occlusion draw left a GL error pending");
         return pixels;
     };
 
@@ -265,7 +268,7 @@ void runProbe(const std::filesystem::path& root) {
     bufferData = pglBufferData;
     pglBufferData = recordBufferData;
     failNextProxyUpload = true;
-    const auto failurePixels = draw(true, failureView, false, false);
+    const auto failurePixels = draw(true, failureView, false, false, 0.0, true);
     pglBufferData = bufferData;
     require(!failNextProxyUpload, "Proxy upload failure was not injected");
     require(failurePixels == failureBaseline, "Failed proxy upload hid visible scenery");

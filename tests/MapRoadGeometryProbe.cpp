@@ -1,4 +1,4 @@
-#include "map/MapRoadGeometry.h"
+#include "map/MapRoadRenderGeometry.h"
 
 #include <cmath>
 #include <iostream>
@@ -793,6 +793,51 @@ void runMixedWidthJoinProbe() {
     }
 }
 
+void runRenderBatchPreparationProbe() {
+    using namespace openbus::map;
+    MapSplineProfile profile;
+    profile.textures = {"missing-road-texture.bmp"};
+    MapSplineProfileSection section;
+    section.textureIndex = 0;
+    section.points = {{-2.0, 0.0, 0.0, 0.0}, {2.0, 0.0, 1.0, 0.0}};
+    profile.sections.push_back(section);
+
+    MapSplinePlacement firstSpline;
+    firstSpline.geometryValid = true;
+    firstSpline.length = 10.0;
+    MapSplinePlacement secondSpline = firstSpline;
+    secondSpline.localY = 20.0;
+    const std::filesystem::path profilePath = "objects/road/road.sli";
+    const std::vector<MapRoadSplineRenderInput> inputs = {
+        {firstSpline, {}, profilePath, &profile},
+        {secondSpline, {}, profilePath, &profile}};
+    const auto batches =
+        prepareMapRoadRenderBatches(0, 0, MapCoordinates{}, "missing-omsi-root", inputs);
+    require(batches.size() == 1, "same-profile untextured splines share a render batch");
+    const RoadMeshGeometry& road = batches.begin()->second;
+    require(!road.textured && road.texturePath.empty(),
+            "missing road textures retain usable untextured geometry");
+    require(road.vertices.size() >= 8 && road.indices.size() >= 12,
+            "render batch contains geometry from both splines");
+    requireNear(road.minY, 0.0, "render batch tracks its minimum world-space Y");
+    requireNear(road.maxY, 30.0, "render batch tracks its maximum world-space Y");
+
+    MapRoadConnectionIndex firstIndex;
+    firstIndex.addSpline(firstSpline, 0, 0);
+    firstIndex.finalize();
+    MapRoadConnectionIndex matchingIndex;
+    matchingIndex.addSpline(firstSpline, 0, 0);
+    matchingIndex.finalize();
+    MapSplinePlacement changedSpline = firstSpline;
+    changedSpline.length += 1.0;
+    MapRoadConnectionIndex changedIndex;
+    changedIndex.addSpline(changedSpline, 0, 0);
+    changedIndex.finalize();
+    require(firstIndex.sourceSignature() == matchingIndex.sourceSignature() &&
+                firstIndex.sourceSignature() != changedIndex.sourceSignature(),
+            "road connection source signature tracks geometry changes deterministically");
+}
+
 } // namespace
 
 int main() {
@@ -803,6 +848,7 @@ int main() {
         runAuthoredSkewJoinProbe();
         runHeightProfileCantProbe();
         runMixedWidthJoinProbe();
+        runRenderBatchPreparationProbe();
     } catch (const std::exception& error) {
         std::cerr << "map road geometry probe failed: " << error.what() << '\n';
         return 1;

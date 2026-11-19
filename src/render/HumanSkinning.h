@@ -2,7 +2,7 @@
 
 #include "assets/ObjLoader.h"
 #include "config/ModelConfigTypes.h"
-#include "render/CoreRenderer.h"
+#include "render/HumanSkinTypes.h"
 
 #include <array>
 #include <cstddef>
@@ -10,9 +10,6 @@
 #include <vector>
 
 namespace openbus::rendering {
-
-using HumanVertexWeights = std::array<float, HUMAN_WEIGHT_COUNT>;
-using HumanBonePalette = std::array<Matrix4, HUMAN_BONE_COUNT>;
 
 constexpr std::optional<HumanBoneSlot> humanBoneSlotFromOmsiIndex(int index) noexcept {
     constexpr int firstIndex = -2;

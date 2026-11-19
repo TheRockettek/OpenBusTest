@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -62,18 +63,22 @@ inline bool spotlightOutsideView(const std::vector<ModelSpotlight>& definitions,
 struct SpotlightCandidate {
     openbus::rendering::VehicleSpotlight light;
     bool player = false;
+    double viewDistance = 0.0;
+    std::uint64_t vehicleId = 0;
 };
 
 inline std::vector<openbus::rendering::VehicleSpotlight>
 selectSpotlights(std::vector<SpotlightCandidate>& candidates, std::size_t limit) {
+    for (auto& candidate : candidates) {
+        const auto& position = candidate.light.position;
+        candidate.viewDistance = std::hypot(position[0], position[1], position[2]);
+    }
     std::stable_sort(candidates.begin(), candidates.end(),
                      [](const SpotlightCandidate& a, const SpotlightCandidate& b) {
                          if (a.player != b.player) {
                              return a.player;
                          }
-                         const auto& ap = a.light.position;
-                         const auto& bp = b.light.position;
-                         return std::hypot(ap[0], ap[1], ap[2]) < std::hypot(bp[0], bp[1], bp[2]);
+                         return a.viewDistance < b.viewDistance;
                      });
     std::vector<openbus::rendering::VehicleSpotlight> lights;
     lights.reserve(std::min(limit, candidates.size()));

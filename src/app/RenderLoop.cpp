@@ -2,16 +2,30 @@
 
 #include "app/RenderLoopInternal.h"
 #include "app/MapTrafficWorker.h"
-#include "app/ImGuiLayer.h"
+#include "app/PassengerCoinGeometry.h"
+#include "app/vehicle/VehicleSpotlight.h"
 #include "app/vehicle/VehicleDefinition.h"
+#include "app/vehicle/SpotlightShadowScheduling.h"
+#include "app/traffic/PassengerMotionKeys.h"
 #include "config/HumanConfigLoader.h"
 #include "core/AssetPath.h"
 #include "render/map/MapRenderer.h"
 #include "map/MapSplineProfile.h"
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+#include "app/DiligentCameraBridge.h"
+#include "app/DiligentFrameRenderer.h"
+#include "app/DiligentHumanBridge.h"
+#include "app/DiligentMapBridge.h"
+#include "app/DiligentWindowBridge.h"
+#include "app/vehicle/DiligentVehicleBridge.h"
+#include "app/vehicle/DiligentVehicleSceneBridge.h"
+#include "render/diligent/DiligentMapTileAsset.h"
+#endif
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
 
 namespace {
@@ -125,9 +139,6 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         gameLog.Warning("Graphics preferences were not loaded: " + graphicsPreferencesError_);
         activeGraphicsPreferences_ = graphicsPreferences_.values;
     }
-    reflectionRenderer_ = std::make_unique<openbus::rendering::ReflectionRenderer>(
-        graphicsPreferences_.values.reflectionSize, graphicsPreferences_.values.reflectionInterval,
-        graphicsPreferences_.values.reflectionMaxFps);
     const char* odometerMode = openbus::getEnvironment("OPENBUS_ODOMETER_MODE");
     vehicleOdometerMode_ = odometerMode ? openbus::app::parseVehicleOdometerMode(odometerMode)
                                         : openbus::app::parseVehicleOdometerMode();
@@ -296,9 +307,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         gameLog.Error("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
     }
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     const bool benchmarkMode = parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
     int windowWidth = benchmarkMode ? width : graphicsPreferences_.values.width;
     int windowHeight = benchmarkMode ? height : graphicsPreferences_.values.height;
@@ -361,24 +370,13 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         glfwWindowHint(GLFW_DECORATED, windowMode == "borderless" ? GLFW_FALSE : GLFW_TRUE);
     }
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
-#ifdef __APPLE__
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-#endif
     glfwWindowHint(GLFW_REFRESH_RATE, refreshRate);
     window_ = glfwCreateWindow(windowWidth, windowHeight, title, windowMonitor, nullptr);
     glfwWindowHint(GLFW_REFRESH_RATE, GLFW_DONT_CARE);
     if (!window_) {
-        gameLog.Warning("OpenGL 4.3 context unavailable; retrying 3.3 with CPU culling");
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        glfwWindowHint(GLFW_REFRESH_RATE, refreshRate);
-        window_ = glfwCreateWindow(windowWidth, windowHeight, title, windowMonitor, nullptr);
-        glfwWindowHint(GLFW_REFRESH_RATE, GLFW_DONT_CARE);
-    }
-    if (!window_) {
-        gameLog.Error("Failed to create OpenGL window");
+        gameLog.Error("Failed to create Diligent no-API window");
         glfwTerminate();
-        throw std::runtime_error("Failed to create OpenGL window");
+        throw std::runtime_error("Failed to create Diligent no-API window");
     }
     if (benchmarkMode) {
         gameLog.Log(
@@ -399,64 +397,88 @@ RenderLoop::RenderLoop(int width, int height, const char* title,
         }
         glfwSetWindowPos(window_, monitorX, monitorY);
     }
-    glfwMakeContextCurrent(window_);
-    glfwGetFramebufferSize(window_, &framebufferWidth_, &framebufferHeight_);
+    glfwSetWindowUserPointer(window_, this);
+    glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    try {
+        initializeDiligentBackend();
+    } catch (...) {
+        glfwDestroyWindow(window_);
+        window_ = nullptr;
+        glfwTerminate();
+        throw;
+    }
+#else
+    glfwDestroyWindow(window_);
+    window_ = nullptr;
+    glfwTerminate();
+    throw std::runtime_error("OpenBus requires the Diligent Vulkan renderer");
+#endif
     clickableCursor_ = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
     mouseSteeringCursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
-    glfwSetWindowUserPointer(window_, this);
     if (mouseLookEnabled_) {
         glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         glfwGetCursorPos(window_, &previousCursorX_, &previousCursorY_);
     }
-    glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
+    gameLog.Log("RenderLoop initialized");
+}
+
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+void RenderLoop::initializeDiligentBackend() {
+    if (window_ == nullptr) {
+        throw std::logic_error("Diligent initialization requires a valid GLFW window");
+    }
+    diligentDebugView_ =
+        openbus::app::diligentDebugViewForPreference(graphicsPreferences_.values.temporalDebugView);
+    framePresenter_ =
+        openbus::app::createDiligentFrameRenderer(*window_, graphicsPreferences_.values);
+    glfwGetFramebufferSize(window_, &framebufferWidth_, &framebufferHeight_);
     const char* vsyncSetting = openbus::getEnvironment("OPENBUS_VSYNC");
     vsyncEnabled_ = vsyncSetting == nullptr
                         ? graphicsPreferences_.values.vsync
                         : (std::string(vsyncSetting) != "0" && std::string(vsyncSetting) != "off" &&
                            std::string(vsyncSetting) != "false");
-    glfwSwapInterval(vsyncEnabled_ ? 1 : 0);
-    gameLog.Log(std::string("VSync ") + (vsyncEnabled_ ? "enabled" : "disabled"));
-    if (!loadOpenGLFunctions()) {
-        glfwDestroyWindow(window_);
-        window_ = nullptr;
-        glfwTerminate();
-        throw std::runtime_error("OpenGL VBO functions are unavailable");
+    framePresenter_->setVerticalSync(vsyncEnabled_);
+    auto* diligentRenderer =
+        dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
+    if (diligentRenderer == nullptr) {
+        throw std::logic_error("Diligent initialization did not create a Diligent frame renderer");
     }
-    const auto textureAnisotropy = configureMaterialTextureAnisotropy(
-        static_cast<float>(graphicsPreferences_.values.anisotropicFiltering));
-    configureMaterialTextureMipmaps(graphicsPreferences_.values.generateTextureMipmaps);
-    configureMapTextureScale(graphicsPreferences_.values.mapTextureScale);
-    openbus::rendering::configureMapLightSelectionLimit(
-        static_cast<std::size_t>(graphicsPreferences_.values.sceneryLightLimit));
-    textureAnisotropySupported_ = textureAnisotropy.supported;
-    maximumTextureAnisotropy_ = textureAnisotropy.maximum;
-    appliedTextureAnisotropy_ = textureAnisotropy.applied;
+    const auto maximumAnisotropy = diligentRenderer->maximumAnisotropy();
+    textureAnisotropySupported_ = maximumAnisotropy > 1;
+    maximumTextureAnisotropy_ = static_cast<float>(maximumAnisotropy);
+    appliedTextureAnisotropy_ = static_cast<float>(
+        std::min(static_cast<Diligent::Uint32>(graphicsPreferences_.values.anisotropicFiltering),
+                 maximumAnisotropy));
     if (graphicsPreferences_.values.anisotropicFiltering > 1 && !textureAnisotropySupported_) {
         gameLog.Warning("Anisotropic filtering was requested but is not supported by this "
-                        "OpenGL device.");
+                        "Diligent device.");
     } else {
-        gameLog.Log(
-            "Material texture anisotropic filtering: " + std::to_string(appliedTextureAnisotropy_) +
-            "x (device maximum " + std::to_string(maximumTextureAnisotropy_) + "x)");
+        gameLog.Log("Diligent material texture anisotropic filtering: " +
+                    std::to_string(appliedTextureAnisotropy_) + "x (device maximum " +
+                    std::to_string(maximumTextureAnisotropy_) + "x)");
     }
-    if (!openbus::rendering::initializeCoreRenderer()) {
-        glfwDestroyWindow(window_);
-        window_ = nullptr;
-        glfwTerminate();
-        throw std::runtime_error("Failed to initialize core OpenGL renderer");
-    }
-    openbus::rendering::setAntiAliasingMode(
-        graphicsPreferences_.values.antiAliasingMode);
-    imguiLayer_ = std::make_unique<ImGuiLayer>(window_);
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
-    gameLog.Log("RenderLoop initialized");
+    gameLog.Log("Diligent Vulkan renderer initialized; VSync " +
+                std::string(vsyncEnabled_ ? "enabled" : "disabled"));
+}
+#endif
+
+void RenderLoop::shutdownRendererBackend() {
+    framePresenter_.reset();
 }
 
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
     persistPlayerOdometer(true);
-    imguiLayer_.reset();
+    if (framePresenter_ != nullptr) {
+        try {
+            framePresenter_->waitForIdle();
+        } catch (const std::exception& error) {
+            gameLog.Error("Renderer shutdown wait failed: " + std::string(error.what()));
+        } catch (...) {
+            gameLog.Error("Renderer shutdown wait failed with an unknown error");
+        }
+    }
     trafficFleet_.worker.reset();
     for (TrafficVehicleState& state : trafficFleet_.vehicles) {
         if (!state.pendingVehicle.valid()) {
@@ -475,13 +497,12 @@ RenderLoop::~RenderLoop() {
     if (window_ != nullptr && mouseLookEnabled_) {
         glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
-    reflectionRenderer_->destroy();
     mapRenderer_.reset();
     playerVehicle_ = nullptr;
     assetRequestManager_->join();
     vehicles_.clear();
     Vehicle::clearSharedDisplayCache();
-    openbus::rendering::shutdownCoreRenderer();
+    shutdownRendererBackend();
     assetRequestManager_.reset();
 
     if (clickableCursor_ != nullptr) {
@@ -588,7 +609,6 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                 }
             }
         }
-        reflectionRenderer_->initialize(vehicleCameras_);
     }
     const double modelOffsetZ = -vehicleConfiguration.centerOfGravityHeight;
     std::unique_ptr<Vehicle> model;
@@ -599,7 +619,7 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
             modelOffsetZ, loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_,
             soundViewpoint_, isAiVehicle, false, std::move(setupOptions),
             configKind == VehicleFileKind::Bus, activeGraphicsPreferences_.vehicleTextureScale,
-            activeGraphicsPreferences_.vehicleFrustumCulling);
+            activeGraphicsPreferences_.vehicleFrustumCulling, false);
     }
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
@@ -998,7 +1018,7 @@ bool RenderLoop::AddTrafficVehicle(
                             rearDefinition, rearPlacement, rearModelOffsetZ, loadingPolicy,
                             *assetRequests, *simulationState, *soundEngine, *soundViewpoint, true,
                             true, std::move(rearSetupOptions), true, vehicleTextureScale,
-                            vehicleFrustumCulling);
+                            vehicleFrustumCulling, false);
                     });
                 trafficState.hasCoupledVehicle = true;
             }
@@ -1015,7 +1035,7 @@ bool RenderLoop::AddTrafficVehicle(
             return std::make_unique<Vehicle>(
                 definition, configuredPlacement, modelOffsetZ, loadingPolicy, *assetRequests,
                 *simulationState, *soundEngine, *soundViewpoint, true, true, VehicleSetupOptions{},
-                isBus, vehicleTextureScale, vehicleFrustumCulling);
+                isBus, vehicleTextureScale, vehicleFrustumCulling, false);
         });
     trafficState.pendingVehicle = std::move(pendingVehicle);
     trafficFleet_.vehicles.push_back(std::move(trafficState));
@@ -1385,6 +1405,7 @@ void RenderLoop::RemovePlayerVehicle() {
 }
 
 void RenderLoop::ResetForStartupMenu() {
+    invalidateTemporalHistory();
     weatherSelection_.discardPending();
     weatherUiMessage_.clear();
     weatherUiError_ = false;
@@ -1407,6 +1428,8 @@ void RenderLoop::ResetForStartupMenu() {
     passengerCurrency_ = {};
     passengerCoinAnimations_.clear();
     observedPassengerCoinCounts_.clear();
+    diligentHumanRenderSources_.clear();
+    diligentHumanBoundingRadii_.clear();
     passengerNetwork_ = {};
     passengerTimetableCourses_.clear();
     playerTimetableCatalog_.invalidate();
@@ -1439,6 +1462,8 @@ void RenderLoop::ResetForStartupMenu() {
     playerTimetableStopVisitLatch_.reset();
     ++playerPassengerServiceGeneration_;
     mapRenderer_.reset();
+    diligentHumanRenderSources_.clear();
+    diligentHumanBoundingRadii_.clear();
     vehicleCameras_.clear();
     trafficReflectionViewsByIndex_.clear();
     trafficReflectionCameraViews_.clear();
@@ -1447,7 +1472,6 @@ void RenderLoop::ResetForStartupMenu() {
     mouseControlEnabled_ = false;
     mouseLookEnabled_ = false;
     freeCameraEnabled_ = false;
-    clickableDebugOverlay_ = false;
     collisionDebugOverlay_ = false;
     tileBoundaryDebugOverlay_ = false;
     trafficSplineDebugOverlay_ = false;
@@ -1535,7 +1559,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
             map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
             map.entryPoints[spawnEntryPointIndex].placement.position[0],
             map.entryPoints[spawnEntryPointIndex].placement.position[1], groundTextureIndex,
-            omsiRoot, simulationState_, *assetRequestManager_, prepareInitialWindowAsync);
+            omsiRoot, simulationState_, *assetRequestManager_, prepareInitialWindowAsync, false);
     } else if (!prepareInitialWindowAsync) {
         mapRenderer_->enableScripts();
     }
@@ -1601,8 +1625,1474 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
 
 void RenderLoop::updateMapStreaming(double worldX, double worldY) {
     if (mapRenderer_ != nullptr) {
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+        if (auto* diligentRenderer =
+                dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get())) {
+            mapRenderer_->updateStreaming(worldX, worldY);
+            static_cast<void>(openbus::app::updateDiligentMapTiles(*diligentRenderer, *mapRenderer_,
+                                                                   worldX, worldY));
+            return;
+        }
+#endif
         mapRenderer_->updateStreaming(worldX, worldY);
     }
+}
+
+void RenderLoop::prepareDiligentSceneAssets(const BusSimulation& simulation) {
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    auto* diligentRenderer =
+        dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
+    if (diligentRenderer == nullptr) {
+        return;
+    }
+    static_cast<void>(diligentRenderer->configureSpotlightShadowMaps(256, 4));
+
+    const BodyPose chassis = simulation.chassisPose();
+    const auto view = buildCameraViewMatrix(simulation, chassis);
+    Matrix4 inverseView = {};
+    if (!openbus::rendering::invertAffineMatrix(view, inverseView)) {
+        throw std::runtime_error("Diligent vehicle preparation requires an invertible camera view");
+    }
+    const std::array<double, 3> eye = {inverseView[12], inverseView[13], inverseView[14]};
+    const RenderViewContext playerContext = renderingReflection_ || isExteriorView()
+                                                ? RenderViewContext::PlayerExterior
+                                                : RenderViewContext::PlayerInterior;
+    std::vector<std::pair<double, Vehicle*>> loadOrder;
+    loadOrder.reserve(vehicles_.size());
+    for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+        if (vehicle->mapTrafficRouteFinished ||
+            (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive)) {
+            continue;
+        }
+        const std::array<double, 3>& position =
+            vehicle.get() == playerVehicle_
+                ? chassis.position
+                : vehicle->trafficRenderPlacement.value_or(vehicle->placement).position;
+        const double dx = position[0] - eye[0];
+        const double dy = position[1] - eye[1];
+        const double dz = position[2] - eye[2];
+        loadOrder.emplace_back(dx * dx + dy * dy + dz * dz, vehicle.get());
+    }
+    std::sort(loadOrder.begin(), loadOrder.end(),
+              [](const auto& left, const auto& right) { return left.first < right.first; });
+    const auto modelLoadDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
+    for (const auto& [distanceSquared, vehicle] : loadOrder) {
+        const RenderViewContext context =
+            vehicle == playerVehicle_ ? playerContext : RenderViewContext::NonPlayer;
+        vehicle->ensureLoaded(context, std::sqrt(distanceSquared), modelLoadDeadline);
+    }
+
+    std::vector<Vehicle*> liveVehicles;
+    liveVehicles.reserve(vehicles_.size());
+    for (const auto& [distanceSquared, vehicle] : loadOrder) {
+        static_cast<void>(distanceSquared);
+        liveVehicles.push_back(vehicle);
+    }
+    static_cast<void>(
+        openbus::app::vehicle::prepareDiligentVehicleAssets(liveVehicles, *diligentRenderer));
+
+    if (mapRenderer_ == nullptr) {
+        static_cast<void>(diligentRenderer->retainHumanAssets({}));
+        return;
+    }
+    std::vector<std::string> liveHumanModelKeys;
+    std::unordered_set<std::string> uniqueHumanModelKeys;
+    const std::size_t maximumModelCount =
+        scheduledPassengerHumanModels_.size() + humanTrafficActors_.size();
+    liveHumanModelKeys.reserve(maximumModelCount);
+    uniqueHumanModelKeys.reserve(maximumModelCount);
+    const auto prepareHumanModel = [&](const std::filesystem::path& path) {
+        const std::string key = openbus::pathToUtf8(path.lexically_normal());
+        if (key.empty() || !uniqueHumanModelKeys.insert(key).second) {
+            return;
+        }
+        liveHumanModelKeys.push_back(key);
+        auto source = diligentHumanRenderSources_.find(key);
+        if (source == diligentHumanRenderSources_.end()) {
+            std::optional<openbus::rendering::HumanTrafficRenderSource> loadedSource =
+                mapRenderer_->humanTrafficRenderSource(path);
+            if (!loadedSource.has_value()) {
+                return;
+            }
+            double radiusSquared = 0.0;
+            for (const auto& [materialIndex, vertices] :
+                 loadedSource->geometry.verticesByMaterial) {
+                static_cast<void>(materialIndex);
+                for (const auto& vertex : vertices) {
+                    const double x = vertex.x;
+                    const double y = vertex.y;
+                    const double z = vertex.z;
+                    radiusSquared = (std::max)(radiusSquared, x * x + y * y + z * z);
+                }
+            }
+            diligentHumanBoundingRadii_.insert_or_assign(key, std::sqrt(radiusSquared));
+            source =
+                diligentHumanRenderSources_
+                    .emplace(key,
+                             std::make_shared<const openbus::rendering::HumanTrafficRenderSource>(
+                                 std::move(*loadedSource)))
+                    .first;
+        }
+        static_cast<void>(
+            openbus::rendering::prepareDiligentHumanAsset(*diligentRenderer, key, *source->second));
+    };
+    for (const std::filesystem::path& path : scheduledPassengerHumanModels_) {
+        prepareHumanModel(path);
+    }
+    for (const HumanTrafficState& human : humanTrafficActors_) {
+        prepareHumanModel(std::filesystem::path(human.actor.modelPath));
+    }
+    static_cast<void>(diligentRenderer->retainHumanAssets(liveHumanModelKeys));
+#else
+    static_cast<void>(simulation);
+#endif
+}
+
+void RenderLoop::drawDiligentScene(const BusSimulation& simulation) {
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    auto* diligentRenderer =
+        dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
+    if (diligentRenderer == nullptr) {
+        throw std::logic_error("Diligent scene submission requires the Diligent frame presenter");
+    }
+    if (diligentRenderer->isSuspended()) {
+        diligentMotionHistory_.invalidate();
+        diligentRenderer->invalidateHistory();
+        diligentRenderer->cancelUiFrame();
+        return;
+    }
+    if (framebufferWidth_ <= 0 || framebufferHeight_ <= 0) {
+        throw std::logic_error("Diligent scene submission requires a nonzero framebuffer");
+    }
+    if (diligentFrameId_ == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::overflow_error("Diligent frame identifier space is exhausted");
+    }
+
+    const BodyPose chassis = simulation.chassisPose();
+    const auto view = buildCameraViewMatrix(simulation, chassis);
+    const auto projection = openbus::rendering::makePerspectiveMatrix(
+        static_cast<double>(framebufferWidth_), static_cast<double>(framebufferHeight_),
+        currentFieldOfView());
+    const std::array<double, 3> cameraPosition = {
+        -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]),
+        -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]),
+        -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])};
+    const auto camera = openbus::app::makeDiligentCameraView(view, projection, cameraPosition,
+                                                             framebufferWidth_, framebufferHeight_);
+    const RenderViewContext playerContext = renderingReflection_ || isExteriorView()
+                                                ? RenderViewContext::PlayerExterior
+                                                : RenderViewContext::PlayerInterior;
+    const auto vehicleWorldTransform = [&](const Vehicle& vehicle) {
+        const Matrix4 localModelOffset =
+            openbus::rendering::translationMatrix({0.0, 0.0, vehicle.modelOffsetZ});
+        if (&vehicle == playerVehicle_) {
+            return openbus::rendering::multiplyMatrix4(openbus::rendering::poseMatrix(chassis),
+                                                       localModelOffset);
+        }
+        if (vehicle.odeSimulation != nullptr) {
+            return openbus::rendering::multiplyMatrix4(
+                openbus::rendering::poseMatrix(vehicle.odeSimulation->chassisPose()),
+                localModelOffset);
+        }
+
+        VehiclePlacement placement = vehicle.trafficRenderPlacement.value_or(vehicle.placement);
+        if (mapRenderer_ != nullptr && !vehicle.followsMapTrafficRoute) {
+            placement.position[2] =
+                mapRenderer_->terrainHeightAt(placement.position[0], placement.position[1])
+                    .value_or(placement.position[2]);
+        }
+        const VehiclePlacement modelRoot =
+            openbus::rendering::makeModelRootPlacement(placement, vehicle.modelOffsetZ);
+        Matrix4 worldTransform = openbus::rendering::translationMatrix(modelRoot.position);
+        worldTransform = openbus::rendering::multiplyMatrix4(
+            worldTransform,
+            openbus::rendering::rotationMatrix(placement.yawDegrees, 0.0, 0.0, 1.0));
+        worldTransform = openbus::rendering::multiplyMatrix4(
+            worldTransform,
+            openbus::rendering::rotationMatrix(-placement.pitchDegrees, 0.0, 1.0, 0.0));
+        worldTransform = openbus::rendering::multiplyMatrix4(
+            worldTransform,
+            openbus::rendering::rotationMatrix(placement.rollDegrees, 1.0, 0.0, 0.0));
+        return openbus::rendering::multiplyMatrix4(worldTransform, localModelOffset);
+    };
+    std::optional<openbus::rendering::ViewFrustum> vehicleVisibilityFrustum =
+        openbus::rendering::buildViewFrustum(projection);
+    for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+        if (vehicle->mapTrafficRouteFinished ||
+            (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive) ||
+            !vehicle->loaded || vehicle->displayLists.empty()) {
+            continue;
+        }
+        const RenderViewContext context =
+            vehicle.get() == playerVehicle_ ? playerContext : RenderViewContext::NonPlayer;
+        const Matrix4 modelView =
+            openbus::rendering::multiplyMatrix4(view, vehicleWorldTransform(*vehicle));
+        const Matrix4 visibilityModelView = openbus::rendering::multiplyMatrix4(
+            modelView, openbus::rendering::translationMatrix({0.0, 0.0, -vehicle->modelOffsetZ}));
+        vehicle->prepareReflectionVisibility(
+            context, framebufferWidth_, framebufferHeight_, mainViewMinimumObjectViewportFraction_,
+            visibilityModelView, projection, &vehicleVisibilityFrustum);
+    }
+
+    std::vector<Diligent::Uint32> reflectionTargetSizes;
+    reflectionTargetSizes.reserve(vehicleCameras_.size());
+    const auto reflectionTargetSize = static_cast<Diligent::Uint32>(std::max(
+        graphicsPreferences_.values.reflectionSize, openbus::rendering::kMinReflectionTargetSize));
+    for (const VehicleCamera& cameraDefinition : vehicleCameras_) {
+        if (cameraDefinition.kind != VehicleCameraKind::Reflexion &&
+            cameraDefinition.kind != VehicleCameraKind::Reflexion2) {
+            continue;
+        }
+        reflectionTargetSizes.push_back(reflectionTargetSize);
+    }
+    diligentRenderer->configureReflectionTargets(
+        reflectionTargetSizes,
+        static_cast<std::uint64_t>(graphicsPreferences_.values.reflectionInterval),
+        graphicsPreferences_.values.reflectionMaxFps);
+
+    const auto& sharedVariables = simulationState_.sharedVariables();
+    const auto weatherBrightness = sharedVariables.environmentBrightness();
+    const auto& roadWeather = sharedVariables.roadWeather();
+    const openbus::rendering::DiligentMapWeather mapWeather{
+        static_cast<float>(roadWeather.groundSnow), static_cast<float>(roadWeather.snow),
+        static_cast<float>(roadWeather.water)};
+    const double groundHeight =
+        mapRenderer_ != nullptr
+            ? mapRenderer_->terrainHeightAt(cameraPosition[0], cameraPosition[1]).value_or(0.0)
+            : 0.0;
+    const auto environment = openbus::rendering::buildDiligentSceneEnvironment(
+        view, sharedVariables.sunDirection(), weatherBrightness, false,
+        cameraPosition[2] - groundHeight, sharedVariables.effectiveWeatherVisibilityMeters(),
+        sharedVariables.weatherFogTopAboveGroundMeters());
+    openbus::app::DiligentMapSceneryUpdate sceneryUpdate;
+    if (mapRenderer_ != nullptr) {
+        sceneryUpdate = openbus::app::updateDiligentMapScenery(*diligentRenderer, *mapRenderer_);
+    }
+    int displayWidth = 0;
+    int displayHeight = 0;
+    glfwGetWindowSize(window_, &displayWidth, &displayHeight);
+    const std::uint64_t frameId = ++diligentFrameId_;
+    ++lightingFrameIndex_;
+    if (lightingFrameIndex_ % 10 == 0) {
+        spotlightShadowUpdateBudget_ = openbus::app::vehicle::adaptSpotlightShadowUpdateBudget(
+            spotlightShadowUpdateBudget_, frameTiming_.averageRenderFps(),
+            frameTiming_.frameRateCap());
+    }
+    std::vector<std::pair<std::pair<int, std::size_t>, openbus::map::MapTrafficPose>>
+        diligentWaitingPassengerRenderedPoses;
+    const bool rendered = diligentRenderer->renderFrame(
+        diligentMotionHistory_, frameId, simulation.simulationTime(), camera, displayWidth,
+        displayHeight, environment,
+        [&](openbus::rendering::DiligentFrameRenderer& renderer) {
+            static_cast<void>(renderer.drawWeatherClouds(
+                sharedVariables.weatherCloudType(),
+                sharedVariables.weatherCloudBaseAboveGroundMeters(),
+                sharedVariables.weatherWindDirectionDegrees(),
+                sharedVariables.weatherWindSpeedMetersPerSecond(), weatherBrightness,
+                cameraPosition[2] - groundHeight, simulation.simulationTime()));
+            if (mapRenderer_ != nullptr) {
+                openbus::app::uploadDiligentMapLightsForEnvironment(
+                    renderer, *mapRenderer_, view, cameraPosition, weatherBrightness,
+                    static_cast<std::size_t>(graphicsPreferences_.values.sceneryLightLimit));
+            }
+            Diligent::ITextureView& fallbackTexture = renderer.fallbackTexture();
+            std::vector<openbus::app::vehicle::DiligentVehicleSceneDrawState> vehicleDrawStates;
+            vehicleDrawStates.reserve(vehicles_.size());
+            std::vector<openbus::app::vehicle::SpotlightCandidate> vehicleSpotlightCandidates;
+            vehicleSpotlightCandidates.reserve(vehicles_.size());
+            const auto spotlightFrustum = openbus::rendering::buildViewFrustum(projection);
+            struct DiligentSpotlightSource {
+                openbus::rendering::VehicleSpotlight worldLight;
+                double selection = -1.0;
+                double distance = 0.0;
+                bool player = false;
+            };
+            std::unordered_map<std::uint64_t, DiligentSpotlightSource> diligentSpotlightSources;
+            diligentSpotlightSources.reserve(vehicles_.size());
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                if (vehicle->mapTrafficRouteFinished ||
+                    (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive) ||
+                    !vehicle->loaded || vehicle->displayLists.empty()) {
+                    continue;
+                }
+                const RenderViewContext context =
+                    vehicle.get() == playerVehicle_ ? playerContext : RenderViewContext::NonPlayer;
+                const Matrix4 modelView =
+                    openbus::rendering::multiplyMatrix4(view, vehicleWorldTransform(*vehicle));
+                if (!vehicle->spotlights.empty()) {
+                    const double spotlightSelection = vehicle->variables.get("spot_select");
+                    const auto spotlightStatus = openbus::app::vehicle::spotlightSelectionStatus(
+                        vehicle->spotlights.size(), spotlightSelection);
+                    if (spotlightStatus == openbus::app::vehicle::SpotlightStatus::Invalid &&
+                        !vehicle->invalidSpotlightLogged) {
+                        gameLog.Warning(
+                            "Ignoring invalid vehicle spotlight selection or parameters");
+                        vehicle->invalidSpotlightLogged = true;
+                    } else if (spotlightStatus == openbus::app::vehicle::SpotlightStatus::Active) {
+                        openbus::rendering::VehicleSpotlight spotlight;
+                        openbus::rendering::VehicleSpotlight worldSpotlight;
+                        if (openbus::app::vehicle::makeSpotlight(
+                                vehicle->spotlights, spotlightSelection, modelView, spotlight) ==
+                            openbus::app::vehicle::SpotlightStatus::Active) {
+                            const std::array<double, 4> lightCenter = {spotlight.position[0],
+                                                                       spotlight.position[1],
+                                                                       spotlight.position[2], 1.0};
+                            if (!openbus::rendering::sphereOutsideFrustum(
+                                    spotlightFrustum, lightCenter, spotlight.range * 4.0)) {
+                                vehicleSpotlightCandidates.push_back(
+                                    {spotlight, vehicle.get() == playerVehicle_, 0.0,
+                                     vehicle->motionObjectId});
+                                if (openbus::app::vehicle::makeSpotlight(
+                                        vehicle->spotlights, spotlightSelection,
+                                        vehicleWorldTransform(*vehicle), worldSpotlight) ==
+                                    openbus::app::vehicle::SpotlightStatus::Active) {
+                                    diligentSpotlightSources.insert_or_assign(
+                                        vehicle->motionObjectId,
+                                        DiligentSpotlightSource{worldSpotlight, spotlightSelection,
+                                                                std::hypot(spotlight.position[0],
+                                                                           spotlight.position[1],
+                                                                           spotlight.position[2]),
+                                                                vehicle.get() == playerVehicle_});
+                                }
+                            }
+                        } else if (!vehicle->invalidSpotlightLogged) {
+                            gameLog.Warning(
+                                "Ignoring invalid vehicle spotlight selection or parameters");
+                            vehicle->invalidSpotlightLogged = true;
+                        }
+                    }
+                }
+                auto preparation = openbus::app::vehicle::prepareDiligentVehicleSceneDraw(
+                    *vehicle, renderer, modelView, projection, context, environment.lighting);
+                if (preparation.drawState.has_value()) {
+                    vehicleDrawStates.push_back(std::move(*preparation.drawState));
+                }
+            }
+            const auto vehicleSpotlights = openbus::app::vehicle::selectSpotlights(
+                vehicleSpotlightCandidates, openbus::rendering::vehicleSpotlightSelectionLimit());
+            struct PendingDiligentShadowUpdate {
+                std::size_t slot = 0;
+                openbus::rendering::SpotlightShadowCamera camera;
+                openbus::rendering::Matrix4 clipFromView = {};
+            };
+            std::vector<PendingDiligentShadowUpdate> pendingShadowUpdates;
+            pendingShadowUpdates.reserve(diligentSpotlightShadowSlots_.size());
+            std::vector<openbus::rendering::DiligentSpotlightShadowBinding> spotlightShadowBindings(
+                vehicleSpotlights.size());
+            std::size_t shadowUpdatesRemaining =
+                std::min(spotlightShadowUpdateBudget_, diligentSpotlightShadowSlots_.size());
+            const auto minimumNdcZ = renderer.device().GetDeviceInfo().NDC.MinZ;
+            struct DueDiligentShadowUpdate {
+                std::size_t slot = 0;
+                bool player = false;
+                int interval = 1;
+            };
+            std::vector<DueDiligentShadowUpdate> dueShadowUpdates;
+            std::vector<int> shadowUpdateIntervals(vehicleSpotlights.size(), 1);
+            for (std::size_t index = 0;
+                 index < vehicleSpotlights.size() && index < diligentSpotlightShadowSlots_.size();
+                 ++index) {
+                auto& slot = diligentSpotlightShadowSlots_[index];
+                const auto source =
+                    diligentSpotlightSources.find(vehicleSpotlightCandidates[index].vehicleId);
+                if (source == diligentSpotlightSources.end()) {
+                    slot = {};
+                    continue;
+                }
+                const DiligentSpotlightSource& selected = source->second;
+                if (slot.vehicleId != vehicleSpotlightCandidates[index].vehicleId ||
+                    openbus::app::vehicle::spotlightSelectionChanged(slot.selection,
+                                                                     selected.selection)) {
+                    slot = {};
+                    slot.vehicleId = vehicleSpotlightCandidates[index].vehicleId;
+                    slot.selection = selected.selection;
+                }
+                const int interval = selected.player
+                                         ? 1
+                                         : openbus::app::vehicle::aiSpotlightUpdateIntervalFrames(
+                                               {selected.distance, 0.0, 0.0, false, false},
+                                               aiSpotlightScheduleConfig_);
+                shadowUpdateIntervals[index] = interval;
+                const bool updateDue = selected.player || !slot.valid ||
+                                       lightingFrameIndex_ - slot.lastUpdateFrame >=
+                                           static_cast<std::uint64_t>(interval);
+                if (updateDue) {
+                    dueShadowUpdates.push_back({index, selected.player, interval});
+                }
+            }
+            std::stable_sort(
+                dueShadowUpdates.begin(), dueShadowUpdates.end(),
+                [&](const DueDiligentShadowUpdate& first, const DueDiligentShadowUpdate& second) {
+                    return openbus::app::vehicle::spotlightShadowUpdateBefore(
+                        first.player, diligentSpotlightShadowSlots_[first.slot].lastUpdateFrame,
+                        second.player, diligentSpotlightShadowSlots_[second.slot].lastUpdateFrame,
+                        spotlightShadowUpdateBudget_, lightingFrameIndex_);
+                });
+            for (const DueDiligentShadowUpdate& due : dueShadowUpdates) {
+                if (shadowUpdatesRemaining == 0) {
+                    break;
+                }
+                auto& slot = diligentSpotlightShadowSlots_[due.slot];
+                const auto source =
+                    diligentSpotlightSources.find(vehicleSpotlightCandidates[due.slot].vehicleId);
+                if (source == diligentSpotlightSources.end()) {
+                    continue;
+                }
+                const auto shadowCamera =
+                    openbus::rendering::makeSpotlightShadowCamera(source->second.worldLight);
+                if (!shadowCamera) {
+                    slot.valid = false;
+                    slot.camera.reset();
+                    continue;
+                }
+                const auto clipFromView =
+                    openbus::rendering::buildDiligentSpotlightShadowClipFromView(*shadowCamera,
+                                                                                 view, minimumNdcZ);
+                if (!clipFromView) {
+                    slot.valid = false;
+                    slot.camera.reset();
+                    continue;
+                }
+                slot.valid = false;
+                slot.camera.reset();
+                pendingShadowUpdates.push_back({due.slot, *shadowCamera, *clipFromView});
+                --shadowUpdatesRemaining;
+            }
+            std::vector<openbus::rendering::DiligentHumanPlacementSceneDrawState> humanDrawStates;
+            humanDrawStates.reserve(humanTrafficActors_.size() + alightedPassengers_.size());
+            const auto appendHumanPlacement = [&](const std::filesystem::path& modelPath,
+                                                  const openbus::map::MapTrafficPose& pose,
+                                                  double gaitPhaseRadians, double gaitWeight,
+                                                  openbus::rendering::MotionObjectKey motionKey) {
+                const std::string modelKey = openbus::pathToUtf8(modelPath.lexically_normal());
+                const auto source = diligentHumanRenderSources_.find(modelKey);
+                const auto radius = diligentHumanBoundingRadii_.find(modelKey);
+                if (source == diligentHumanRenderSources_.end() ||
+                    radius == diligentHumanBoundingRadii_.end()) {
+                    return false;
+                }
+                auto placement = openbus::rendering::prepareDiligentHumanTrafficPlacement(
+                    renderer, modelKey, *source->second, pose, gaitPhaseRadians, gaitWeight,
+                    std::nullopt, radius->second, {motionKey.object, 0, motionKey.subObject},
+                    motionKey, environment.lighting);
+                if (!placement.has_value()) {
+                    return false;
+                }
+                humanDrawStates.push_back(std::move(*placement));
+                return true;
+            };
+            for (const HumanTrafficState& human : humanTrafficActors_) {
+                if (!human.populationEnabled) {
+                    continue;
+                }
+                const auto pose = openbus::map::sampleMapTrafficRoute(
+                    human.actor.route, human.actor.distanceMeters, human.actor.lateralOffsetMeters);
+                if (!pose.has_value()) {
+                    throw std::runtime_error("Cannot sample a pedestrian render pose");
+                }
+                appendHumanPlacement(std::filesystem::path(human.actor.modelPath), *pose,
+                                     human.gait.phaseRadians, human.gait.weight,
+                                     {human.motionObjectId, 0});
+            }
+            if (!scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_) {
+                for (const auto& passenger : alightedPassengers_) {
+                    const auto pose = openbus::app::passengerPedestrianHandoffPose(passenger);
+                    if (std::hypot(pose.position[0] - lastMainCameraPose_.position[0],
+                                   pose.position[1] - lastMainCameraPose_.position[1]) <= 75.0) {
+                        const auto& model =
+                            scheduledPassengerHumanModels_[passenger.modelIndex %
+                                                           scheduledPassengerHumanModels_.size()];
+                        appendHumanPlacement(
+                            model, pose,
+                            openbus::app::passengerWalkingGaitPhase(
+                                passenger.travelledMeters /
+                                openbus::app::passengerApproachSpeedMetersPerSecond),
+                            1.0, {passenger.motionObjectId, 0});
+                    }
+                }
+            }
+            const auto appendSeatedPassengers = [&](Vehicle& bus,
+                                                    const openbus::map::MapTrafficPose& busPose,
+                                                    std::size_t modelOffset) {
+                if (!bus.passengers || scheduledPassengerHumanModels_.empty() ||
+                    !lastMainCameraPoseValid_ ||
+                    std::hypot(busPose.position[0] - lastMainCameraPose_.position[0],
+                               busPose.position[1] - lastMainCameraPose_.position[1]) > 75.0) {
+                    return;
+                }
+                auto& service = bus.passengers->service;
+                const auto cabinSections = passengerCabinSectionPoses(bus, busPose, true);
+                std::vector<std::size_t> alightingSeats;
+                if (const auto seat = service.alightingSeatIndex()) {
+                    alightingSeats.push_back(*seat);
+                }
+                alightingSeats.insert(alightingSeats.end(),
+                                      service.queuedAlightingSeatIndices().begin(),
+                                      service.queuedAlightingSeatIndices().end());
+                for (std::size_t seatIndex = 0; seatIndex < service.seatCount(); ++seatIndex) {
+                    if (service.passengerCountOnSeat(seatIndex) == 0 ||
+                        std::find(alightingSeats.begin(), alightingSeats.end(), seatIndex) !=
+                            alightingSeats.end()) {
+                        continue;
+                    }
+                    const std::size_t sectionIndex = bus.passengers->sectionIndexForSeat(seatIndex);
+                    const auto& cabin = bus.passengers->sectionConfiguration(sectionIndex);
+                    const auto& seat =
+                        cabin.passengerPositions.at(bus.passengers->localSeatIndex(seatIndex));
+                    const auto passengerPose =
+                        passengerCabinSeatPose(cabinSections.at(sectionIndex).pose, seat);
+                    const std::size_t modelIndex =
+                        service.passengerModelIndexOnSeat(seatIndex).value_or(modelOffset +
+                                                                              seatIndex) %
+                        scheduledPassengerHumanModels_.size();
+                    appendHumanPlacement(scheduledPassengerHumanModels_[modelIndex], passengerPose,
+                                         0.0, 0.0,
+                                         openbus::app::seatedPassengerMotionObjectKey(
+                                             bus.motionObjectId, seatIndex));
+                }
+            };
+            const auto appendPassengerTransitions =
+                [&](Vehicle& bus, const openbus::map::MapTrafficPose& busPose,
+                    std::size_t modelOffset, const openbus::map::MapTrafficActor* routeActor,
+                    const openbus::map::MapTrafficPassengerStop* boardingStop,
+                    const std::optional<openbus::map::MapTrafficPose>& stopPose,
+                    const BodyPose* playerChassis) {
+                    if (!bus.passengers || boardingStop == nullptr || !stopPose ||
+                        scheduledPassengerHumanModels_.empty() || !lastMainCameraPoseValid_ ||
+                        bus.passengers->service.currentStopId() != boardingStop->stopId ||
+                        std::hypot(busPose.position[0] - lastMainCameraPose_.position[0],
+                                   busPose.position[1] - lastMainCameraPose_.position[1]) > 75.0 ||
+                        std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
+                                   stopPose->position[1] - lastMainCameraPose_.position[1]) >
+                            75.0) {
+                        return;
+                    }
+                    auto& service = bus.passengers->service;
+                    const auto cabinSections = passengerCabinSectionPoses(bus, busPose, true);
+                    const double laneOffset =
+                        routeActor == nullptr ? 0.0 : routeActor->lateralOffsetMeters;
+                    const double vehicleWidth =
+                        routeActor == nullptr ? bus.trafficWidthMeters : routeActor->widthMeters;
+                    const auto curbPose = passengerCurbPose(
+                        *stopPose, mapRenderer_->leftHandTraffic(), laneOffset, vehicleWidth);
+                    const auto submitTravelPath = [&](const PassengerCabinTravelPathData& path,
+                                                      double progress, double startHeading,
+                                                      double endHeading, std::size_t modelIndex,
+                                                      double seatHeight, bool boarding,
+                                                      std::size_t seatIndex) {
+                        const bool hasSeat = seatHeight > 0.0;
+                        const auto transition =
+                            passengerSeatTransition(progress, boarding, hasSeat);
+                        const auto sampled = openbus::rendering::sampleHumanPath(
+                            path.positions, transition.pathProgress, startHeading, endHeading);
+                        openbus::map::MapTrafficPose passengerPose;
+                        passengerPose.position = sampled.position;
+                        passengerPose.headingRadians = sampled.headingRadians;
+                        double pathLength = 0.0;
+                        for (std::size_t index = 1; index < path.positions.size(); ++index) {
+                            pathLength +=
+                                std::hypot(path.positions[index][0] - path.positions[index - 1][0],
+                                           path.positions[index][1] - path.positions[index - 1][1],
+                                           path.positions[index][2] - path.positions[index - 1][2]);
+                        }
+                        const double gaitPhase = openbus::app::passengerWalkingGaitPhase(
+                            pathLength * transition.pathProgress /
+                            openbus::app::passengerApproachSpeedMetersPerSecond);
+                        const std::size_t selectedModel =
+                            modelIndex % scheduledPassengerHumanModels_.size();
+                        appendHumanPlacement(scheduledPassengerHumanModels_[selectedModel],
+                                             passengerPose, gaitPhase,
+                                             1.0 - transition.seatedFraction,
+                                             openbus::app::seatedPassengerMotionObjectKey(
+                                                 bus.motionObjectId, seatIndex));
+                    };
+
+                    std::vector<std::size_t> alightingSeats;
+                    if (const auto seat = service.alightingSeatIndex()) {
+                        alightingSeats.push_back(*seat);
+                    }
+                    alightingSeats.insert(alightingSeats.end(),
+                                          service.queuedAlightingSeatIndices().begin(),
+                                          service.queuedAlightingSeatIndices().end());
+                    for (const std::size_t seatIndex : alightingSeats) {
+                        if (seatIndex >= service.seatCount()) {
+                            throw std::logic_error("Alighting passenger has no configured seat");
+                        }
+                        const std::size_t sectionIndex =
+                            bus.passengers->sectionIndexForSeat(seatIndex);
+                        const auto& cabin = bus.passengers->sectionConfiguration(sectionIndex);
+                        const auto& seat =
+                            cabin.passengerPositions.at(bus.passengers->localSeatIndex(seatIndex));
+                        const auto& sectionPose = cabinSections.at(sectionIndex).pose;
+                        const auto seatPose = passengerCabinSeatPose(sectionPose, seat);
+                        const Vehicle* sectionVehicle =
+                            bus.passengers->sectionVehicle(sectionIndex);
+                        if (sectionVehicle == nullptr) {
+                            throw std::logic_error(
+                                "Alighting passenger has no owning vehicle section");
+                        }
+                        const auto exitDoor = bus.passengers->exitDoorForSeat(seatIndex);
+                        const auto outsidePose =
+                            passengerConfiguredDoorQueuePose(
+                                *sectionVehicle, sectionPose, mapRenderer_->leftHandTraffic(),
+                                cabin.passengerExitPathPoints, exitDoor, 0)
+                                .value_or(curbPose);
+                        PassengerCabinTravelPathData path = passengerCabinTravelPath(
+                            cabinSections, sectionIndex, seatPose.position, sectionIndex,
+                            passengerCabinLocalPoint(sectionPose, outsidePose.position), false,
+                            sectionIndex, exitDoor);
+                        if (path.positions.empty()) {
+                            path.positions = {seatPose.position, outsidePose.position};
+                            path.segmentLinkIndices = {std::nullopt};
+                        }
+                        const std::size_t modelIndex =
+                            service.passengerModelIndexOnSeat(seatIndex).value_or(modelOffset +
+                                                                                  seatIndex);
+                        submitTravelPath(path, service.alightingProgressForSeat(seatIndex),
+                                         seatPose.headingRadians, outsidePose.headingRadians,
+                                         modelIndex, seat.seatHeight, false, seatIndex);
+                    }
+
+                    const auto initialQueue =
+                        passengerNetwork_.initialQueues.find(boardingStop->stopId);
+                    const std::size_t initialCount =
+                        initialQueue == passengerNetwork_.initialQueues.end()
+                            ? 0
+                            : initialQueue->second;
+                    for (const auto& boarding : service.boardingPassengers()) {
+                        if (boarding.seatIndex >= service.seatCount()) {
+                            throw std::logic_error("Boarding passenger has no configured seat");
+                        }
+                        const std::size_t sectionIndex =
+                            bus.passengers->sectionIndexForSeat(boarding.seatIndex);
+                        const auto& cabin = bus.passengers->sectionConfiguration(sectionIndex);
+                        const auto& seat = cabin.passengerPositions.at(
+                            bus.passengers->localSeatIndex(boarding.seatIndex));
+                        const auto seatPose =
+                            passengerCabinSeatPose(cabinSections.at(sectionIndex).pose, seat);
+                        const auto queueSlot = service.boardingPassengerQueueSlotForSeat(
+                            boarding.seatIndex, initialCount);
+                        if (!queueSlot) {
+                            throw std::logic_error("Boarding passenger has no reserved queue slot");
+                        }
+                        const auto outsidePose =
+                            playerChassis != nullptr
+                                ? playerPassengerDoorQueuePose(bus, *playerChassis,
+                                                               mapRenderer_->leftHandTraffic(),
+                                                               *queueSlot)
+                                : passengerQueuePose(boardingStop->stopId, *queueSlot)
+                                      .value_or(curbPose);
+                        PassengerCabinTravelPathData path = passengerCabinTravelPath(
+                            cabinSections, 0, outsidePose.position, sectionIndex,
+                            passengerCabinStandingPoint(seat.position, seat.seatHeight), true, 0,
+                            bus.passengers->entryDoor());
+                        if (path.positions.empty()) {
+                            path.positions = {outsidePose.position, curbPose.position,
+                                              seatPose.position};
+                            path.segmentLinkIndices = {std::nullopt, std::nullopt};
+                        }
+                        submitTravelPath(path, boarding.progress, outsidePose.headingRadians,
+                                         seatPose.headingRadians, boarding.modelIndex,
+                                         seat.seatHeight, true, boarding.seatIndex);
+                    }
+                };
+            for (const TrafficVehicleState& trafficVehicle : trafficFleet_.vehicles) {
+                if (!trafficVehicle.isBus() || trafficVehicle.vehicle == nullptr ||
+                    !trafficVehicle.vehicle->passengers || !trafficVehicle.populationEnabled ||
+                    !trafficVehicle.vehicle->mapTrafficTileActive) {
+                    continue;
+                }
+                auto busPose = openbus::map::sampleMapTrafficActorPose(
+                    trafficVehicle.actor, trafficVehicle.actor.distanceMeters);
+                if (!busPose.has_value()) {
+                    throw std::runtime_error("Cannot sample a scheduled AI bus passenger pose");
+                }
+                busPose->position[2] += trafficVehicle.vehicle->aiDeltaHeight;
+                if (trafficVehicle.vehicle->trafficRenderPlacement) {
+                    const VehiclePlacement& rendered =
+                        *trafficVehicle.vehicle->trafficRenderPlacement;
+                    busPose->position = rendered.position;
+                    busPose->headingRadians =
+                        (90.0 - rendered.yawDegrees) * std::numbers::pi / 180.0;
+                    busPose->pitchRadians = rendered.pitchDegrees * std::numbers::pi / 180.0;
+                    busPose->rollRadians = rendered.rollDegrees * std::numbers::pi / 180.0;
+                }
+                const std::size_t modelOffset =
+                    trafficVehicle.bus->passengerStops.empty()
+                        ? 0
+                        : static_cast<std::size_t>(
+                              trafficVehicle.bus->passengerStops.front().stopId);
+                appendSeatedPassengers(*trafficVehicle.vehicle, *busPose, modelOffset);
+                const openbus::map::MapTrafficPassengerStop* boardingStop = nullptr;
+                std::optional<openbus::map::MapTrafficPose> stopPose;
+                if (trafficVehicle.bus->passengerStopArrived &&
+                    trafficVehicle.bus->nextPassengerStopIndex <
+                        trafficVehicle.bus->passengerStops.size()) {
+                    boardingStop =
+                        &trafficVehicle.bus
+                             ->passengerStops[trafficVehicle.bus->nextPassengerStopIndex];
+                    if (boardingStop->stopId !=
+                        trafficVehicle.vehicle->passengers->service.currentStopId()) {
+                        throw std::logic_error(
+                            "Scheduled bus passenger service stop index does not match its active "
+                            "call");
+                    }
+                    stopPose = openbus::map::sampleMapTrafficRoute(
+                        trafficVehicle.actor.route, boardingStop->routeDistanceMeters, 0.0);
+                    if (!stopPose.has_value()) {
+                        throw std::runtime_error(
+                            "Cannot sample a scheduled bus passenger boarding pose");
+                    }
+                }
+                appendPassengerTransitions(*trafficVehicle.vehicle, *busPose, modelOffset,
+                                           &trafficVehicle.actor, boardingStop, stopPose, nullptr);
+            }
+            if (playerVehicle_ != nullptr && playerVehicle_->passengers) {
+                openbus::map::MapTrafficPose playerPose;
+                playerPose.position =
+                    transformLocalPoint(chassis, {0.0, 0.0, playerVehicle_->modelOffsetZ});
+                playerPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+                appendSeatedPassengers(*playerVehicle_, playerPose, 0);
+                const openbus::map::MapTrafficPassengerStop* boardingStop = nullptr;
+                std::optional<openbus::map::MapTrafficPose> stopPose;
+                if (activePlayerPassengerStop_) {
+                    if (!activePlayerPassengerStopRouteIndex_ ||
+                        *activePlayerPassengerStopRouteIndex_ >= passengerNetwork_.routes.size() ||
+                        !activePlayerPassengerStopIndex_) {
+                        throw std::logic_error(
+                            "Active player passenger stop has no mapped route call");
+                    }
+                    const auto& route =
+                        passengerNetwork_.routes[*activePlayerPassengerStopRouteIndex_];
+                    if (*activePlayerPassengerStopIndex_ >= route.stops.size()) {
+                        throw std::logic_error(
+                            "Active player passenger stop index is out of range");
+                    }
+                    boardingStop = &route.stops[*activePlayerPassengerStopIndex_];
+                    if (boardingStop->stopId != *activePlayerPassengerStop_) {
+                        throw std::logic_error(
+                            "Active player passenger stop index does not match its ID");
+                    }
+                    stopPose = route.stopPose(*activePlayerPassengerStopIndex_);
+                    if (!stopPose.has_value()) {
+                        throw std::runtime_error(
+                            "Cannot sample the player passenger boarding pose");
+                    }
+                }
+                appendPassengerTransitions(*playerVehicle_, playerPose, 0, nullptr, boardingStop,
+                                           stopPose, &chassis);
+            }
+            std::vector<openbus::rendering::PrimitiveVertex> diligentTicketVertices;
+            struct TicketTransactionActorPose {
+                openbus::map::MapTrafficPose pose;
+                bool walking = false;
+                double gaitTime = 0.0;
+                bool ticketVisible = false;
+            };
+            const auto ticketTransactionActorPose =
+                [&](int stopId, const openbus::app::WaitingPassenger& passenger)
+                -> std::optional<TicketTransactionActorPose> {
+                Vehicle* approachVehicle = nullptr;
+                const PassengerApproachProgress* approach = nullptr;
+                for (const auto& [vehicle, progress] : passengerApproachProgress_) {
+                    if (progress.stopId == stopId && progress.modelIndex == passenger.modelIndex &&
+                        (!passenger.journey ||
+                         (progress.routeIndex == passenger.journey->routeIndex &&
+                          progress.stopCallIndex == passenger.journey->originStopIndex))) {
+                        approachVehicle = vehicle;
+                        approach = &progress;
+                        break;
+                    }
+                }
+                if (approach == nullptr || !approach->ticketBought) {
+                    return std::nullopt;
+                }
+
+                const VehicleConfig* cabin = nullptr;
+                openbus::map::MapTrafficPose busPose;
+                std::optional<openbus::map::MapTrafficPose> destination;
+                if (approachVehicle == playerVehicle_ && playerVehicle_ != nullptr &&
+                    playerVehicle_->passengers != nullptr && activePlayerPassengerStop_ == stopId &&
+                    activePlayerPassengerStopRouteIndex_ == approach->routeIndex &&
+                    activePlayerPassengerStopIndex_ == approach->stopCallIndex) {
+                    cabin = &playerVehicle_->passengers->configuration();
+                    busPose.position =
+                        transformLocalPoint(chassis, {0.0, 0.0, playerVehicle_->modelOffsetZ});
+                    busPose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+                    destination = playerPassengerDoorQueuePose(*playerVehicle_, chassis,
+                                                               mapRenderer_->leftHandTraffic(),
+                                                               passenger.queueSlot);
+                } else {
+                    const auto vehicle =
+                        std::find_if(trafficFleet_.vehicles.begin(), trafficFleet_.vehicles.end(),
+                                     [&](const TrafficVehicleState& state) {
+                                         return state.vehicle == approachVehicle && state.isBus() &&
+                                                state.bus != nullptr &&
+                                                state.vehicle->passengers != nullptr;
+                                     });
+                    if (vehicle == trafficFleet_.vehicles.end() ||
+                        !passengerNetwork_.passengerMatchesService(
+                            passenger, approach->routeIndex, vehicle->vehicle->passengers->service,
+                            approach->stopCallIndex)) {
+                        return std::nullopt;
+                    }
+                    auto sampledPose = openbus::map::sampleMapTrafficActorPose(
+                        vehicle->actor, vehicle->actor.distanceMeters);
+                    if (!sampledPose) {
+                        throw std::runtime_error(
+                            "Cannot sample scheduled passenger ticket transaction bus pose");
+                    }
+                    sampledPose->position[2] += vehicle->vehicle->aiDeltaHeight;
+                    if (vehicle->vehicle->trafficRenderPlacement) {
+                        const VehiclePlacement& rendered =
+                            *vehicle->vehicle->trafficRenderPlacement;
+                        sampledPose->position = rendered.position;
+                        sampledPose->headingRadians =
+                            (90.0 - rendered.yawDegrees) * std::numbers::pi / 180.0;
+                        sampledPose->pitchRadians =
+                            rendered.pitchDegrees * std::numbers::pi / 180.0;
+                        sampledPose->rollRadians = rendered.rollDegrees * std::numbers::pi / 180.0;
+                    }
+                    busPose = *sampledPose;
+                    cabin = &vehicle->vehicle->passengers->configuration();
+                    destination = passengerConfiguredDoorQueuePose(
+                        *vehicle->vehicle, busPose, mapRenderer_->leftHandTraffic(),
+                        cabin->passengerEntryPathPoints, vehicle->vehicle->passengers->entryDoor(),
+                        passenger.queueSlot);
+                    if (!destination) {
+                        destination = passengerDoorQueuePose(
+                            busPose, vehicle->vehicle->trafficLengthMeters * 0.3,
+                            vehicle->vehicle->trafficWidthMeters, mapRenderer_->leftHandTraffic(),
+                            passenger.queueSlot);
+                    }
+                }
+                if (cabin == nullptr || !destination) {
+                    return std::nullopt;
+                }
+
+                const auto origin = passengerTicketSaleOriginPose(
+                    *cabin, busPose, *destination, approach->ticketMachineConfigurationIndex);
+                const auto moneyPoint = approach->ticketPaymentRequired
+                                            ? passengerTicketMoneyPointPose(*cabin, busPose, origin)
+                                            : origin;
+                const auto changePoint = passengerTicketChangePointPose(*cabin, busPose, moneyPoint,
+                                                                        approach->changeDue);
+                const auto transactionPose = passengerTicketTransactionPose(
+                    *cabin, busPose, *destination, approach->ticketMachineConfigurationIndex,
+                    approach->ticketPaymentRequired, approach->changeDue);
+
+                if (!approach->ticketPaymentStarted && approach->ticketMachineConfigurationIndex) {
+                    const bool walking = approach->ticketMachineApproachSeconds <
+                                         passengerApproachDuration(*destination, origin);
+                    return TicketTransactionActorPose{
+                        passengerApproachPose(*destination, origin,
+                                              approach->ticketMachineApproachSeconds),
+                        walking, approach->ticketMachineApproachSeconds};
+                }
+                if (!approach->ticketPrinted) {
+                    const auto movement = passengerTicketTransactionActorPose(
+                        origin, moneyPoint, changePoint, approach->ticketPaymentRequired,
+                        approach->changeDue, approach->ticketMoneyPointReached,
+                        approach->ticketChangePointReached,
+                        approach->ticketMoneyPointApproachSeconds,
+                        approach->ticketChangePointApproachSeconds);
+                    return TicketTransactionActorPose{movement.pose, movement.walking,
+                                                      approach->elapsedSeconds};
+                }
+                if (approach->ticketStamped && approach->ticketStamperConfigurationIndex) {
+                    const auto& stamper = cabin->passengerCabinStampers.at(
+                        *approach->ticketStamperConfigurationIndex);
+                    const auto stamperPose = passengerVehicleLocalPose(busPose, stamper.position);
+                    const auto movement = passengerStamperActorPose(
+                        transactionPose, stamperPose, *destination,
+                        approach->ticketStamperApproachSeconds, approach->ticketStamperWaitSeconds,
+                        approach->ticketStamperReturnSeconds);
+                    return TicketTransactionActorPose{movement.pose, movement.walking,
+                                                      approach->elapsedSeconds,
+                                                      approach->ticketPrinted};
+                }
+                const bool walking = approach->ticketMachineReturnSeconds <
+                                     passengerApproachDuration(transactionPose, *destination);
+                return TicketTransactionActorPose{
+                    passengerApproachPose(transactionPose, *destination,
+                                          approach->ticketMachineReturnSeconds),
+                    walking, approach->ticketMachineReturnSeconds, approach->ticketPrinted};
+            };
+            if (!scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_) {
+                constexpr double waitingPassengerIdleGaitWeight = 0.08;
+                constexpr double waitingPassengerIdleCycleRadiansPerSecond = 0.7;
+                for (const auto& [stopId, waitingCount] : passengerNetwork_.queues) {
+                    if (waitingCount == 0) {
+                        continue;
+                    }
+                    const auto& passengers = passengerNetwork_.waitingPassengers(stopId);
+                    for (std::size_t index = 0; index < passengers.size(); ++index) {
+                        const auto& passenger = passengers[index];
+                        auto pose = passengerQueuePose(stopId, passenger);
+                        if (!pose.has_value()) {
+                            continue;
+                        }
+                        const PassengerQueueApproachProgress* queueApproach = nullptr;
+                        for (const auto& [approachVehicle, approaches] :
+                             passengerQueueApproachProgress_) {
+                            static_cast<void>(approachVehicle);
+                            const auto approach = approaches.find(passenger.modelIndex);
+                            if (approach != approaches.end() && approach->second.stopId == stopId &&
+                                (!passenger.journey ||
+                                 (approach->second.routeIndex == passenger.journey->routeIndex &&
+                                  approach->second.stopCallIndex ==
+                                      passenger.journey->originStopIndex))) {
+                                queueApproach = &approach->second;
+                                break;
+                            }
+                        }
+                        double gaitWeight = waitingPassengerIdleGaitWeight;
+                        double gaitPhase = simulation.simulationTime() *
+                                               waitingPassengerIdleCycleRadiansPerSecond +
+                                           static_cast<double>(index) * 1.7;
+                        if (queueApproach != nullptr) {
+                            const auto& approachStart =
+                                queueApproach->posesInitialized ? queueApproach->originPose : *pose;
+                            const auto& approachDestination = queueApproach->posesInitialized
+                                                                  ? queueApproach->destinationPose
+                                                                  : *pose;
+                            if (queueApproach->returningToSpawn) {
+                                const double duration =
+                                    passengerApproachDuration(approachStart, approachDestination);
+                                gaitWeight = queueApproach->elapsedSeconds < duration
+                                                 ? 1.0
+                                                 : waitingPassengerIdleGaitWeight;
+                                pose = passengerApproachPose(approachStart, approachDestination,
+                                                             queueApproach->elapsedSeconds);
+                            } else {
+                                const double duration = passengerQueueApproachDuration(
+                                    queueApproach->roadApproach, approachStart,
+                                    approachDestination);
+                                gaitWeight = queueApproach->elapsedSeconds < duration
+                                                 ? 1.0
+                                                 : waitingPassengerIdleGaitWeight;
+                                pose = passengerQueueApproachPose(
+                                    queueApproach->roadApproach, approachStart, approachDestination,
+                                    queueApproach->elapsedSeconds);
+                            }
+                            if (gaitWeight == 1.0) {
+                                gaitPhase =
+                                    passengerWalkingGaitPhase(queueApproach->elapsedSeconds);
+                            }
+                        }
+                        bool ticketVisible = false;
+                        if (const auto transactionPose =
+                                ticketTransactionActorPose(stopId, passenger)) {
+                            pose = transactionPose->pose;
+                            ticketVisible = transactionPose->ticketVisible;
+                            gaitWeight =
+                                transactionPose->walking ? 1.0 : waitingPassengerIdleGaitWeight;
+                            if (gaitWeight == 1.0) {
+                                gaitPhase = passengerWalkingGaitPhase(transactionPose->gaitTime);
+                            }
+                        }
+                        if (std::hypot(pose->position[0] - lastMainCameraPose_.position[0],
+                                       pose->position[1] - lastMainCameraPose_.position[1]) >
+                            75.0) {
+                            continue;
+                        }
+                        const std::size_t modelIndex =
+                            passenger.modelIndex % scheduledPassengerHumanModels_.size();
+                        const auto motionKey = openbus::app::waitingPassengerMotionObjectKey(
+                            stopId, passenger.arrivalOrder);
+                        const bool actorSubmitted =
+                            appendHumanPlacement(scheduledPassengerHumanModels_[modelIndex], *pose,
+                                                 gaitPhase, gaitWeight, motionKey);
+                        openbus::app::appendPassengerTicketCard(
+                            diligentTicketVertices, pose->position, pose->headingRadians,
+                            ticketVisible, actorSubmitted);
+                        if (actorSubmitted) {
+                            diligentWaitingPassengerRenderedPoses.push_back(
+                                {{stopId, passenger.modelIndex}, *pose});
+                        }
+                    }
+                }
+            }
+            for (const PendingDiligentShadowUpdate& update : pendingShadowUpdates) {
+                std::vector<openbus::rendering::DiligentShadowCaster> shadowCasters;
+                if (mapRenderer_ != nullptr) {
+                    auto mapCasters = openbus::app::buildDiligentMapTileShadowCasters(
+                        renderer.mapTiles(), mapRenderer_->mapDefinition().coordinates.tileSize,
+                        view, update.clipFromView);
+                    shadowCasters.insert(shadowCasters.end(), mapCasters.begin(), mapCasters.end());
+                }
+                for (const auto& placement : sceneryUpdate.placements) {
+                    const auto* asset =
+                        renderer.sceneryAsset(placement.configPath, placement.assetRoot);
+                    if (asset == nullptr) {
+                        continue;
+                    }
+                    const auto resolveSeasonalTexture = [&renderer,
+                                                         &placement](const auto& seasonalPaths) {
+                        if (!seasonalPaths) {
+                            return static_cast<Diligent::ITextureView*>(nullptr);
+                        }
+                        return openbus::app::resolveDiligentMapSeasonalTexture(
+                            placement.seasonIndex, *seasonalPaths,
+                            [&renderer](const std::filesystem::path& path) {
+                                const auto* texture = renderer.seasonalSceneryTexture(path);
+                                return texture ? &texture->shaderResourceView() : nullptr;
+                            });
+                    };
+                    std::vector<Diligent::ITextureView*> seasonalBatchTextures;
+                    seasonalBatchTextures.reserve(asset->batches().size());
+                    for (const auto& batch : asset->batches()) {
+                        seasonalBatchTextures.push_back(
+                            resolveSeasonalTexture(batch.source.seasonTexturePaths));
+                    }
+                    std::vector<Diligent::ITextureView*> seasonalTreeTextures;
+                    seasonalTreeTextures.reserve(asset->trees().size());
+                    for (const auto& tree : asset->trees()) {
+                        seasonalTreeTextures.push_back(
+                            resolveSeasonalTexture(tree.seasonTexturePaths));
+                    }
+                    const float visibilityFade = openbus::app::diligentMapSceneryVisibilityFade(
+                        placement, view, projection, mainViewMinimumObjectViewportFraction_);
+                    auto sceneryCasters = openbus::app::buildDiligentMapSceneryShadowCasters(
+                        placement, *asset, view, update.clipFromView, seasonalBatchTextures,
+                        seasonalTreeTextures, visibilityFade);
+                    shadowCasters.insert(shadowCasters.end(), sceneryCasters.begin(),
+                                         sceneryCasters.end());
+                }
+                for (const auto& vehicleState : vehicleDrawStates) {
+                    const auto* asset = renderer.vehicleAsset(vehicleState.vehicleObjectId);
+                    if (asset == nullptr) {
+                        throw std::logic_error(
+                            "Diligent vehicle shadow pass lost a prepared vehicle asset");
+                    }
+                    auto vehicleCasters = asset->shadowCasters(
+                        update.clipFromView, vehicleState.modelView, vehicleState.groupTransforms,
+                        vehicleState.materialOverrides.overrides);
+                    shadowCasters.insert(shadowCasters.end(), vehicleCasters.begin(),
+                                         vehicleCasters.end());
+                }
+                std::vector<openbus::rendering::DiligentHumanShadowDrawState> lightHumanShadows;
+                lightHumanShadows.reserve(humanDrawStates.size());
+                for (const auto& actor : humanDrawStates) {
+                    if (!actor.visible || actor.asset == nullptr) {
+                        continue;
+                    }
+                    const auto modelView =
+                        openbus::rendering::multiplyMatrix4(view, actor.worldTransform);
+                    auto humanCasters = actor.asset->shadowCasters(
+                        openbus::rendering::multiplyMatrix4(update.clipFromView, modelView),
+                        actor.currentPose, actor.seated);
+                    shadowCasters.insert(shadowCasters.end(), humanCasters.begin(),
+                                         humanCasters.end());
+                }
+                static_cast<void>(renderer.drawOpaqueSpotlightShadowLayer(
+                    static_cast<Diligent::Uint32>(update.slot), shadowCasters));
+                auto& slot = diligentSpotlightShadowSlots_[update.slot];
+                slot.camera = update.camera;
+                slot.lastUpdateFrame = lightingFrameIndex_;
+                slot.valid = true;
+            }
+            for (std::size_t index = 0;
+                 index < vehicleSpotlights.size() && index < diligentSpotlightShadowSlots_.size();
+                 ++index) {
+                auto& slot = diligentSpotlightShadowSlots_[index];
+                const int interval = shadowUpdateIntervals[index];
+                const bool fresh = slot.valid && slot.camera &&
+                                   openbus::app::vehicle::spotlightShadowFresh(
+                                       lightingFrameIndex_ - slot.lastUpdateFrame, interval);
+                slot.visibility =
+                    openbus::app::vehicle::advanceSpotlightShadowVisibility(slot.visibility, fresh);
+                if (fresh && slot.visibility > 0.0F) {
+                    spotlightShadowBindings[index] = {slot.camera,
+                                                      static_cast<Diligent::Uint32>(index), 0.001F};
+                }
+            }
+            const auto mainCameraLocalEye = [&] {
+                const double x = cameraPosition[0] - chassis.position[0];
+                const double y = cameraPosition[1] - chassis.position[1];
+                const double z = cameraPosition[2] - chassis.position[2];
+                return std::array<double, 3>{
+                    chassis.rotation[0] * x + chassis.rotation[3] * y + chassis.rotation[6] * z,
+                    chassis.rotation[1] * x + chassis.rotation[4] * y + chassis.rotation[7] * z,
+                    chassis.rotation[2] * x + chassis.rotation[5] * y + chassis.rotation[8] * z};
+            }();
+            std::size_t reflectionIndex = 0;
+            for (std::size_t cameraIndex = 0; cameraIndex < vehicleCameras_.size(); ++cameraIndex) {
+                const VehicleCamera& reflectionCamera = vehicleCameras_[cameraIndex];
+                if (reflectionCamera.kind != VehicleCameraKind::Reflexion &&
+                    reflectionCamera.kind != VehicleCameraKind::Reflexion2) {
+                    continue;
+                }
+
+                bool needed = false;
+                for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                    if (!vehicle->mapTrafficRouteFinished &&
+                        (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive) &&
+                        vehicle->needsReflectionTexture(reflectionIndex)) {
+                        needed = true;
+                        break;
+                    }
+                }
+                if (needed) {
+                    const int reflectionWidth =
+                        static_cast<int>(reflectionTargetSizes.at(reflectionIndex));
+                    const int reflectionHeight = reflectionWidth;
+                    static_cast<void>(renderer.renderReflectionTarget(
+                        reflectionIndex, frameId, true,
+                        [&](openbus::rendering::DiligentReflectionTarget&,
+                            openbus::rendering::DiligentTexturedMeshRenderer& reflectionMeshes) {
+                            const int previousCameraView = cameraView_;
+                            const int previousFramebufferWidth = framebufferWidth_;
+                            const int previousFramebufferHeight = framebufferHeight_;
+                            const double previousFovOffset = fieldOfViewOffset_;
+                            const double previousLookYaw = viewLookYaw_;
+                            const double previousLookPitch = viewLookPitch_;
+                            const bool previousRenderingReflection = renderingReflection_;
+                            const auto previousReflectionEye = reflectionViewerEyeLocal_;
+                            const bool previousReflectionEyeValid = reflectionViewerEyeLocalValid_;
+                            const auto restoreCameraState = [&] {
+                                cameraView_ = previousCameraView;
+                                framebufferWidth_ = previousFramebufferWidth;
+                                framebufferHeight_ = previousFramebufferHeight;
+                                fieldOfViewOffset_ = previousFovOffset;
+                                viewLookYaw_ = previousLookYaw;
+                                viewLookPitch_ = previousLookPitch;
+                                renderingReflection_ = previousRenderingReflection;
+                                reflectionViewerEyeLocal_ = previousReflectionEye;
+                                reflectionViewerEyeLocalValid_ = previousReflectionEyeValid;
+                            };
+
+                            try {
+                                framebufferWidth_ = reflectionWidth;
+                                framebufferHeight_ = reflectionHeight;
+                                cameraView_ = static_cast<int>(cameraIndex + 1);
+                                fieldOfViewOffset_ = 0.0;
+                                viewLookYaw_ = 0.0;
+                                viewLookPitch_ = 0.0;
+                                renderingReflection_ = true;
+                                reflectionViewerEyeLocal_ = mainCameraLocalEye;
+                                reflectionViewerEyeLocalValid_ = true;
+
+                                const Matrix4 reflectionView =
+                                    buildCameraViewMatrix(simulation, chassis);
+                                const Matrix4 reflectionProjection =
+                                    openbus::rendering::makePerspectiveMatrix(
+                                        static_cast<double>(reflectionWidth),
+                                        static_cast<double>(reflectionHeight),
+                                        currentFieldOfView());
+                                const std::array<double, 3> reflectionCameraPosition = {
+                                    -(reflectionView[0] * reflectionView[12] +
+                                      reflectionView[1] * reflectionView[13] +
+                                      reflectionView[2] * reflectionView[14]),
+                                    -(reflectionView[4] * reflectionView[12] +
+                                      reflectionView[5] * reflectionView[13] +
+                                      reflectionView[6] * reflectionView[14]),
+                                    -(reflectionView[8] * reflectionView[12] +
+                                      reflectionView[9] * reflectionView[13] +
+                                      reflectionView[10] * reflectionView[14])};
+                                const double reflectionGroundHeight =
+                                    mapRenderer_ != nullptr
+                                        ? mapRenderer_
+                                              ->terrainHeightAt(reflectionCameraPosition[0],
+                                                                reflectionCameraPosition[1])
+                                              .value_or(0.0)
+                                        : 0.0;
+                                const auto reflectionEnvironment =
+                                    openbus::rendering::buildDiligentSceneEnvironment(
+                                        reflectionView, sharedVariables.sunDirection(),
+                                        weatherBrightness, true,
+                                        reflectionCameraPosition[2] - reflectionGroundHeight,
+                                        sharedVariables.effectiveWeatherVisibilityMeters(),
+                                        sharedVariables.weatherFogTopAboveGroundMeters(),
+                                        openbus::rendering::configuredReflectionAmbientFloor());
+                                Diligent::IDeviceContext& reflectionContext =
+                                    renderer.immediateContext();
+                                if (mapRenderer_ != nullptr) {
+                                    static_cast<void>(
+                                        openbus::app::uploadDiligentMapLightsInViewForEnvironment(
+                                            reflectionMeshes, reflectionContext, *mapRenderer_,
+                                            reflectionView, reflectionCameraPosition,
+                                            weatherBrightness,
+                                            static_cast<std::size_t>(
+                                                graphicsPreferences_.values.sceneryLightLimit)));
+                                }
+                                const Matrix4 reflectionViewProjection =
+                                    openbus::rendering::multiplyMatrix4(reflectionProjection,
+                                                                        reflectionView);
+                                static_cast<void>(renderer.drawWeatherCloudsInReflection(
+                                    reflectionView, reflectionProjection, reflectionEnvironment.fog,
+                                    sharedVariables.weatherCloudType(),
+                                    sharedVariables.weatherCloudBaseAboveGroundMeters(),
+                                    sharedVariables.weatherWindDirectionDegrees(),
+                                    sharedVariables.weatherWindSpeedMetersPerSecond(),
+                                    weatherBrightness,
+                                    reflectionCameraPosition[2] - reflectionGroundHeight,
+                                    simulation.simulationTime()));
+                                const auto drawMapTilePass =
+                                    [&](openbus::app::DiligentMapTileViewPass pass) {
+                                        static_cast<void>(openbus::app::drawDiligentMapTilesInView(
+                                            renderer.mapTiles(), reflectionMeshes,
+                                            reflectionContext, fallbackTexture,
+                                            reflectionViewProjection, pass, nullptr,
+                                            reflectionEnvironment.lighting, &mapWeather));
+                                    };
+                                drawMapTilePass(openbus::app::DiligentMapTileViewPass::Terrain);
+                                drawMapTilePass(openbus::app::DiligentMapTileViewPass::OpaqueRoads);
+                                drawMapTilePass(openbus::app::DiligentMapTileViewPass::CutoutRoads);
+                                static_cast<void>(
+                                    openbus::app::drawDiligentMapSceneryPlacementsInView(
+                                        renderer, sceneryUpdate.placements,
+                                        openbus::rendering::DiligentSceneryPass::Opaque,
+                                        reflectionMeshes, reflectionContext, fallbackTexture,
+                                        reflectionView, reflectionProjection, {},
+                                        reflectionEnvironment.lighting,
+                                        reflectionMinimumObjectViewportFraction_));
+                                for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                                    if (vehicle->mapTrafficRouteFinished ||
+                                        (vehicle->followsMapTrafficRoute &&
+                                         !vehicle->mapTrafficTileActive) ||
+                                        !vehicle->loaded || vehicle->displayLists.empty()) {
+                                        continue;
+                                    }
+                                    const auto viewpoint =
+                                        vehicle.get() == playerVehicle_
+                                            ? openbus::rendering::ViewpointContext::PlayerExterior
+                                            : openbus::rendering::ViewpointContext::NonPlayer;
+                                    static_cast<void>(
+                                        openbus::app::vehicle::drawDiligentVehicleInView(
+                                            *vehicle, renderer, reflectionMeshes, fallbackTexture,
+                                            openbus::rendering::multiplyMatrix4(
+                                                reflectionView, vehicleWorldTransform(*vehicle)),
+                                            reflectionProjection, viewpoint,
+                                            reflectionEnvironment.lighting));
+                                }
+                                for (const auto& actor : humanDrawStates) {
+                                    if (!actor.visible || actor.asset == nullptr) {
+                                        continue;
+                                    }
+                                    static_cast<void>(
+                                        openbus::rendering::drawDiligentHumanAssetInView(
+                                            *actor.asset, reflectionMeshes, reflectionContext,
+                                            fallbackTexture, actor.worldTransform,
+                                            actor.boundingRadius, reflectionView,
+                                            reflectionProjection, actor.currentPose, actor.seated,
+                                            reflectionEnvironment.lighting, actor.visible));
+                                }
+                                drawMapTilePass(openbus::app::DiligentMapTileViewPass::Water);
+                                drawMapTilePass(
+                                    openbus::app::DiligentMapTileViewPass::TransparentRoads);
+                                static_cast<
+                                    void>(openbus::app::drawDiligentMapSceneryPlacementsInView(
+                                    renderer, sceneryUpdate.placements,
+                                    openbus::rendering::DiligentSceneryPass::TransmapDepthPrepass,
+                                    reflectionMeshes, reflectionContext, fallbackTexture,
+                                    reflectionView, reflectionProjection, {},
+                                    reflectionEnvironment.lighting,
+                                    reflectionMinimumObjectViewportFraction_));
+                                static_cast<void>(
+                                    openbus::app::drawDiligentMapSceneryPlacementsInView(
+                                        renderer, sceneryUpdate.placements,
+                                        openbus::rendering::DiligentSceneryPass::Transparent,
+                                        reflectionMeshes, reflectionContext, fallbackTexture,
+                                        reflectionView, reflectionProjection, {},
+                                        reflectionEnvironment.lighting,
+                                        reflectionMinimumObjectViewportFraction_));
+                            } catch (...) {
+                                restoreCameraState();
+                                throw;
+                            }
+                            restoreCameraState();
+                        },
+                        environment.clearColor));
+                }
+                ++reflectionIndex;
+            }
+            std::vector<Diligent::ITextureView*> reflectionTextures;
+            reflectionTextures.reserve(reflectionTargetSizes.size());
+            for (std::size_t index = 0; index < reflectionTargetSizes.size(); ++index) {
+                reflectionTextures.push_back(&renderer.reflectionTarget(index).colorTexture());
+            }
+            std::vector<Diligent::ITextureView*> visibleReflectionTextures(
+                reflectionTextures.size());
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                const auto drawState =
+                    std::find_if(vehicleDrawStates.begin(), vehicleDrawStates.end(),
+                                 [&vehicle](const auto& state) {
+                                     return state.vehicleObjectId == vehicle->motionObjectId;
+                                 });
+                if (drawState != vehicleDrawStates.end()) {
+                    std::copy(reflectionTextures.begin(), reflectionTextures.end(),
+                              visibleReflectionTextures.begin());
+                    for (std::size_t index = 0; index < visibleReflectionTextures.size(); ++index) {
+                        if (!vehicle->needsReflectionTexture(index)) {
+                            visibleReflectionTextures[index] = nullptr;
+                        }
+                    }
+                    openbus::app::vehicle::bindDiligentVehicleReflectionTextures(
+                        vehicle->displayLists, drawState->materialOverrides,
+                        visibleReflectionTextures);
+                }
+            }
+            renderer.setVehicleSpotLightsWithShadows(vehicleSpotlights, spotlightShadowBindings,
+                                                     view, vehicleSpotlights.size(), minimumNdcZ);
+            static_cast<void>(openbus::app::drawDiligentMapMainView(
+                renderer, fallbackTexture, environment.lighting,
+                openbus::app::DiligentMapMainViewPass::Opaque, &mapWeather));
+            static_cast<void>(openbus::app::drawDiligentMapSceneryPlacements(
+                renderer, sceneryUpdate.placements, openbus::rendering::DiligentSceneryPass::Opaque,
+                fallbackTexture, view, {}, 0, true, environment.lighting, weatherBrightness,
+                mainViewMinimumObjectViewportFraction_));
+            static_cast<void>(openbus::app::vehicle::drawDiligentVehicleScenePass(
+                vehicleDrawStates, renderer, fallbackTexture,
+                openbus::rendering::DiligentVehicleRenderPass::Opaque));
+            static_cast<void>(openbus::rendering::drawDiligentHumanPlacementScenePass(
+                renderer, fallbackTexture, humanDrawStates,
+                openbus::rendering::DiligentHumanRenderPass::Opaque));
+            static_cast<void>(openbus::app::drawDiligentMapSceneryPlacements(
+                renderer, sceneryUpdate.placements,
+                openbus::rendering::DiligentSceneryPass::TransmapDepthPrepass, fallbackTexture,
+                view, {}, 0, true, environment.lighting, weatherBrightness,
+                mainViewMinimumObjectViewportFraction_));
+            static_cast<void>(openbus::app::drawDiligentMapMainView(
+                renderer, fallbackTexture, environment.lighting,
+                openbus::app::DiligentMapMainViewPass::Transparent, &mapWeather));
+            static_cast<void>(openbus::app::drawDiligentMapSceneryPlacements(
+                renderer, sceneryUpdate.placements,
+                openbus::rendering::DiligentSceneryPass::Transparent, fallbackTexture, view, {}, 0,
+                true, environment.lighting, weatherBrightness,
+                mainViewMinimumObjectViewportFraction_));
+            static_cast<void>(openbus::app::vehicle::drawDiligentVehicleScenePass(
+                vehicleDrawStates, renderer, fallbackTexture,
+                openbus::rendering::DiligentVehicleRenderPass::Transparent));
+            static_cast<void>(openbus::rendering::drawDiligentHumanPlacementScenePass(
+                renderer, fallbackTexture, humanDrawStates,
+                openbus::rendering::DiligentHumanRenderPass::Transparent));
+            if (!diligentTicketVertices.empty()) {
+                const auto viewProjection = openbus::rendering::multiplyMatrix4(projection, view);
+                renderer.drawPrimitives(diligentTicketVertices, viewProjection, view);
+            }
+            if (!passengerCoinAnimations_.empty()) {
+                constexpr std::size_t verticesPerCoin = 144;
+                const double simulationTime = simulation.simulationTime();
+                std::vector<openbus::rendering::PrimitiveVertex> coinVertices;
+                coinVertices.reserve(passengerCoinAnimations_.size() * verticesPerCoin);
+                for (const PassengerCoinAnimation& animation : passengerCoinAnimations_) {
+                    const double age =
+                        std::clamp(simulationTime - animation.startedAtSeconds, 0.0, 0.8);
+                    const std::array<float, 3> color =
+                        animation.coinIndex < passengerCurrency_.coins.size() &&
+                                passengerCurrency_.coins[animation.coinIndex].value < 0.1
+                            ? std::array<float, 3>{0.82F, 0.47F, 0.20F}
+                            : std::array<float, 3>{0.92F, 0.76F, 0.28F};
+                    std::vector<openbus::rendering::PrimitiveVertex> discVertices;
+                    discVertices.reserve(verticesPerCoin);
+                    openbus::app::appendPassengerCoinDisc(discVertices, 0.014, 0.0025, color);
+
+                    const double angle = animation.headingRadians + age * 2.0 * std::numbers::pi;
+                    const double cosine = std::cos(angle);
+                    const double sine = std::sin(angle);
+                    const double centerZ =
+                        animation.position[2] + 0.025 + 0.035 * std::sin(age * 11.0) - 0.12 * age;
+                    for (const auto& vertex : discVertices) {
+                        coinVertices.push_back(
+                            {static_cast<float>(animation.position[0] + cosine * vertex.x -
+                                                sine * vertex.y),
+                             static_cast<float>(animation.position[1] + sine * vertex.x +
+                                                cosine * vertex.y),
+                             static_cast<float>(centerZ + vertex.z), vertex.r, vertex.g, vertex.b});
+                    }
+                }
+                const auto viewProjection = openbus::rendering::multiplyMatrix4(projection, view);
+                renderer.drawPrimitives(coinVertices, viewProjection, view);
+            }
+            if (cameraView_ == 0 || freeCameraEnabled_) {
+                const double precipitationType = sharedVariables.get("preciptype");
+                if (!std::isfinite(precipitationType) || precipitationType < 0.0 ||
+                    precipitationType > 2.0 || std::floor(precipitationType) != precipitationType) {
+                    throw std::runtime_error("Weather system variable PrecipType is invalid");
+                }
+                static_cast<void>(renderer.drawWeatherPrecipitation(
+                    static_cast<int>(precipitationType), sharedVariables.get("preciprate"),
+                    simulation.simulationTime(), sharedVariables.weatherWindDirectionDegrees(),
+                    sharedVariables.weatherWindSpeedMetersPerSecond(), weatherBrightness));
+            }
+            if (imguiEnabled_) {
+                drawOnFootUi();
+                drawPlayerTimetableUi();
+                drawPauseMenuUi();
+                drawDebugMenuUi();
+            }
+        },
+        diligentRenderer->defaultColorFilter(), diligentDebugView_);
+    if (rendered && mapRenderer_ != nullptr) {
+        passengerRenderedQueuePositions_.clear();
+        for (const auto& [key, pose] : diligentWaitingPassengerRenderedPoses) {
+            passengerRenderedQueuePositions_.insert_or_assign(key, pose);
+        }
+        mapRenderer_->finishFrame();
+    }
+#else
+    static_cast<void>(simulation);
+    throw std::logic_error("Diligent renderer support is not available in this build");
+#endif
+}
+
+void RenderLoop::invalidateTemporalHistory() {
+    if (framePresenter_ == nullptr) {
+        return;
+    }
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    diligentMotionHistory_.invalidate();
+    auto* diligentRenderer =
+        dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
+    if (diligentRenderer == nullptr) {
+        throw std::logic_error(
+            "Diligent temporal invalidation requires the Diligent frame presenter");
+    }
+    diligentRenderer->invalidateHistory();
+#else
+    throw std::logic_error("Diligent renderer support is not available in this build");
+#endif
+}
+
+void RenderLoop::beginUiFrame(bool manageMouseCursor) {
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    auto* diligentRenderer =
+        dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
+    if (diligentRenderer == nullptr) {
+        throw std::logic_error("UI frame requires the Diligent frame presenter");
+    }
+    diligentRenderer->beginUiFrame(manageMouseCursor);
+#else
+    static_cast<void>(manageMouseCursor);
+    throw std::logic_error("Diligent renderer support is not available in this build");
+#endif
+}
+
+void RenderLoop::clearUiOnlyFrame(int framebufferWidth, int framebufferHeight) {
+    static_cast<void>(framebufferWidth);
+    static_cast<void>(framebufferHeight);
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    if (framePresenter_ == nullptr || dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(
+                                          framePresenter_.get()) == nullptr) {
+        throw std::logic_error("UI clearing requires the Diligent frame presenter");
+    }
+#else
+    throw std::logic_error("Diligent renderer support is not available in this build");
+#endif
+}
+
+void RenderLoop::presentUiOnlyFrame() {
+#if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    auto* diligentRenderer =
+        dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
+    if (diligentRenderer == nullptr) {
+        throw std::logic_error("UI presentation requires the Diligent frame presenter");
+    }
+    diligentRenderer->endUiOnlyFrame();
+#else
+    throw std::logic_error("Diligent renderer support is not available in this build");
+#endif
 }
 
 bool RenderLoop::initialMapWindowReady() const noexcept {

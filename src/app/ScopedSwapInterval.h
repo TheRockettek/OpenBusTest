@@ -1,25 +1,26 @@
 #pragma once
 
+#include "render/RendererFramePresenter.h"
+
 namespace openbus::app {
 
 class ScopedSwapInterval {
   public:
-    using Setter = void (*)(int);
-
-    ScopedSwapInterval(Setter setter, int interval, const bool& restoreVsync)
-        : setter_(setter), restoreVsync_(&restoreVsync) {
-        setter_(interval);
+    ScopedSwapInterval(openbus::rendering::RendererFramePresenter& presenter, bool enabled,
+                       const bool& restoreVsync)
+        : presenter_(&presenter), restoreVsync_(&restoreVsync) {
+        presenter_->setVerticalSync(enabled);
     }
 
     ~ScopedSwapInterval() {
-        setter_(*restoreVsync_ ? 1 : 0);
+        presenter_->setVerticalSync(*restoreVsync_);
     }
 
     ScopedSwapInterval(const ScopedSwapInterval&) = delete;
     ScopedSwapInterval& operator=(const ScopedSwapInterval&) = delete;
 
   private:
-    Setter setter_;
+    openbus::rendering::RendererFramePresenter* presenter_;
     const bool* restoreVsync_;
 };
 

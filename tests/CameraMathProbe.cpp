@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
 
 namespace {
 
@@ -45,11 +46,30 @@ int main() {
     }
     openbus::rendering::setPerspective(1280.0, 720.0, 60.0);
     const openbus::rendering::Matrix4& projection = openbus::rendering::projectionMatrix();
-    if (!std::all_of(projection.begin(), projection.end(), [](double value) {
+    const openbus::rendering::Matrix4 standaloneProjection =
+        openbus::rendering::makePerspectiveMatrix(1280.0, 720.0, 60.0);
+    if (projection != standaloneProjection ||
+        !std::all_of(projection.begin(), projection.end(), [](double value) {
             return std::isfinite(value);
         }) || projection[10] <= -1.0001 || projection[10] >= -1.0) {
-        std::cerr << "Camera projection far clip is not configured for long map visibility\n";
+        std::cerr << "Standalone camera projection differs from the active perspective matrix\n";
         return 1;
+    }
+    const auto ndcDepth = [&](double viewSpaceZ) {
+        const double clipZ = projection[10] * viewSpaceZ + projection[14];
+        const double clipW = projection[11] * viewSpaceZ;
+        return clipZ / clipW;
+    };
+    if (std::abs(ndcDepth(-0.1) + 1.0) > 1.0e-9 ||
+        std::abs(ndcDepth(-10000.0) - 1.0) > 1.0e-9) {
+        std::cerr << "Camera projection does not preserve the OpenGL near/far depth convention\n";
+        return 1;
+    }
+    try {
+        static_cast<void>(openbus::rendering::makePerspectiveMatrix(1280.0, 0.0, 60.0));
+        std::cerr << "Standalone camera projection accepted an invalid viewport height\n";
+        return 1;
+    } catch (const std::invalid_argument&) {
     }
     const auto frustum = openbus::rendering::buildViewFrustum(projection);
     if (!openbus::rendering::sphereOutsideFrustum(frustum, {40.0, 0.0, -10.0, 1.0}, 4.0) ||

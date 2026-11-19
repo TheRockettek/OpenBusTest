@@ -11,6 +11,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "$env{OPENBUS_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "OPENBUS_ENABLE_PERF_TRACE": "ON",
+        "OPENBUS_BUILD_DILIGENT_RENDERER": "ON",
         "OPENBUS_BUILD_BGFX_LIGHTING_PROBE": "OFF"
       },
       "environment": {

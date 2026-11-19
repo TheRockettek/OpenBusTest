@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config/ConfigurationTypes.h"
+#include "config/TextureAddressMode.h"
 
 #include <array>
 #include <cmath>
@@ -13,8 +14,6 @@
 #include <vector>
 
 enum class ModelConfigKind { Vehicle, Bus, SceneryObject };
-
-enum class TextureAddressMode { Repeat, Clamp, Border, Mirror, MirrorOnce };
 
 struct ModelMaterialState {
     std::filesystem::path texturePath;

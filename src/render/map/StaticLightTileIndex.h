@@ -21,6 +21,8 @@ class StaticLightTileIndex {
     void add(std::uint64_t tile, std::size_t lightIndex) {
         byTile_[tile].push_back(lightIndex);
         allIndices_.push_back(lightIndex);
+        maxIndex_ = std::max(maxIndex_, lightIndex);
+        hasIndices_ = true;
         allIndicesDirty_ = true;
         dirty_ = true;
     }
@@ -41,6 +43,8 @@ class StaticLightTileIndex {
             radius <= 0.0 || !std::isfinite(tileSize) || tileSize <= 0.0) {
             throw std::invalid_argument("Invalid static light influence");
         }
+        maxIndex_ = std::max(maxIndex_, lightIndex);
+        hasIndices_ = true;
         const double minX = std::floor((position[0] - radius) / tileSize);
         const double maxX = std::floor((position[0] + radius) / tileSize);
         const double minY = std::floor((position[1] - radius) / tileSize);
@@ -67,17 +71,50 @@ class StaticLightTileIndex {
     activeIndices(const std::unordered_set<std::uint64_t>& activeTiles) {
         if (dirty_ || activeTiles_ != activeTiles) {
             std::vector<std::size_t> indices;
+            // Sparse or unusually large identifiers use the exact sort/unique fallback.
+            constexpr std::size_t maxDenseIndices = 4'000'000;
+            const std::size_t denseLimit =
+                allIndices_.size() <= (std::numeric_limits<std::size_t>::max() - 1024) / 4
+                    ? allIndices_.size() * 4 + 1024
+                    : std::numeric_limits<std::size_t>::max();
+            const bool useDenseMarks =
+                hasIndices_ && maxIndex_ < maxDenseIndices && maxIndex_ <= denseLimit;
+            if (useDenseMarks) {
+                if (marks_.size() <= maxIndex_) {
+                    marks_.resize(maxIndex_ + 1, 0);
+                }
+                if (generation_ == std::numeric_limits<std::uint32_t>::max()) {
+                    std::fill(marks_.begin(), marks_.end(), 0);
+                    generation_ = 1;
+                } else {
+                    ++generation_;
+                }
+            }
+            const auto append = [&](const std::vector<std::size_t>& values) {
+                if (!useDenseMarks) {
+                    indices.insert(indices.end(), values.begin(), values.end());
+                    return;
+                }
+                for (const std::size_t index : values) {
+                    if (marks_[index] != generation_) {
+                        marks_[index] = generation_;
+                        indices.push_back(index);
+                    }
+                }
+            };
             if (!activeTiles.empty()) {
-                indices = globalIndices_;
+                append(globalIndices_);
             }
             for (const std::uint64_t tile : activeTiles) {
                 const auto found = byTile_.find(tile);
                 if (found != byTile_.end()) {
-                    indices.insert(indices.end(), found->second.begin(), found->second.end());
+                    append(found->second);
                 }
             }
             std::sort(indices.begin(), indices.end());
-            indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+            if (!useDenseMarks) {
+                indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+            }
             activeTiles_ = activeTiles;
             activeIndices_ = std::move(indices);
             dirty_ = false;
@@ -89,6 +126,10 @@ class StaticLightTileIndex {
     std::unordered_map<std::uint64_t, std::vector<std::size_t>> byTile_;
     std::vector<std::size_t> allIndices_;
     bool allIndicesDirty_ = false;
+    std::size_t maxIndex_ = 0;
+    bool hasIndices_ = false;
+    std::vector<std::uint32_t> marks_;
+    std::uint32_t generation_ = 0;
     std::vector<std::size_t> globalIndices_;
     std::unordered_set<std::uint64_t> activeTiles_;
     std::vector<std::size_t> activeIndices_;
