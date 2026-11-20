@@ -8,6 +8,7 @@
 #include "app/vehicle/DiligentVehicleSourceBridge.h"
 #include "assets/ScreenshotWriter.h"
 #include "core/AssetPath.h"
+#include "core/PerfTrace.h"
 #include "map/MapConfigLoader.h"
 #include "render/diligent/DiligentHumanAsset.h"
 #include "render/diligent/DiligentMapTileSet.h"
@@ -97,10 +98,19 @@ struct DiligentFrameRenderer::Impl {
     };
 
     struct MapSceneryRuntimeTextureRecord {
+        struct FreeTexturePath {
+            std::string name;
+            std::filesystem::path objectRoot;
+            std::filesystem::path modelRoot;
+            std::filesystem::path omsiRoot;
+            std::filesystem::path resolvedPath;
+        };
+
         ScriptRuntime* scriptRuntime = nullptr;
         std::map<std::pair<openbus::app::DiligentScriptTextureKind, int>,
                  std::unique_ptr<openbus::app::DiligentScriptTexture>>
             textures;
+        std::unordered_map<std::size_t, FreeTexturePath> freeTexturePaths;
     };
 
     DiligentVulkanFrame frame;
@@ -600,6 +610,40 @@ DiligentFrameRenderer::seasonalSceneryTexture(const std::filesystem::path& textu
     return impl_->sceneryAssets.seasonalTexture(texturePath);
 }
 
+std::filesystem::path DiligentFrameRenderer::resolveMapSceneryFreeTexturePath(
+    std::uint64_t motionObjectId, std::size_t batchIndex,
+    const std::filesystem::path& textureObjectRoot, const std::filesystem::path& textureModelRoot,
+    const std::filesystem::path& omsiRoot, const std::string& textureName) {
+    if (motionObjectId == 0) {
+        throw std::invalid_argument("Map scenery free textures require a stable object ID");
+    }
+    if (textureName.empty()) {
+        return {};
+    }
+
+    Impl::MapSceneryRuntimeTextureRecord& record = impl_->mapSceneryRuntimeTextures[motionObjectId];
+    const std::filesystem::path normalizedObjectRoot = textureObjectRoot.lexically_normal();
+    const std::filesystem::path normalizedModelRoot = textureModelRoot.lexically_normal();
+    const std::filesystem::path normalizedOmsiRoot = omsiRoot.lexically_normal();
+    auto selection = record.freeTexturePaths.find(batchIndex);
+    if (selection != record.freeTexturePaths.end() && selection->second.name == textureName &&
+        selection->second.objectRoot == normalizedObjectRoot &&
+        selection->second.modelRoot == normalizedModelRoot &&
+        selection->second.omsiRoot == normalizedOmsiRoot) {
+        return selection->second.resolvedPath;
+    }
+
+    Impl::MapSceneryRuntimeTextureRecord::FreeTexturePath resolved;
+    resolved.name = textureName;
+    resolved.objectRoot = normalizedObjectRoot;
+    resolved.modelRoot = normalizedModelRoot;
+    resolved.omsiRoot = normalizedOmsiRoot;
+    resolved.resolvedPath = openbus::assets::findSceneryTexture(
+        normalizedObjectRoot, normalizedModelRoot, normalizedOmsiRoot, textureName);
+    record.freeTexturePaths.insert_or_assign(batchIndex, std::move(resolved));
+    return record.freeTexturePaths.at(batchIndex).resolvedPath;
+}
+
 bool DiligentFrameRenderer::synchronizeMapSceneryRuntimeTextures(
     std::uint64_t motionObjectId, const DiligentSceneryAsset& asset, ScriptRuntime* scripts,
     const Variables* variables, const std::filesystem::path& omsiRoot,
@@ -678,8 +722,9 @@ bool DiligentFrameRenderer::synchronizeMapSceneryRuntimeTextures(
                 variables == nullptr ? std::string{}
                                      : variables->getString(source.freeTextureVariable);
             if (!selectedTexture.empty()) {
-                const std::filesystem::path texturePath = openbus::assets::findSceneryTexture(
-                    source.textureObjectRoot, source.textureModelRoot, omsiRoot, selectedTexture);
+                const std::filesystem::path texturePath = resolveMapSceneryFreeTexturePath(
+                    motionObjectId, index, source.textureObjectRoot, source.textureModelRoot,
+                    omsiRoot, selectedTexture);
                 if (!texturePath.empty()) {
                     const DiligentTexture2D* texture =
                         impl_->sceneryAssets.seasonalTexture(texturePath);
@@ -1763,25 +1808,38 @@ void DiligentFrameRenderer::endFrame(DiligentColorFilter filter) {
 }
 
 void DiligentFrameRenderer::endFrame(DiligentColorFilter filter, DiligentDebugView debugView) {
+    openbus::rendering::TraceScope frameTrace("render", "DiligentFrameRenderer::endFrame");
     impl_->requireActiveScene("Frame completion");
     try {
         Diligent::IDeviceContext& context = impl_->frame.immediateContext();
+        openbus::rendering::TraceScope composeTrace("render",
+                                                    "DiligentFrameRenderer::endFrame.composeScene");
         impl_->scene.finishScene(context, impl_->frame.backBufferRenderTarget(), filter, debugView);
+        composeTrace.finish();
         if (impl_->uiActive) {
+            openbus::rendering::TraceScope uiTrace("render",
+                                                   "DiligentFrameRenderer::endFrame.renderUi");
             impl_->gui.render(context, impl_->frame.backBufferRenderTarget());
+            uiTrace.finish();
         }
         if (impl_->capturePath.has_value()) {
+            openbus::rendering::TraceScope captureTrace(
+                "capture", "DiligentFrameRenderer::endFrame.captureBackBuffer");
             const std::filesystem::path path = std::move(*impl_->capturePath);
             impl_->capturePath.reset();
             impl_->captureBackBuffer(path);
+            captureTrace.finish();
         }
         impl_->scene.completeFrame();
+        openbus::rendering::TraceScope presentTrace("render",
+                                                    "DiligentFrameRenderer::endFrame.present");
         impl_->frame.present();
         impl_->humanPoseHistory.completeFrame();
         if (impl_->activeMotionHistory != nullptr) {
             impl_->activeMotionHistory->completeFrame();
             impl_->activeMotionHistory = nullptr;
         }
+        presentTrace.finish();
     } catch (...) {
         abortFrame();
         throw;

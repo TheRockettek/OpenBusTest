@@ -2,6 +2,7 @@
 
 #include "core/AssetPath.h"
 #include "core/Logger.h"
+#include "core/PerfTrace.h"
 #include "core/Utf8Path.h"
 #include "config/TextureSurfaceConfigLoader.h"
 #include "map/MapRoadRenderGeometry.h"
@@ -26,6 +27,7 @@ namespace {
 std::filesystem::path resolveMapTexturePath(const std::filesystem::path& mapRoot,
                                             const std::filesystem::path& omsiRoot,
                                             const std::string& configuredPath) {
+    TraceScope trace("filesystem", "DiligentMapTileSet.resolveMapTexturePath");
     std::string normalized = configuredPath;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     const std::filesystem::path relative = openbus::pathFromUtf8(normalized);
@@ -56,6 +58,7 @@ std::filesystem::path resolveMapTexturePath(const std::filesystem::path& mapRoot
 }
 
 std::filesystem::path resolveOptionalMapTexturePath(const std::filesystem::path& path) {
+    TraceScope trace("filesystem", "DiligentMapTileSet.resolveOptionalMapTexturePath");
     if (path.empty()) {
         return {};
     }
@@ -66,6 +69,7 @@ std::filesystem::path resolveOptionalMapTexturePath(const std::filesystem::path&
 std::filesystem::path resolveSplineProfilePath(const std::filesystem::path& mapRoot,
                                                const std::filesystem::path& omsiRoot,
                                                const std::string& assetPath) {
+    TraceScope trace("filesystem", "DiligentMapTileSet.resolveSplineProfilePath");
     std::string normalized = assetPath;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     const std::filesystem::path relative = openbus::pathFromUtf8(normalized);
@@ -198,6 +202,7 @@ DiligentMapTileSet::PreparedTerrainTile DiligentMapTileSet::prepareTerrainTile(
     std::span<const openbus::map::GroundTextureDefinition> groundTextures,
     std::size_t baseGroundTextureIndex,
     const openbus::map::MapRoadConnectionIndex* roadConnections) {
+    TraceScope trace("filesystem", "DiligentMapTileSet.prepareTerrainTile");
     if (!tile.hasTerrainFile || tile.terrainPath.empty()) {
         throw std::invalid_argument("Diligent map terrain tile has no terrain file");
     }

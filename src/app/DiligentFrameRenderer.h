@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/DiligentGraphicsPreferences.h"
+#include "core/PerfTrace.h"
 #include "core/WeatherState.h"
 #include "render/diligent/DiligentColorPresent.h"
 #include "render/diligent/DiligentHumanAsset.h"
@@ -161,6 +162,12 @@ class DiligentFrameRenderer final : public RendererFramePresenter {
                  const std::filesystem::path& omsiRoot) const;
     [[nodiscard]] const DiligentTexture2D*
     seasonalSceneryTexture(const std::filesystem::path& texturePath) const;
+    [[nodiscard]] std::filesystem::path
+    resolveMapSceneryFreeTexturePath(std::uint64_t motionObjectId, std::size_t batchIndex,
+                                     const std::filesystem::path& textureObjectRoot,
+                                     const std::filesystem::path& textureModelRoot,
+                                     const std::filesystem::path& omsiRoot,
+                                     const std::string& textureName);
     bool synchronizeMapSceneryRuntimeTextures(
         std::uint64_t motionObjectId, const DiligentSceneryAsset& asset, ScriptRuntime* scripts,
         const Variables* variables, const std::filesystem::path& omsiRoot,
@@ -372,13 +379,23 @@ class DiligentFrameRenderer final : public RendererFramePresenter {
                      int displayHeight, const DiligentSceneEnvironment& environment,
                      DrawScene&& drawScene, DiligentColorFilter filter = DiligentColorFilter::None,
                      DiligentDebugView debugView = DiligentDebugView::None) {
+        openbus::rendering::TraceScope frameTrace("render", "DiligentFrameRenderer::renderFrame");
+        openbus::rendering::TraceScope beginTrace("render",
+                                                  "DiligentFrameRenderer::renderFrame.begin");
         if (!beginFrame(history, frameId, timestampSeconds, camera, displayWidth, displayHeight,
                         environment)) {
             return false;
         }
+        beginTrace.finish();
         try {
+            openbus::rendering::TraceScope sceneTrace(
+                "render", "DiligentFrameRenderer::renderFrame.sceneCallback");
             std::forward<DrawScene>(drawScene)(*this);
+            sceneTrace.finish();
+            openbus::rendering::TraceScope endTrace("render",
+                                                    "DiligentFrameRenderer::renderFrame.end");
             endFrame(filter, debugView);
+            endTrace.finish();
         } catch (...) {
             abortFrame();
             throw;

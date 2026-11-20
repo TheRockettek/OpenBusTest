@@ -16,6 +16,7 @@
 #include "config/VehicleConfigLoader.h"
 #include "config/VehicleCatalog.h"
 #include "core/AssetPath.h"
+#include "core/PerfTrace.h"
 #include "core/Utf8Path.h"
 #include "core/Variables.h"
 #include "map/MapCarparkList.h"
@@ -64,6 +65,8 @@ void recordSourceFile(MapAssetValidationReport& report, const std::filesystem::p
 }
 
 void recordExistingSourceFile(MapAssetValidationReport& report, const std::filesystem::path& path) {
+    openbus::rendering::TraceScope trace("filesystem",
+                                         "MapAssetValidation.recordExistingSourceFile");
     if (path.empty()) {
         return;
     }
@@ -95,6 +98,7 @@ std::filesystem::path findAsset(const std::vector<std::filesystem::path>& roots,
                                 const std::string& reference, bool texture = false,
                                 bool strictAccess = false,
                                 MapAssetValidationReport* report = nullptr) {
+    openbus::rendering::TraceScope trace("filesystem", "MapAssetValidation.findAsset");
     const auto relative = assetPath(reference);
     for (const auto& root : roots) {
         const auto candidate = root / relative;
@@ -187,6 +191,8 @@ bool checkResolvedRegularFile(MapAssetValidationReport& report, const std::strin
                               const std::filesystem::path& source, const std::string& reference,
                               const std::filesystem::path& resolvedPath,
                               const std::string& missingDetail) {
+    openbus::rendering::TraceScope trace("filesystem",
+                                         "MapAssetValidation.checkResolvedRegularFile");
     std::error_code statusError;
     const bool exists = std::filesystem::exists(resolvedPath, statusError);
     if (statusError) {
@@ -2877,6 +2883,7 @@ MapAssetValidationReport validateMapAssets(const std::filesystem::path& mapDirec
 MapAssetValidationReport validateMapAssets(const std::filesystem::path& mapDirectory,
                                            const std::filesystem::path& omsiRoot,
                                            const MapAssetValidationOptions& options) {
+    openbus::rendering::TraceScope trace("filesystem", "MapAssetValidation.validateMapAssets");
     const auto notifyProgress = [&](std::string phase, std::size_t completed, std::size_t total) {
         if (options.onProgress) {
             options.onProgress({std::move(phase), completed, total});

@@ -8,6 +8,7 @@
 #include <system_error>
 #include <utility>
 
+#include "core/PerfTrace.h"
 #include "core/Utf8Path.h"
 
 namespace openbus::assets {
@@ -22,6 +23,7 @@ inline std::filesystem::path textureSubdirectoryPath(const std::filesystem::path
 
 inline std::filesystem::path resolveCaseInsensitivePath(const std::filesystem::path& requestedPath,
                                                         bool strictAccess = false) {
+    openbus::rendering::TraceScope trace("filesystem", "AssetPath.resolveCaseInsensitivePath");
     const std::filesystem::path requested = requestedPath.lexically_normal();
     std::error_code error;
     if (std::filesystem::exists(requested, error) && !error) {
@@ -84,6 +86,7 @@ inline std::filesystem::path resolveCaseInsensitivePath(const std::filesystem::p
 }
 
 inline std::filesystem::path resolveTexturePath(const std::filesystem::path& requestedPath) {
+    openbus::rendering::TraceScope trace("filesystem", "AssetPath.resolveTexturePath");
     const std::filesystem::path resolved = resolveCaseInsensitivePath(requestedPath);
     if (std::filesystem::is_regular_file(resolved)) {
         return resolved;
@@ -144,6 +147,7 @@ inline std::filesystem::path findSceneryTexture(const std::filesystem::path& obj
                                                 const std::filesystem::path& modelRoot,
                                                 const std::filesystem::path& omsiRoot,
                                                 const std::string& textureName) {
+    openbus::rendering::TraceScope trace("filesystem", "AssetPath.findSceneryTexture");
     const auto candidates = sceneryTextureCandidates(objectRoot, modelRoot, omsiRoot, textureName);
     for (const auto& candidate : candidates) {
         if (!candidate.empty()) {
@@ -159,6 +163,7 @@ inline std::filesystem::path findSceneryTexture(const std::filesystem::path& obj
 inline std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,
                                                    const std::string& referencedPath,
                                                    bool strictAccess = false) {
+    openbus::rendering::TraceScope trace("filesystem", "AssetPath.resolveReferencedPath");
     std::string normalized = referencedPath;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     return resolveCaseInsensitivePath(configPath.parent_path() / openbus::pathFromUtf8(normalized),

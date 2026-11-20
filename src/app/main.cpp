@@ -2361,6 +2361,8 @@ int main() {
                         previousTime = currentTime;
 
                         renderer.beginFrame();
+                        openbus::rendering::TraceScope controlTrace("frame",
+                                                                    "main.frameControlAndRequests");
                         if (!renderer.isPaused()) {
                             renderer.updateOnFoot(*world, elapsed);
                         }
@@ -2613,14 +2615,25 @@ int main() {
                             applicationLog.Log(
                                 "Raised player vehicle 5 m above its current location");
                         }
+                        controlTrace.finish();
 
+                        openbus::rendering::TraceScope simulationTrace(
+                            "frame", "main.simulationAndWorldUpdate");
                         if (!renderer.isPaused()) {
                             renderer.updatePlayerVariables(*simulation, renderer.throttle(),
                                                            renderer.steering(), renderer.brake());
+                            openbus::rendering::TraceScope physicsTrace("physics",
+                                                                        "main.updatePlayerPhysics");
                             updatePlayerPhysics(elapsed);
+                            physicsTrace.finish();
+                            openbus::rendering::TraceScope trafficTrace(
+                                "traffic", "main.updateTrafficPopulation");
                             updateMapTrafficPopulation();
+                            trafficTrace.finish();
                             renderer.updatePostPhysicsVariables(*simulation);
                             updateArticulatedRearVariables();
+                            openbus::rendering::TraceScope streamingTrace(
+                                "map", "main.updateMapAndCollisionStreaming");
                             const auto streamingPosition = renderer.streamingPosition(*simulation);
                             renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
                             const auto loadedTiles = renderer.loadedMapTiles();
@@ -2643,7 +2656,9 @@ int main() {
                                 reportedCollisionTileCount = collisionTileCount;
                             }
                         }
+                        simulationTrace.finish();
                         updateArticulatedRearPlacement();
+                        openbus::rendering::TraceScope drawTrace("render", "main.drawAndCapture");
                         renderer.draw(*simulation, *world);
 
                         if (renderer.consumeCaptureRequest()) {
@@ -2653,16 +2668,22 @@ int main() {
                         if (pendingCaptureRequest && renderer.isCaptureReady()) {
                             pendingCaptureRequest = false;
                             captureOnStartup = false;
+                            openbus::rendering::TraceScope captureTrace("capture",
+                                                                        "main.captureViews");
                             renderer.captureViews(*simulation, *world,
                                                   captureDirectoryFromEnvironment());
                             renderer.requestClose();
                         }
+                        drawTrace.finish();
 
+                        openbus::rendering::TraceScope presentTrace("frame",
+                                                                    "main.endFrameAndPacing");
                         renderer.endFrame();
                         if (renderer.consumeQuitToMenuRequest()) {
                             returnToMenu = true;
                             break;
                         }
+                        presentTrace.finish();
                     }
                 }
             }

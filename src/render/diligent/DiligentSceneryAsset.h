@@ -143,6 +143,7 @@ class DiligentSceneryAsset final {
     [[nodiscard]] std::span<const DiligentSceneryBatch> batches() const noexcept;
     [[nodiscard]] std::span<const DiligentSceneryTreeBatch> trees() const noexcept;
     [[nodiscard]] std::size_t selectLod(double distance) const noexcept;
+    [[nodiscard]] bool mayRenderPass(DiligentSceneryPass pass, float visibilityFade) const noexcept;
     // Missing optional or authored textures remain visible to callers rather than failing silently.
     [[nodiscard]] std::span<const std::string> diagnostics() const noexcept;
 
@@ -151,6 +152,11 @@ class DiligentSceneryAsset final {
     std::vector<DiligentSceneryBatch> batches_;
     std::vector<DiligentSceneryTreeBatch> trees_;
     std::vector<std::string> diagnostics_;
+    bool hasOpaqueBatches_ = false;
+    bool hasTransparentBatches_ = false;
+    bool hasTransmapDepthBatches_ = false;
+    bool hasOpaqueTrees_ = false;
+    bool hasTransparentTrees_ = false;
 };
 
 } // namespace openbus::rendering

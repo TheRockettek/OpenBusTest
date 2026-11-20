@@ -6,6 +6,7 @@
 
 #include "core/Environment.h"
 #include "core/Logger.h"
+#include "core/PerfTrace.h"
 #include "core/Utf8Path.h"
 #include "render/CoreRenderer.h"
 #include "render/OpenGLFunctions.h"
@@ -169,6 +170,7 @@ std::string AssetRequestManager::textureAliasKey(const std::filesystem::path& ro
 
 std::shared_future<std::shared_ptr<ParsedObj>>
 AssetRequestManager::requestObj(const std::filesystem::path& path, const std::string& bundleEntry) {
+    TraceScope trace("asset_cache", "AssetRequestManager.requestObj");
     const std::string key = normalizedPathKey(path) + "|" + lower(bundleEntry);
     std::lock_guard<std::mutex> lock(parsedObjMutex_);
     const auto cached = parsedObjCache_.find(key);
@@ -199,6 +201,7 @@ std::shared_ptr<AssetRequestManager::TextureCacheEntry>
 AssetRequestManager::requestTexture(const std::filesystem::path& root,
                                     const std::filesystem::path& path, const std::string& name,
                                     TextureResolver resolver) {
+    TraceScope trace("asset_cache", "AssetRequestManager.requestTexture");
     const std::string key = textureKey(root, path, name);
     std::lock_guard<std::mutex> lock(textureMutex_);
     const auto found = textureCache_.find(key);
@@ -261,6 +264,7 @@ void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCache
 }
 
 void AssetRequestManager::loadTextureRequest(const std::shared_ptr<TextureRequest>& request) {
+    TraceScope trace("filesystem", "AssetRequestManager.loadTextureRequest");
 #ifdef _WIN32
     const ComInitializer com;
 #endif

@@ -423,6 +423,23 @@ DiligentSceneryAsset::DiligentSceneryAsset(Diligent::IRenderDevice& device,
         }
         trees_.push_back(std::move(tree));
     }
+
+    for (const DiligentSceneryBatch& batch : batches_) {
+        const auto& source = batch.source.batch;
+        const bool usesTextTexture = source.textTextureIndex >= 0;
+        hasOpaqueBatches_ = hasOpaqueBatches_ || (!usesTextTexture && !source.noZwrite &&
+                                                  (source.alphaMode == 0 || source.alphaMode == 1));
+        hasTransparentBatches_ = hasTransparentBatches_ || usesTextTexture || source.noZwrite ||
+                                 source.alphaMode == 2 || source.alphaMode == 3;
+        hasTransmapDepthBatches_ = hasTransmapDepthBatches_ || source.alphaMode == 2;
+    }
+    for (const DiligentSceneryTreeBatch& tree : trees_) {
+        if (tree.mesh == nullptr) {
+            continue;
+        }
+        hasTransparentTrees_ = hasTransparentTrees_ || tree.source.noZwrite;
+        hasOpaqueTrees_ = hasOpaqueTrees_ || !tree.source.noZwrite;
+    }
 }
 
 std::span<const DiligentSceneryBatch> DiligentSceneryAsset::batches() const noexcept {
@@ -435,6 +452,20 @@ std::span<const DiligentSceneryTreeBatch> DiligentSceneryAsset::trees() const no
 
 std::size_t DiligentSceneryAsset::selectLod(double distance) const noexcept {
     return openbus::map::selectMapSceneryLod(lodThresholds_, distance);
+}
+
+bool DiligentSceneryAsset::mayRenderPass(DiligentSceneryPass pass,
+                                         float visibilityFade) const noexcept {
+    switch (pass) {
+    case DiligentSceneryPass::Opaque:
+        return visibilityFade >= 1.0F && (hasOpaqueBatches_ || hasOpaqueTrees_);
+    case DiligentSceneryPass::Transparent:
+        return hasTransparentBatches_ || hasTransparentTrees_ ||
+               (visibilityFade < 1.0F && (hasOpaqueBatches_ || hasOpaqueTrees_));
+    case DiligentSceneryPass::TransmapDepthPrepass:
+        return hasTransmapDepthBatches_;
+    }
+    return true;
 }
 
 std::span<const std::string> DiligentSceneryAsset::diagnostics() const noexcept {

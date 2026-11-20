@@ -155,9 +155,15 @@ int MapRenderer::activeTileRadius() const noexcept {
     return MAP_ACTIVE_TILE_RADIUS;
 }
 
-MapSceneryAssetSources MapRenderer::activeSceneryAssetSources() const {
-    MapSceneryAssetSources sources;
+const MapSceneryAssetSources& MapRenderer::activeSceneryAssetSources() const {
+    if (impl_->activeSceneryAssetSourcesCached) {
+        return impl_->activeSceneryAssetSourcesCache;
+    }
+    MapSceneryAssetSources& sources = impl_->activeSceneryAssetSourcesCache;
+    sources.assets.clear();
+    sources.seasonalTextures.clear();
     if (!initialWindowReady()) {
+        impl_->activeSceneryAssetSourcesCached = true;
         return sources;
     }
 
@@ -206,12 +212,18 @@ MapSceneryAssetSources MapRenderer::activeSceneryAssetSources() const {
             }
         }
     }
+    impl_->activeSceneryAssetSourcesCached = true;
     return sources;
 }
 
-std::vector<MapSceneryPlacementSnapshot> MapRenderer::activeSceneryPlacements() const {
-    std::vector<MapSceneryPlacementSnapshot> placements;
+const std::vector<MapSceneryPlacementSnapshot>& MapRenderer::activeSceneryPlacements() const {
+    if (impl_->activeSceneryPlacementsCached) {
+        return impl_->activeSceneryPlacementsCache;
+    }
+    std::vector<MapSceneryPlacementSnapshot>& placements = impl_->activeSceneryPlacementsCache;
+    placements.clear();
     if (!initialWindowReady()) {
+        impl_->activeSceneryPlacementsCached = true;
         return placements;
     }
 
@@ -272,6 +284,7 @@ std::vector<MapSceneryPlacementSnapshot> MapRenderer::activeSceneryPlacements() 
                                   scriptRuntime});
         }
     }
+    impl_->activeSceneryPlacementsCached = true;
     return placements;
 }
 
@@ -295,6 +308,7 @@ MapRenderer::roadConnectionIndex() const noexcept {
 void MapRenderer::enableScripts() {
     scriptsEnabled_ = true;
     initializeActiveScripts();
+    impl_->activeSceneryPlacementsCached = false;
 }
 
 bool MapRenderer::initialWindowReady() const noexcept {
@@ -394,6 +408,8 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     if (!centerChanged && loadStatus != MapSceneLoader::TileLoadStatus::Updated) {
         return;
     }
+    impl_->activeSceneryAssetSourcesCached = false;
+    impl_->activeSceneryPlacementsCached = false;
     ++impl_->trafficDebugGeometryRevision;
     if (centerChanged) {
         impl_->activeTileCoordinates = impl_->requestedTileCoordinates;
@@ -497,9 +513,14 @@ void MapRenderer::updatePoleStates(const std::vector<MapPoleState>& states) {
             }
             const auto state = statesByPlacement.find(
                 std::tuple{instance.sourceTileX, instance.sourceTileY, *instance.mapObjectId});
-            instance.transform = state == statesByPlacement.end()
-                                     ? instance.baseTransform
-                                     : bentPoleTransform(instance.baseTransform, state->second);
+            const Matrix4 transform =
+                state == statesByPlacement.end()
+                    ? instance.baseTransform
+                    : bentPoleTransform(instance.baseTransform, state->second);
+            if (instance.transform != transform) {
+                instance.transform = transform;
+                impl_->activeSceneryPlacementsCached = false;
+            }
         }
     }
 }

@@ -159,8 +159,8 @@ class MapRenderer {
     bool leftHandTraffic() const noexcept;
     double tileSize() const noexcept;
     [[nodiscard]] int activeTileRadius() const noexcept;
-    [[nodiscard]] MapSceneryAssetSources activeSceneryAssetSources() const;
-    [[nodiscard]] std::vector<MapSceneryPlacementSnapshot> activeSceneryPlacements() const;
+    [[nodiscard]] const MapSceneryAssetSources& activeSceneryAssetSources() const;
+    [[nodiscard]] const std::vector<MapSceneryPlacementSnapshot>& activeSceneryPlacements() const;
     [[nodiscard]] const openbus::map::MapDefinition& mapDefinition() const noexcept;
     [[nodiscard]] const std::filesystem::path& omsiRoot() const noexcept;
     [[nodiscard]] std::size_t baseGroundTextureIndex() const noexcept;

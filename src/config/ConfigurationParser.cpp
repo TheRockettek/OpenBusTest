@@ -1,6 +1,7 @@
 #include "config/ConfigurationParser.h"
 
 #include "core/Logger.h"
+#include "core/PerfTrace.h"
 #include "core/Utf8Path.h"
 
 #include <charconv>
@@ -188,7 +189,10 @@ std::string Line::keyword() const {
     return text.substr(1, text.size() - 2);
 }
 
-Reader::Reader(const std::filesystem::path& path) : input_(path) {}
+Reader::Reader(const std::filesystem::path& path) {
+    openbus::rendering::TraceScope trace("filesystem", "ConfigurationParser.Reader.open");
+    input_.open(path);
+}
 
 Reader::Reader(std::istream& input) : stream_(&input) {}
 

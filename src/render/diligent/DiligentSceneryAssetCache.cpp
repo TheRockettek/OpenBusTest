@@ -1,6 +1,7 @@
 #include "render/diligent/DiligentSceneryAssetCache.h"
 
 #include "core/Utf8Path.h"
+#include "core/PerfTrace.h"
 #include "render/map/PreparedMapScenery.h"
 #include "render/diligent/DiligentTexture2D.h"
 
@@ -47,6 +48,7 @@ std::string DiligentSceneryAssetCache::makeTextureKey(const std::filesystem::pat
 
 bool DiligentSceneryAssetCache::request(const std::filesystem::path& configPath,
                                         const std::filesystem::path& omsiRoot) {
+    TraceScope trace("filesystem", "DiligentSceneryAssetCache.requestAsset");
     const std::string key = makeKey(configPath, omsiRoot);
     if (retentionEnabled_ && !retainedAssetKeys_.contains(key)) {
         throw std::logic_error("Diligent scenery asset was not included in the retained set");
@@ -61,6 +63,7 @@ bool DiligentSceneryAssetCache::request(const std::filesystem::path& configPath,
 }
 
 bool DiligentSceneryAssetCache::requestSeasonalTexture(const std::filesystem::path& texturePath) {
+    TraceScope trace("filesystem", "DiligentSceneryAssetCache.requestTexture");
     const std::string key = makeTextureKey(texturePath);
     if (retentionEnabled_ && !retainedSeasonalTextureKeys_.contains(key)) {
         throw std::logic_error("Diligent seasonal texture was not included in the retained set");
@@ -83,6 +86,7 @@ std::size_t DiligentSceneryAssetCache::scheduleQueued() {
         std::future<PreparedSceneryAsset> preparation =
             std::async(std::launch::async, [this, configPath = request.configPath,
                                             omsiRoot = request.omsiRoot] {
+                TraceScope trace("filesystem", "DiligentSceneryAssetCache.prepareAsset");
                 if (!std::filesystem::is_regular_file(configPath)) {
                     throw std::runtime_error("Diligent scenery config is not a regular file: " +
                                              openbus::pathToUtf8(configPath));
@@ -105,6 +109,7 @@ std::size_t DiligentSceneryAssetCache::scheduleSeasonalTextures() {
         const SeasonalTextureRequest request = queuedSeasonalTextures_.front();
         std::future<std::shared_ptr<Image>> decoded =
             std::async(std::launch::async, [this, path = request.path] {
+                TraceScope trace("filesystem", "DiligentSceneryAssetCache.decodeTexture");
                 if (!std::filesystem::is_regular_file(path)) {
                     throw std::runtime_error("Diligent seasonal texture is not a regular file: " +
                                              openbus::pathToUtf8(path));

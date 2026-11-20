@@ -2,6 +2,7 @@
 
 #include "app/DiligentFrameRenderer.h"
 #include "core/AssetPath.h"
+#include "core/PerfTrace.h"
 #include "map/MapSceneryPlacement.h"
 #include "render/CameraMath.h"
 #include "render/ComputeCulling.h"
@@ -20,6 +21,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -216,7 +218,10 @@ template <typename MapSource>
 DiligentMapSceneryUpdate
 updateDiligentMapScenery(openbus::rendering::DiligentFrameRenderer& frameRenderer,
                          const MapSource& mapSource) {
-    const auto sources = mapSource.activeSceneryAssetSources();
+    openbus::rendering::TraceScope sourceTrace("map",
+                                               "updateDiligentMapScenery.collectAssetSources");
+    const auto& sources = mapSource.activeSceneryAssetSources();
+    sourceTrace.finish();
     DiligentMapSceneryUpdate update;
     std::size_t seasonIndex = 0;
     if constexpr (requires { mapSource.activeTreeSeason(); }) {
@@ -225,10 +230,38 @@ updateDiligentMapScenery(openbus::rendering::DiligentFrameRenderer& frameRendere
     if (seasonIndex >= openbus::rendering::map_detail::treeSeasonDirectories.size()) {
         throw std::invalid_argument("Map scenery season index is out of range");
     }
-    const auto activePlacements = mapSource.activeSceneryPlacements();
+    const auto& activePlacements = mapSource.activeSceneryPlacements();
+    openbus::rendering::TraceScope placementTrace(
+        "map", "updateDiligentMapScenery.collectPlacementsAndTextureSelections");
     std::vector<std::uint64_t> activeMotionObjectIds;
     activeMotionObjectIds.reserve(activePlacements.size());
     std::vector<std::filesystem::path> retainedTexturePaths = sources.seasonalTextures;
+    retainedTexturePaths.reserve(retainedTexturePaths.size() + activePlacements.size());
+    update.placements.reserve(activePlacements.size());
+
+    struct ActiveAssetInfo {
+        const openbus::rendering::DiligentSceneryAsset* asset = nullptr;
+        std::vector<std::size_t> freeTextureBatchIndexes;
+    };
+    std::unordered_map<std::filesystem::path, ActiveAssetInfo> activeAssets;
+    activeAssets.reserve(sources.assets.size());
+    openbus::rendering::TraceScope assetMetadataTrace(
+        "map", "updateDiligentMapScenery.collectAssetBatchMetadata");
+    for (const auto& [configPath, omsiRoot] : sources.assets) {
+        ActiveAssetInfo info;
+        info.asset = frameRenderer.sceneryAsset(configPath, omsiRoot);
+        if (info.asset != nullptr) {
+            const auto batches = info.asset->batches();
+            for (std::size_t batchIndex = 0; batchIndex < batches.size(); ++batchIndex) {
+                if (!batches[batchIndex].source.batch.freeTextureVariable.empty()) {
+                    info.freeTextureBatchIndexes.push_back(batchIndex);
+                }
+            }
+        }
+        activeAssets.emplace(configPath, std::move(info));
+    }
+    assetMetadataTrace.finish();
+
     for (const auto& placement : activePlacements) {
         update.placements.push_back({placement.motionObjectId, placement.configPath,
                                      placement.worldTransform, placement.worldPosition,
@@ -236,32 +269,38 @@ updateDiligentMapScenery(openbus::rendering::DiligentFrameRenderer& frameRendere
                                      placement.sourceTileY, placement.variables, seasonIndex,
                                      mapSource.omsiRoot(), placement.scriptRuntime});
         activeMotionObjectIds.push_back(placement.motionObjectId);
-        const auto* asset = frameRenderer.sceneryAsset(placement.configPath, mapSource.omsiRoot());
-        if (asset == nullptr || placement.variables == nullptr) {
+        const auto assetEntry = activeAssets.find(placement.configPath);
+        if (assetEntry == activeAssets.end() || assetEntry->second.asset == nullptr ||
+            placement.variables == nullptr) {
             continue;
         }
-        for (const auto& batch : asset->batches()) {
+        const auto& assetInfo = assetEntry->second;
+        const auto batches = assetInfo.asset->batches();
+        for (const std::size_t batchIndex : assetInfo.freeTextureBatchIndexes) {
+            const auto& batch = batches[batchIndex];
             const auto& source = batch.source.batch;
-            if (source.freeTextureVariable.empty()) {
-                continue;
-            }
             const std::string selectedTexture =
                 placement.variables->getString(source.freeTextureVariable);
             if (selectedTexture.empty()) {
                 continue;
             }
-            const std::filesystem::path texturePath = openbus::assets::findSceneryTexture(
-                source.textureObjectRoot, source.textureModelRoot, mapSource.omsiRoot(),
-                selectedTexture);
+            const std::filesystem::path texturePath =
+                frameRenderer.resolveMapSceneryFreeTexturePath(
+                    placement.motionObjectId, batchIndex, source.textureObjectRoot,
+                    source.textureModelRoot, mapSource.omsiRoot(), selectedTexture);
             if (!texturePath.empty()) {
                 retainedTexturePaths.push_back(texturePath);
             }
         }
     }
+    placementTrace.finish();
+    openbus::rendering::TraceScope retainTrace("map", "updateDiligentMapScenery.retainResources");
     update.removedRuntimeTextureCaches =
         frameRenderer.retainMapSceneryRuntimeTextures(activeMotionObjectIds);
     update.removedResources =
         frameRenderer.retainSceneryAssets(sources.assets, retainedTexturePaths);
+    retainTrace.finish();
+    openbus::rendering::TraceScope requestTrace("map", "updateDiligentMapScenery.requestResources");
     for (const auto& [configPath, omsiRoot] : sources.assets) {
         update.requestedAssets += frameRenderer.requestSceneryAsset(configPath, omsiRoot) ? 1U : 0U;
     }
@@ -269,7 +308,10 @@ updateDiligentMapScenery(openbus::rendering::DiligentFrameRenderer& frameRendere
         update.requestedSeasonalTextures +=
             frameRenderer.requestSeasonalSceneryTexture(path) ? 1U : 0U;
     }
+    requestTrace.finish();
+    openbus::rendering::TraceScope publishTrace("map", "updateDiligentMapScenery.publishResources");
     update.publishedResources = frameRenderer.publishReadySceneryAssets();
+    publishTrace.finish();
     return update;
 }
 
@@ -827,6 +869,11 @@ inline std::vector<DiligentMapSceneryPlacementDrawResult> drawDiligentMapScenery
                 placement, view, frameRenderer.frameData().currentProjection,
                 minimumObjectViewportFraction);
         }
+        if (!std::isfinite(runtime.visibilityFade) || runtime.visibilityFade < 0.0F ||
+            runtime.visibilityFade > 1.0F) {
+            throw std::invalid_argument(
+                "Diligent map scenery visibility fade must be finite and in [0, 1]");
+        }
         if (runtime.visibilityFade == 0.0F) {
             openbus::rendering::DiligentSceneryDrawResult drawResult;
             drawResult.culled = true;
@@ -849,6 +896,12 @@ inline std::vector<DiligentMapSceneryPlacementDrawResult> drawDiligentMapScenery
             results.push_back({placement.motionObjectId,
                                DiligentMapSceneryPlacementDrawResult::Status::Culled,
                                std::move(drawResult)});
+            continue;
+        }
+        if (!asset->mayRenderPass(pass, runtime.visibilityFade)) {
+            results.push_back({placement.motionObjectId,
+                               DiligentMapSceneryPlacementDrawResult::Status::Submitted,
+                               openbus::rendering::DiligentSceneryDrawResult{}});
             continue;
         }
 
@@ -956,6 +1009,10 @@ inline std::vector<DiligentMapSceneryPlacementDrawResult> drawDiligentMapScenery
         const float visibilityFade = runtime.visibilityFade * diligentMapSceneryVisibilityFade(
                                                                   placement, view, projection,
                                                                   minimumObjectViewportFraction);
+        if (!std::isfinite(visibilityFade) || visibilityFade < 0.0F || visibilityFade > 1.0F) {
+            throw std::invalid_argument(
+                "Diligent map scenery visibility fade must be finite and in [0, 1]");
+        }
         if (visibilityFade == 0.0F) {
             openbus::rendering::DiligentSceneryDrawResult drawResult;
             drawResult.culled = true;
@@ -970,6 +1027,12 @@ inline std::vector<DiligentMapSceneryPlacementDrawResult> drawDiligentMapScenery
             results.push_back({placement.motionObjectId,
                                DiligentMapSceneryPlacementDrawResult::Status::AssetPending,
                                std::nullopt});
+            continue;
+        }
+        if (!asset->mayRenderPass(pass, visibilityFade)) {
+            results.push_back({placement.motionObjectId,
+                               DiligentMapSceneryPlacementDrawResult::Status::Submitted,
+                               openbus::rendering::DiligentSceneryDrawResult{}});
             continue;
         }
 

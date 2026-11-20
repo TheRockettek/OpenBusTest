@@ -9,6 +9,7 @@
 #include "app/traffic/PassengerMotionKeys.h"
 #include "config/HumanConfigLoader.h"
 #include "core/AssetPath.h"
+#include "core/PerfTrace.h"
 #include "render/map/MapRenderer.h"
 #include "map/MapSplineProfile.h"
 #if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
@@ -1750,6 +1751,7 @@ void RenderLoop::prepareDiligentSceneAssets(const BusSimulation& simulation) {
 
 void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World& world) {
 #if defined(OPENBUS_DILIGENT_RENDERER_AVAILABLE)
+    openbus::rendering::TraceScope sceneTrace("render", "RenderLoop::drawDiligentScene.total");
     auto* diligentRenderer =
         dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(framePresenter_.get());
     if (diligentRenderer == nullptr) {
@@ -1768,6 +1770,9 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
         throw std::overflow_error("Diligent frame identifier space is exhausted");
     }
 
+    openbus::rendering::TraceScope setupTrace("render", "RenderLoop::drawDiligentScene.setup");
+    openbus::rendering::TraceScope cameraSetupTrace(
+        "render", "RenderLoop::drawDiligentScene.cameraAndVehicleVisibility");
     const BodyPose chassis = simulation.chassisPose();
     const auto view = buildCameraViewMatrix(simulation, chassis);
     const auto projection = openbus::rendering::makePerspectiveMatrix(
@@ -1833,7 +1838,10 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
             context, framebufferWidth_, framebufferHeight_, mainViewMinimumObjectViewportFraction_,
             visibilityModelView, projection, &vehicleVisibilityFrustum);
     }
+    cameraSetupTrace.finish();
 
+    openbus::rendering::TraceScope reflectionSetupTrace(
+        "render", "RenderLoop::drawDiligentScene.configureReflections");
     std::vector<Diligent::Uint32> reflectionTargetSizes;
     reflectionTargetSizes.reserve(vehicleCameras_.size());
     const auto reflectionTargetSize = static_cast<Diligent::Uint32>(std::max(
@@ -1849,7 +1857,10 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
         reflectionTargetSizes,
         static_cast<std::uint64_t>(graphicsPreferences_.values.reflectionInterval),
         graphicsPreferences_.values.reflectionMaxFps);
+    reflectionSetupTrace.finish();
 
+    openbus::rendering::TraceScope mapResourceTrace(
+        "map", "RenderLoop::drawDiligentScene.updateMapSceneryResources");
     const auto& sharedVariables = simulationState_.sharedVariables();
     const auto weatherBrightness = sharedVariables.environmentBrightness();
     const auto& roadWeather = sharedVariables.roadWeather();
@@ -1868,6 +1879,7 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
     if (mapRenderer_ != nullptr) {
         sceneryUpdate = openbus::app::updateDiligentMapScenery(*diligentRenderer, *mapRenderer_);
     }
+    mapResourceTrace.finish();
     int displayWidth = 0;
     int displayHeight = 0;
     glfwGetWindowSize(window_, &displayWidth, &displayHeight);
@@ -1880,10 +1892,13 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
     }
     std::vector<std::pair<std::pair<int, std::size_t>, openbus::map::MapTrafficPose>>
         diligentWaitingPassengerRenderedPoses;
+    setupTrace.finish();
     const bool rendered = diligentRenderer->renderFrame(
         diligentMotionHistory_, frameId, simulation.simulationTime(), camera, displayWidth,
         displayHeight, environment,
         [&](openbus::rendering::DiligentFrameRenderer& renderer) {
+            openbus::rendering::TraceScope drawStateTrace(
+                "render", "RenderLoop::drawDiligentScene.prepareDrawStates");
             static_cast<void>(renderer.drawWeatherClouds(
                 sharedVariables.weatherCloudType(),
                 sharedVariables.weatherCloudBaseAboveGroundMeters(),
@@ -2613,6 +2628,9 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
                     }
                 }
             }
+            drawStateTrace.finish();
+            openbus::rendering::TraceScope shadowTrace(
+                "render", "RenderLoop::drawDiligentScene.shadowUpdates");
             for (const PendingDiligentShadowUpdate& update : pendingShadowUpdates) {
                 std::vector<openbus::rendering::DiligentShadowCaster> shadowCasters;
                 if (mapRenderer_ != nullptr) {
@@ -2707,6 +2725,7 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
                                                       static_cast<Diligent::Uint32>(index), 0.001F};
                 }
             }
+            shadowTrace.finish();
             const auto mainCameraLocalEye = [&] {
                 const double x = cameraPosition[0] - chassis.position[0];
                 const double y = cameraPosition[1] - chassis.position[1];
@@ -2716,6 +2735,8 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
                     chassis.rotation[1] * x + chassis.rotation[4] * y + chassis.rotation[7] * z,
                     chassis.rotation[2] * x + chassis.rotation[5] * y + chassis.rotation[8] * z};
             }();
+            openbus::rendering::TraceScope reflectionTrace(
+                "render", "RenderLoop::drawDiligentScene.reflections");
             std::size_t reflectionIndex = 0;
             for (std::size_t cameraIndex = 0; cameraIndex < vehicleCameras_.size(); ++cameraIndex) {
                 const VehicleCamera& reflectionCamera = vehicleCameras_[cameraIndex];
@@ -2907,6 +2928,11 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
                 }
                 ++reflectionIndex;
             }
+            reflectionTrace.finish();
+            openbus::rendering::TraceScope compositionTrace(
+                "render", "RenderLoop::drawDiligentScene.mainComposition");
+            openbus::rendering::TraceScope reflectionBindingTrace(
+                "render", "RenderLoop::drawDiligentScene.bindReflectionsAndLights");
             std::vector<Diligent::ITextureView*> reflectionTextures;
             reflectionTextures.reserve(reflectionTargetSizes.size());
             for (std::size_t index = 0; index < reflectionTargetSizes.size(); ++index) {
@@ -2935,38 +2961,74 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
             }
             renderer.setVehicleSpotLightsWithShadows(vehicleSpotlights, spotlightShadowBindings,
                                                      view, vehicleSpotlights.size(), minimumNdcZ);
+            reflectionBindingTrace.finish();
+            openbus::rendering::TraceScope opaquePassTrace(
+                "render", "RenderLoop::drawDiligentScene.opaquePasses");
+            openbus::rendering::TraceScope opaqueMapTilesTrace(
+                "render", "RenderLoop::drawDiligentScene.opaque.mapTiles");
             static_cast<void>(openbus::app::drawDiligentMapMainView(
                 renderer, fallbackTexture, environment.lighting,
                 openbus::app::DiligentMapMainViewPass::Opaque, &mapWeather));
+            opaqueMapTilesTrace.finish();
+            openbus::rendering::TraceScope opaqueMapSceneryTrace(
+                "render", "RenderLoop::drawDiligentScene.opaque.mapScenery");
             static_cast<void>(openbus::app::drawDiligentMapSceneryPlacements(
                 renderer, sceneryUpdate.placements, openbus::rendering::DiligentSceneryPass::Opaque,
                 fallbackTexture, view, {}, 0, true, environment.lighting, weatherBrightness,
                 mainViewMinimumObjectViewportFraction_));
+            opaqueMapSceneryTrace.finish();
+            openbus::rendering::TraceScope opaqueVehiclesTrace(
+                "render", "RenderLoop::drawDiligentScene.opaque.vehicles");
             static_cast<void>(openbus::app::vehicle::drawDiligentVehicleScenePass(
                 vehicleDrawStates, renderer, fallbackTexture,
                 openbus::rendering::DiligentVehicleRenderPass::Opaque));
+            opaqueVehiclesTrace.finish();
+            openbus::rendering::TraceScope opaqueHumansTrace(
+                "render", "RenderLoop::drawDiligentScene.opaque.humans");
             static_cast<void>(openbus::rendering::drawDiligentHumanPlacementScenePass(
                 renderer, fallbackTexture, humanDrawStates,
                 openbus::rendering::DiligentHumanRenderPass::Opaque));
+            opaqueHumansTrace.finish();
+            openbus::rendering::TraceScope transmapDepthTrace(
+                "render", "RenderLoop::drawDiligentScene.opaque.transmapDepth");
             static_cast<void>(openbus::app::drawDiligentMapSceneryPlacements(
                 renderer, sceneryUpdate.placements,
                 openbus::rendering::DiligentSceneryPass::TransmapDepthPrepass, fallbackTexture,
                 view, {}, 0, true, environment.lighting, weatherBrightness,
                 mainViewMinimumObjectViewportFraction_));
+            transmapDepthTrace.finish();
+            opaquePassTrace.finish();
+            openbus::rendering::TraceScope transparentPassTrace(
+                "render", "RenderLoop::drawDiligentScene.transparentPasses");
+            openbus::rendering::TraceScope transparentMapTilesTrace(
+                "render", "RenderLoop::drawDiligentScene.transparent.mapTiles");
             static_cast<void>(openbus::app::drawDiligentMapMainView(
                 renderer, fallbackTexture, environment.lighting,
                 openbus::app::DiligentMapMainViewPass::Transparent, &mapWeather));
+            transparentMapTilesTrace.finish();
+            openbus::rendering::TraceScope transparentMapSceneryTrace(
+                "render", "RenderLoop::drawDiligentScene.transparent.mapScenery");
             static_cast<void>(openbus::app::drawDiligentMapSceneryPlacements(
                 renderer, sceneryUpdate.placements,
                 openbus::rendering::DiligentSceneryPass::Transparent, fallbackTexture, view, {}, 0,
                 true, environment.lighting, weatherBrightness,
                 mainViewMinimumObjectViewportFraction_));
+            transparentMapSceneryTrace.finish();
+            openbus::rendering::TraceScope transparentVehiclesTrace(
+                "render", "RenderLoop::drawDiligentScene.transparent.vehicles");
             static_cast<void>(openbus::app::vehicle::drawDiligentVehicleScenePass(
                 vehicleDrawStates, renderer, fallbackTexture,
                 openbus::rendering::DiligentVehicleRenderPass::Transparent));
+            transparentVehiclesTrace.finish();
+            openbus::rendering::TraceScope transparentHumansTrace(
+                "render", "RenderLoop::drawDiligentScene.transparent.humans");
             static_cast<void>(openbus::rendering::drawDiligentHumanPlacementScenePass(
                 renderer, fallbackTexture, humanDrawStates,
                 openbus::rendering::DiligentHumanRenderPass::Transparent));
+            transparentHumansTrace.finish();
+            transparentPassTrace.finish();
+            openbus::rendering::TraceScope overlayTrace(
+                "render", "RenderLoop::drawDiligentScene.screenOverlaysAndUi");
             if (!diligentTicketVertices.empty()) {
                 const auto viewProjection = openbus::rendering::multiplyMatrix4(projection, view);
                 renderer.drawPrimitives(diligentTicketVertices, viewProjection, view);
@@ -3023,6 +3085,8 @@ void RenderLoop::drawDiligentScene(const BusSimulation& simulation, const World&
                 drawPauseMenuUi();
                 drawDebugMenuUi();
             }
+            overlayTrace.finish();
+            compositionTrace.finish();
         },
         diligentRenderer->defaultColorFilter(), diligentDebugView_);
     if (rendered && mapRenderer_ != nullptr) {

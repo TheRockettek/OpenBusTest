@@ -995,6 +995,15 @@ void runProbe(GLFWwindow& window, ScrollCallbackState& scrollState) {
     scriptedScenery.batches.front().batch.scriptTextureIndex = 0;
     scriptedScenery.batches.back().batch.textTextureIndex = 0;
     DiligentSceneryAsset scriptedSceneryAsset(renderer.device(), scriptedScenery);
+    require(cutoutSceneryAsset.mayRenderPass(DiligentSceneryPass::Opaque, 1.0F) &&
+                !cutoutSceneryAsset.mayRenderPass(DiligentSceneryPass::Transparent, 1.0F) &&
+                cutoutSceneryAsset.mayRenderPass(DiligentSceneryPass::Transparent, 0.5F) &&
+                !cutoutSceneryAsset.mayRenderPass(
+                    DiligentSceneryPass::TransmapDepthPrepass, 1.0F) &&
+                sceneryAsset.mayRenderPass(DiligentSceneryPass::Opaque, 1.0F) &&
+                sceneryAsset.mayRenderPass(DiligentSceneryPass::Transparent, 1.0F) &&
+                sceneryAsset.mayRenderPass(DiligentSceneryPass::TransmapDepthPrepass, 1.0F),
+            "Diligent scenery asset pass metadata did not account for alpha modes and fades");
     auto sceneryShadowImage = std::make_shared<Image>();
     sceneryShadowImage->width = 1;
     sceneryShadowImage->height = 1;
@@ -2976,20 +2985,22 @@ void runDiligentScriptTextureProbe(GLFWwindow& window) {
     std::vector<ITextureView*> dynamicBatchTextures;
     std::vector<ITextureView*> textBatchTextures;
     require(!renderer.synchronizeMapSceneryRuntimeTextures(
-                7101, sceneryAsset, nullptr, dynamicBatchTextures, textBatchTextures) &&
+                7101, sceneryAsset, nullptr, nullptr, {}, dynamicBatchTextures,
+                textBatchTextures) &&
                 dynamicBatchTextures.empty() && textBatchTextures.empty(),
             "Diligent map scenery accepted missing script runtime data");
     bool zeroSceneryMotionIdRejected = false;
     try {
         (void)renderer.synchronizeMapSceneryRuntimeTextures(
-            0, sceneryAsset, &scripts, dynamicBatchTextures, textBatchTextures);
+            0, sceneryAsset, &scripts, nullptr, {}, dynamicBatchTextures, textBatchTextures);
     } catch (const std::invalid_argument&) {
         zeroSceneryMotionIdRejected = true;
     }
     require(zeroSceneryMotionIdRejected,
             "Diligent map scenery accepted a zero runtime-texture placement ID");
     require(renderer.synchronizeMapSceneryRuntimeTextures(
-                7101, sceneryAsset, &scripts, dynamicBatchTextures, textBatchTextures) &&
+                7101, sceneryAsset, &scripts, nullptr, {}, dynamicBatchTextures,
+                textBatchTextures) &&
                 dynamicBatchTextures.size() == 1 &&
                 dynamicBatchTextures.front() != nullptr && textBatchTextures.empty(),
             "Diligent map scenery did not publish the configured script texture slot");
@@ -2999,7 +3010,8 @@ void runDiligentScriptTextureProbe(GLFWwindow& window) {
     require(renderer.beginFrame(history, 2, 1.008, 320, 240, identity, identity, 320, 240),
             "Diligent script texture probe could not begin a second frame");
     require(renderer.synchronizeMapSceneryRuntimeTextures(
-                7101, sceneryAsset, &scripts, dynamicBatchTextures, textBatchTextures) &&
+                7101, sceneryAsset, &scripts, nullptr, {}, dynamicBatchTextures,
+                textBatchTextures) &&
                 dynamicBatchTextures.size() == 1 &&
                 dynamicBatchTextures.front() == firstScriptTexture.RawPtr(),
             "Diligent map scenery did not reuse its unchanged script texture slot");
@@ -3008,7 +3020,7 @@ void runDiligentScriptTextureProbe(GLFWwindow& window) {
     require(renderer.beginFrame(history, 3, 1.016, 320, 240, identity, identity, 320, 240),
             "Diligent script texture probe could not begin a replacement frame");
     require(renderer.synchronizeMapSceneryRuntimeTextures(
-                7101, sceneryAsset, &replacementScripts, dynamicBatchTextures,
+                7101, sceneryAsset, &replacementScripts, nullptr, {}, dynamicBatchTextures,
                 textBatchTextures) &&
                 dynamicBatchTextures.size() == 1 &&
                 dynamicBatchTextures.front() != firstScriptTexture.RawPtr(),

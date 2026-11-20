@@ -2,6 +2,7 @@
 
 #include "app/DiligentFrameRenderer.h"
 #include "map/MapTrafficRuntime.h"
+#include "core/PerfTrace.h"
 #include "render/MatrixMath.h"
 #include "render/RendererFramePresenter.h"
 
@@ -217,11 +218,15 @@ RenderLoop::passengerQueuePose(int stopId, const openbus::app::WaitingPassenger&
 }
 
 void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
+    openbus::rendering::TraceScope trace("render", "RenderLoop::draw");
     if (framePresenter_ == nullptr || dynamic_cast<openbus::rendering::DiligentFrameRenderer*>(
                                           framePresenter_.get()) == nullptr) {
         throw std::logic_error("The production scene requires the Diligent frame presenter");
     }
+    openbus::rendering::TraceScope assetTrace("render", "RenderLoop::prepareDiligentSceneAssets");
     prepareDiligentSceneAssets(simulation);
+    assetTrace.finish();
+    openbus::rendering::TraceScope sceneTrace("render", "RenderLoop::drawDiligentScene");
     drawDiligentScene(simulation, world);
 }
 

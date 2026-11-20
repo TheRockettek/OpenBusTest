@@ -362,6 +362,10 @@ struct MapRenderer::Impl {
     std::unordered_map<std::uint64_t, SceneryChunk> sceneryChunks;
     std::unordered_map<std::uint64_t, std::vector<SceneryInstanceReference>>
         sceneryInstancesBySourceTile;
+    mutable bool activeSceneryAssetSourcesCached = false;
+    mutable MapSceneryAssetSources activeSceneryAssetSourcesCache;
+    mutable bool activeSceneryPlacementsCached = false;
+    mutable std::vector<MapSceneryPlacementSnapshot> activeSceneryPlacementsCache;
     std::size_t sceneryInstanceCount = 0;
     std::size_t sceneryObjectCount = 0;
     std::uint64_t trafficDebugGeometryRevision = 0;

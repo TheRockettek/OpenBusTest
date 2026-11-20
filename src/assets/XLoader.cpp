@@ -1,5 +1,7 @@
 #include "assets/XLoader.h"
 
+#include "core/PerfTrace.h"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -881,6 +883,7 @@ class Parser {
 } // namespace
 
 std::shared_ptr<ParsedObj> XLoader::parse(const std::filesystem::path& path) {
+    TraceScope trace("x", "XLoader::parse");
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         return {};
